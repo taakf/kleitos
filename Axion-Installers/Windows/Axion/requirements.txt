@@ -1,0 +1,58 @@
+# Axion by 4Labs — Portfolio Intelligence System
+# Install with: pip install -r requirements.txt
+
+# Web framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+
+# Database
+sqlalchemy>=2.0.0
+aiosqlite>=0.20.0
+
+# HTTP client
+httpx>=0.27.0
+
+# LLM
+anthropic>=0.40.0
+openai>=1.40.0
+google-generativeai>=0.8.0
+
+# Scheduler
+apscheduler>=3.10.0
+
+# Configuration
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# Templates
+jinja2>=3.1.0
+
+# File uploads
+python-multipart>=0.0.9
+
+# Data validation
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# News parsing
+feedparser>=6.0.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# Date handling
+python-dateutil>=2.9.0
+
+# Excel export
+openpyxl>=3.1.0
+
+# PDF export
+reportlab>=4.0.0
+
+# PDF table extraction (portfolio document import)
+pdfplumber>=0.11.0
+
+# Telegram bot (for client notifications & commands)
+python-telegram-bot>=21.0
+
+# Desktop app shell (native window wrapper)
+pywebview>=5.0

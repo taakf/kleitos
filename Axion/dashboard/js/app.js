@@ -1,0 +1,1845 @@
+/**
+ * Axion Dashboard — Client-side Application
+ * Full portfolio management with CRUD operations
+ */
+(function () {
+    'use strict';
+
+    // ================================================================
+    // API Endpoints
+    // ================================================================
+    const API = {
+        holdings:     '/api/v1/portfolio/holdings',
+        holdingById:  (id) => `/api/v1/portfolio/holdings/${id}`,
+        summary:      '/api/v1/portfolio/summary',
+        exposure:     (dim) => `/api/v1/portfolio/exposure?dimension=${dim}`,
+        trades:       '/api/v1/portfolio/trades',
+        digestLatest: '/api/v1/digests/latest',
+        digestGen:    '/api/v1/digests/generate',
+        alerts:       '/api/v1/alerts',
+        alertsActive: '/api/v1/alerts/active',
+        alertAck:     (id) => `/api/v1/alerts/${id}/acknowledge`,
+        audit:        '/api/v1/audit',
+        health:       '/api/v1/health',
+        agentStatus:  '/api/v1/agents/status',
+        agentRuns:    '/api/v1/agents/runs',
+        agentRun:     (id) => `/api/v1/agents/${id}/run`,
+        sources:      '/api/v1/sources',
+        upload:       '/api/v1/portfolio/upload',
+        events:       '/api/v1/events',
+        eventsRecent: '/api/v1/events/recent',
+        analysisNotes:'/api/v1/analysis/notes',
+    };
+
+    // ================================================================
+    // Helpers
+    // ================================================================
+    const $ = (sel) => document.querySelector(sel);
+    const $$ = (sel) => document.querySelectorAll(sel);
+
+    function esc(str) {
+        if (str == null) return '';
+        const d = document.createElement('div');
+        d.textContent = String(str);
+        return d.innerHTML;
+    }
+
+    async function fetchJSON(url) {
+        const res = await fetch(url);
+        if (!res.ok) {
+            if (res.status === 404) return null;
+            throw new Error(`HTTP ${res.status}`);
+        }
+        return res.json();
+    }
+
+    async function postJSON(url, data) {
+        const res = await fetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${res.status}`);
+        }
+        return res.json();
+    }
+
+    async function putJSON(url, data) {
+        const res = await fetch(url, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data),
+        });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${res.status}`);
+        }
+        return res.json();
+    }
+
+    async function deleteJSON(url) {
+        const res = await fetch(url, { method: 'DELETE' });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.detail || `HTTP ${res.status}`);
+        }
+        return res.json();
+    }
+
+    function formatDate(iso) {
+        if (!iso) return '\u2014';
+        const d = new Date(iso);
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+    }
+
+    function formatDateShort(iso) {
+        if (!iso) return '\u2014';
+        const d = new Date(iso);
+        return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    }
+
+    function timeAgo(iso) {
+        if (!iso) return '';
+        const s = Math.floor((Date.now() - new Date(iso)) / 1000);
+        if (s < 60) return 'just now';
+        if (s < 3600) return Math.floor(s / 60) + 'm ago';
+        if (s < 86400) return Math.floor(s / 3600) + 'h ago';
+        return Math.floor(s / 86400) + 'd ago';
+    }
+
+    function formatCurrency(val, ccy) {
+        if (val == null) return '\u2014';
+        return new Intl.NumberFormat('en-US', {
+            style: 'currency', currency: ccy || 'USD',
+            minimumFractionDigits: 0, maximumFractionDigits: 0
+        }).format(val);
+    }
+
+    function formatNum(val, dec = 2) {
+        if (val == null) return '\u2014';
+        return new Intl.NumberFormat('en-US', {
+            minimumFractionDigits: dec, maximumFractionDigits: dec
+        }).format(val);
+    }
+
+    function formatPct(val) {
+        if (val == null) return '\u2014';
+        return (val >= 0 ? '+' : '') + (val * 100).toFixed(1) + '%';
+    }
+
+    function pnlClass(val) {
+        if (val == null) return '';
+        return val >= 0 ? 'text-success' : 'text-danger';
+    }
+
+    function titleCase(str) {
+        if (!str) return '';
+        const small = new Set(['a','an','the','and','but','or','nor','for','in','on','at','to','by','of','up','as','is','no']);
+        return str.replace(/_/g, ' ').replace(/\b[A-Za-z0-9]+/g, (w, i) => {
+            // Preserve all-caps words (tickers, acronyms like SHEL, AAPL, USD)
+            if (w === w.toUpperCase() && w.length >= 2 && /[A-Z]/.test(w)) return w;
+            const lower = w.toLowerCase();
+            if (i > 0 && small.has(lower)) return lower;
+            return lower.charAt(0).toUpperCase() + lower.slice(1);
+        });
+    }
+
+    function severityBadge(sev) {
+        const s = (sev || 'info').toLowerCase();
+        const map = { critical: 'badge-critical', high: 'badge-high', medium: 'badge-medium', warning: 'badge-warning', info: 'badge-info', low: 'badge-info' };
+        return `<span class="badge ${map[s] || 'badge-muted'}">${esc(titleCase(s))}</span>`;
+    }
+
+    function statusDot(status) {
+        const s = (status || '').toLowerCase();
+        const map = { ok: 'status-ok', healthy: 'status-ok', running: 'status-running', operational: 'status-ok',
+                      connected: 'status-ok', active: 'status-ok',
+                      degraded: 'status-degraded', idle: 'status-idle', warning: 'status-degraded',
+                      stopped: 'status-degraded',
+                      down: 'status-down', error: 'status-error', failed: 'status-error' };
+        return `<span class="status-dot ${map[s] || 'status-idle'}"></span>`;
+    }
+
+    function formatUptime(seconds) {
+        if (!seconds) return '\u2014';
+        const h = Math.floor(seconds / 3600);
+        const m = Math.floor((seconds % 3600) / 60);
+        if (h > 24) return Math.floor(h / 24) + 'd ' + (h % 24) + 'h';
+        return h + 'h ' + m + 'm';
+    }
+
+    function ensureArray(data, ...keys) {
+        if (Array.isArray(data)) return data;
+        for (const k of keys) {
+            if (data && Array.isArray(data[k])) return data[k];
+        }
+        return [];
+    }
+
+    async function withLoading(btn, loadingText, asyncFn) {
+        const original = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = loadingText;
+        try { return await asyncFn(); }
+        finally { btn.disabled = false; btn.textContent = original; }
+    }
+
+    function renderError(msg) {
+        return `<div class="error-state">Failed to load ${esc(msg)}</div>`;
+    }
+
+    function renderEmpty(icon, text, opts) {
+        // opts: { hint, actions: [{label, onclick, primary}] }
+        const o = opts || {};
+        let html = `<div class="empty-state">${icon ? `<div class="icon">${icon}</div>` : ''}<p>${esc(text)}</p>`;
+        if (o.hint) html += `<p class="text-sm text-muted mt-2">${esc(o.hint)}</p>`;
+        if (o.actions && o.actions.length) {
+            html += `<div class="mt-3" style="display:flex;gap:0.5rem;justify-content:center;flex-wrap:wrap;">`;
+            o.actions.forEach(a => {
+                html += `<button class="btn ${a.primary ? 'btn-primary' : 'btn-outline'}" onclick="${esc(a.onclick)}">${esc(a.label)}</button>`;
+            });
+            html += `</div>`;
+        }
+        html += `</div>`;
+        return html;
+    }
+
+    function showToast(msg, type = 'success') {
+        const t = document.createElement('div');
+        t.className = `toast toast-${type}`;
+        t.textContent = msg;
+        document.body.appendChild(t);
+        setTimeout(() => t.remove(), 3500);
+    }
+
+    function todayISO() {
+        return new Date().toISOString().split('T')[0];
+    }
+
+    // ================================================================
+    // Currency list (shared across all modals)
+    // ================================================================
+    const CURRENCIES = ['USD', 'EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD', 'DKK', 'SEK', 'NOK', 'HKD', 'SGD'];
+
+    function populateCurrencySelects() {
+        const opts = CURRENCIES.map(c => `<option value="${c}">${c}</option>`).join('');
+        $$('.currency-select').forEach(el => { el.innerHTML = opts; });
+    }
+
+    // ================================================================
+    // Table Sorting
+    // ================================================================
+    let sortState = {};
+
+    function sortTable(tableContainerId, data, renderFn, column) {
+        const prev = sortState[tableContainerId];
+        let dir = 'asc';
+        if (prev && prev.column === column) {
+            dir = prev.dir === 'asc' ? 'desc' : 'asc';
+        }
+        sortState[tableContainerId] = { column, dir };
+
+        const sorted = [...data].sort((a, b) => {
+            let va = a[column], vb = b[column];
+            if (va == null) va = '';
+            if (vb == null) vb = '';
+            if (typeof va === 'number' && typeof vb === 'number') {
+                return dir === 'asc' ? va - vb : vb - va;
+            }
+            va = String(va).toLowerCase();
+            vb = String(vb).toLowerCase();
+            return dir === 'asc' ? va.localeCompare(vb) : vb.localeCompare(va);
+        });
+        renderFn(sorted);
+
+        const container = document.getElementById(tableContainerId);
+        if (container) {
+            container.querySelectorAll('th.sortable').forEach(th => {
+                th.classList.remove('sort-asc', 'sort-desc');
+                if (th.dataset.sort === column) {
+                    th.classList.add(dir === 'asc' ? 'sort-asc' : 'sort-desc');
+                }
+            });
+        }
+    }
+
+    // ================================================================
+    // Tab Navigation
+    // ================================================================
+    const tabLoaded = {};
+    const tabLoaders = {
+        holdings:  loadHoldings,
+        exposures: loadExposures,
+        events:    loadEvents,
+        analysis:  loadAnalysisNotes,
+        digest:    loadDigest,
+        alerts:    loadAlerts,
+        audit:     loadAudit,
+        command:   loadCommand,
+        health:    loadHealth,
+        settings:  loadSettings,
+    };
+
+    function switchTab(name) {
+        $$('.tab-link').forEach(l => {
+            const isActive = l.dataset.tab === name;
+            l.classList.toggle('active', isActive);
+            l.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        });
+        $$('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + name));
+        if (!tabLoaded[name] && tabLoaders[name]) {
+            tabLoaded[name] = true;
+            tabLoaders[name]();
+        }
+    }
+
+    function refreshTab(name) {
+        tabLoaded[name] = false;
+        if ($('.tab-link.active')?.dataset.tab === name) {
+            tabLoaded[name] = true;
+            tabLoaders[name]();
+        }
+    }
+
+    // ================================================================
+    // Holdings Tab
+    // ================================================================
+    let allHoldings = [];
+
+    async function loadHoldings() {
+        const summaryEl = $('#holdings-summary');
+        const tableEl = $('#holdings-table');
+        if (!tableEl) { console.error('holdings-table element not found'); return; }
+        try {
+            const [summary, holdings, health] = await Promise.all([
+                fetchJSON(API.summary).catch(() => null),
+                fetchJSON(API.holdings).catch(() => []),
+                fetchJSON(API.health).catch(() => null)
+            ]);
+            const list = ensureArray(holdings, 'items', 'holdings');
+            allHoldings = list;
+            window._lastHealthData = health;
+
+            // Overview band — compact stats + system status in one row
+            if (summaryEl) {
+                if (list.length > 0) {
+                    const tv = summary?.total_market_value ?? list.reduce((s, h) => s + (h.current_price || 0) * (h.quantity || 0), 0);
+                    const hCount = summary?.holding_count ?? list.length;
+                    const sCount = summary?.sector_count || new Set(list.map(h => h.sector).filter(Boolean)).size;
+
+                    const statusDotClass = (health?.status === 'ok') ? 'green' : 'yellow';
+                    const statusLabel = (health?.status === 'ok') ? 'Operational' : (health?.status || '...');
+                    const llmLabel = health?.llm_available ? 'AI-enhanced' : 'Rule-based';
+                    const llmDot = health?.llm_available ? 'green' : 'yellow';
+                    const srcActive = health?.sources_active ?? '?';
+                    const lastColl = health?.last_collection ? timeAgo(health.last_collection) : 'never';
+
+                    summaryEl.innerHTML = `<div class="overview-band">
+                        <div class="overview-stat">
+                            <div class="label">Portfolio Value</div>
+                            <div class="value">${formatCurrency(tv)}</div>
+                        </div>
+                        <div class="overview-divider"></div>
+                        <div class="overview-stat">
+                            <div class="label">Holdings</div>
+                            <div class="value value-sm">${hCount}</div>
+                        </div>
+                        <div class="overview-stat">
+                            <div class="label">Sectors</div>
+                            <div class="value value-sm">${sCount}</div>
+                        </div>
+                        <div class="overview-status">
+                            <span class="overview-chip"><span class="dot ${statusDotClass}"></span>${statusLabel}</span>
+                            <span class="overview-chip"><span class="dot ${llmDot}"></span>${llmLabel}</span>
+                            <span class="overview-chip">${srcActive} sources</span>
+                            <span class="overview-chip">Collected ${lastColl === 'never' ? 'soon (~30 min cycle)' : lastColl}</span>
+                            <button class="overview-chip overview-chip-btn" onclick="triggerCollection()" title="Run collection now">&#8635; Collect</button>
+                        </div>
+                    </div>`;
+                } else if (health) {
+                    const statusDotClass = (health.status === 'ok') ? 'green' : 'yellow';
+                    const statusLabel = (health.status === 'ok') ? 'Operational' : (health.status || '...');
+                    const llmLabel = health.llm_available ? 'AI-enhanced' : 'Rule-based';
+                    const llmDot = health.llm_available ? 'green' : 'yellow';
+                    summaryEl.innerHTML = `<div class="overview-band">
+                        <div class="overview-stat">
+                            <div class="label">Portfolio Value</div>
+                            <div class="value">\u2014</div>
+                        </div>
+                        <div class="overview-status">
+                            <span class="overview-chip"><span class="dot ${statusDotClass}"></span>${statusLabel}</span>
+                            <span class="overview-chip"><span class="dot ${llmDot}"></span>${llmLabel}</span>
+                            <span class="overview-chip">${health.sources_active ?? '?'} sources</span>
+                        </div>
+                    </div>`;
+                } else {
+                    summaryEl.innerHTML = '';
+                }
+            }
+
+            renderHoldingsTable(list);
+        } catch (e) {
+            tableEl.innerHTML = renderError('holdings: ' + e.message);
+        }
+    }
+
+    function renderWelcomeCard(health) {
+        const llmOk = health?.llm_available;
+        const collected = !!health?.last_collection;
+        const srcCount = health?.sources_active ?? 0;
+        const sysOk = health?.status === 'ok';
+
+        const check = '&#10003;';  // ✓
+        const circle = '&#9675;';  // ○
+
+        return `<div class="welcome-card">
+            <div class="welcome-header">
+                <div>
+                    <div class="welcome-title">Welcome to Axion</div>
+                    <div class="welcome-subtitle">Portfolio intelligence by 4Labs. Get started in a few steps.</div>
+                </div>
+            </div>
+            <div class="welcome-steps">
+                <div class="welcome-step ${sysOk ? 'done' : ''}">
+                    <span class="step-icon">${sysOk ? check : circle}</span>
+                    <div>
+                        <div class="step-label">System running</div>
+                        <div class="step-hint">${sysOk ? `${srcCount} news sources active` : 'Starting up\u2026'}</div>
+                    </div>
+                </div>
+                <div class="welcome-step">
+                    <span class="step-icon">${circle}</span>
+                    <div>
+                        <div class="step-label">Upload your portfolio</div>
+                        <div class="step-hint">CSV with ticker, quantity, price, currency columns</div>
+                    </div>
+                </div>
+                <div class="welcome-step ${llmOk ? 'done' : ''}">
+                    <span class="step-icon">${llmOk ? check : circle}</span>
+                    <div>
+                        <div class="step-label">Configure API key <span class="text-xs text-muted">(optional)</span></div>
+                        <div class="step-hint">${llmOk ? 'AI-enhanced analysis active' : 'Add an Anthropic key in Settings for richer analysis'}</div>
+                    </div>
+                </div>
+                <div class="welcome-step ${collected ? 'done' : ''}">
+                    <span class="step-icon">${collected ? check : circle}</span>
+                    <div>
+                        <div class="step-label">First news collection</div>
+                        <div class="step-hint">${collected ? 'Events collected' : 'Happens automatically every 30 minutes after portfolio upload'}</div>
+                    </div>
+                </div>
+            </div>
+            <div class="welcome-actions">
+                <button class="btn btn-primary" onclick="uploadPortfolio()">Upload CSV</button>
+                <button class="btn btn-outline" onclick="document.querySelector('[data-tab=settings]').click()">Open Settings</button>
+            </div>
+        </div>`;
+    }
+
+    function renderHoldingsTable(list) {
+        const el = $('#holdings-table');
+        if (!list.length) {
+            // Show the welcome card with setup guidance
+            const healthData = window._lastHealthData || null;
+            el.innerHTML = renderWelcomeCard(healthData);
+            return;
+        }
+        const totalVal = list.reduce((s, h) => s + (h.market_value || (h.current_price || 0) * (h.quantity || 0)), 0);
+        const enriched = list.map(h => {
+            const mv = h.market_value || ((h.current_price || 0) * (h.quantity || 0)) || null;
+            const pnl = h.pnl ?? (h.avg_cost_basis != null && h.current_price != null ? (h.current_price - h.avg_cost_basis) * (h.quantity || 0) : null);
+            const pnl_pct = h.pnl_pct ?? (h.avg_cost_basis != null && h.avg_cost_basis !== 0 && h.current_price != null ? (h.current_price - h.avg_cost_basis) / h.avg_cost_basis : null);
+            const wt = h.weight_pct ?? (totalVal > 0 && mv ? (mv / totalVal) * 100 : null);
+            return { ...h, _mv: mv, _pnl: pnl, _pnl_pct: pnl_pct, _wt: wt };
+        });
+        el.innerHTML = `<div class="table-wrap"><table>
+            <thead><tr>
+                <th class="sortable" data-sort="ticker">Ticker</th><th class="sortable" data-sort="name">Name</th><th class="sortable" data-sort="sector">Sector</th>
+                <th class="num sortable" data-sort="quantity">Shares</th><th class="num sortable" data-sort="avg_cost_basis">Avg Cost</th><th class="num sortable" data-sort="current_price">Price</th>
+                <th class="num sortable" data-sort="_mv">Mkt Value</th><th class="num sortable" data-sort="_wt">Weight</th><th class="num sortable" data-sort="_pnl">P&L</th><th class="num sortable" data-sort="_pnl_pct">P&L %</th>
+                <th style="width:70px;"></th>
+            </tr></thead>
+            <tbody>${enriched.map(h => `<tr>
+                <td><a href="javascript:void(0)" class="font-semibold text-mono" onclick="openHoldingDetail('${esc(h.id)}')" style="cursor:pointer">${esc(h.ticker)}</a></td>
+                <td>${esc(h.name || h.company_name || '\u2014')}</td>
+                <td>${h.sector ? `<span class="badge badge-muted">${esc(titleCase(h.sector))}</span>` : '<span class="text-muted">\u2014</span>'}</td>
+                <td class="num">${formatNum(h.quantity, 0)}</td>
+                <td class="num">${formatNum(h.avg_cost_basis)}</td>
+                <td class="num">${formatNum(h.current_price)}</td>
+                <td class="num">${formatCurrency(h._mv)}</td>
+                <td class="num">${h._wt != null ? h._wt.toFixed(1) + '%' : '\u2014'}</td>
+                <td class="num ${pnlClass(h._pnl)}">${formatCurrency(h._pnl)}</td>
+                <td class="num ${pnlClass(h._pnl_pct)}">${formatPct(h._pnl_pct)}</td>
+                <td>
+                    <div class="row-actions">
+                        <button class="btn-icon" onclick="openEditHolding('${esc(h.id)}')" title="Edit holding">&#9998;</button>
+                        <button class="btn-icon btn-icon-danger" onclick="openDeleteHolding('${esc(h.id)}', '${esc(h.ticker)}')" title="Remove holding">&#10005;</button>
+                    </div>
+                </td>
+            </tr>`).join('')}</tbody></table></div>`;
+    }
+
+    function filterHoldings(query) {
+        const q = query.toLowerCase();
+        const filtered = q ? allHoldings.filter(h =>
+            (h.ticker || '').toLowerCase().includes(q) ||
+            (h.name || '').toLowerCase().includes(q)
+        ) : allHoldings;
+        renderHoldingsTable(filtered);
+    }
+
+    // ================================================================
+    // Add Holding
+    // ================================================================
+    window.openAddHolding = function () {
+        const modal = $('#add-holding-modal');
+        $('#ah-ticker').value = '';
+        $('#ah-quantity').value = '';
+        $('#ah-cost').value = '';
+        $('#ah-price').value = '';
+        $('#ah-currency').value = 'USD';
+        $('#ah-isin').value = '';
+        $('#ah-preview').innerHTML = '';
+        $('#add-holding-title').textContent = 'Add Holding';
+        $('#add-holding-btn').textContent = 'Add to Portfolio';
+        $('#add-holding-btn').disabled = false;
+        modal.showModal();
+        $('#ah-ticker').focus();
+    };
+
+    // Live preview for add holding
+    function updateAddPreview() {
+        const qty = parseFloat($('#ah-quantity')?.value) || 0;
+        const price = parseFloat($('#ah-price')?.value) || parseFloat($('#ah-cost')?.value) || 0;
+        const el = $('#ah-preview');
+        if (!el) return;
+        if (qty > 0 && price > 0) {
+            const mv = qty * price;
+            const ccy = $('#ah-currency')?.value || 'USD';
+            el.innerHTML = `Est. Market Value: <strong>${formatCurrency(mv, ccy)}</strong>`;
+        } else {
+            el.innerHTML = '';
+        }
+    }
+
+    window.submitAddHolding = async function () {
+        const ticker = $('#ah-ticker').value.trim().toUpperCase();
+        const quantity = parseFloat($('#ah-quantity').value);
+
+        if (!ticker) { showToast('Ticker is required', 'error'); return; }
+        if (!quantity || quantity <= 0) { showToast('Quantity must be > 0', 'error'); return; }
+
+        const data = {
+            ticker,
+            quantity,
+            currency: $('#ah-currency').value || 'USD',
+        };
+        const cost = parseFloat($('#ah-cost').value);
+        const price = parseFloat($('#ah-price').value);
+        const isin = $('#ah-isin').value.trim();
+        if (cost > 0) data.avg_cost_basis = cost;
+        if (price > 0) data.current_price = price;
+        if (isin) data.isin = isin;
+
+        await withLoading($('#add-holding-btn'), 'Adding...', async () => {
+            try {
+                await postJSON(API.holdings, data);
+                $('#add-holding-modal').close();
+                showToast(`${ticker} added to portfolio`);
+                refreshTab('holdings');
+                refreshTab('exposures');
+            } catch (e) {
+                showToast('Failed: ' + e.message, 'error');
+            }
+        });
+    };
+
+    // ================================================================
+    // Edit Holding
+    // ================================================================
+    window.openEditHolding = function (holdingId) {
+        const h = allHoldings.find(x => x.id === holdingId);
+        if (!h) { showToast('Holding not found', 'error'); return; }
+
+        const modal = $('#edit-holding-modal');
+        $('#eh-id').value = h.id;
+        $('#eh-ticker-display').textContent = h.ticker;
+        $('#edit-holding-title').textContent = `Edit ${h.ticker}`;
+        $('#eh-quantity').value = h.quantity ?? '';
+        $('#eh-cost').value = h.avg_cost_basis ?? '';
+        $('#eh-price').value = h.current_price ?? '';
+        $('#eh-currency').value = h.currency || 'USD';
+        $('#edit-holding-btn').disabled = false;
+        $('#edit-holding-btn').textContent = 'Save Changes';
+        modal.showModal();
+    };
+
+    window.submitEditHolding = async function () {
+        const id = $('#eh-id').value;
+        if (!id) return;
+
+        const data = {};
+        const qty = parseFloat($('#eh-quantity').value);
+        const cost = parseFloat($('#eh-cost').value);
+        const price = parseFloat($('#eh-price').value);
+        const ccy = $('#eh-currency').value;
+
+        if (!isNaN(qty) && qty > 0) data.quantity = qty;
+        if (!isNaN(cost) && cost >= 0) data.avg_cost_basis = cost;
+        if (!isNaN(price) && price >= 0) data.current_price = price;
+        if (ccy) data.currency = ccy;
+
+        if (Object.keys(data).length === 0) {
+            showToast('No changes to save', 'error');
+            return;
+        }
+
+        await withLoading($('#edit-holding-btn'), 'Saving...', async () => {
+            try {
+                await putJSON(API.holdingById(id), data);
+                $('#edit-holding-modal').close();
+                showToast('Holding updated');
+                refreshTab('holdings');
+                refreshTab('exposures');
+            } catch (e) {
+                showToast('Failed: ' + e.message, 'error');
+            }
+        });
+    };
+
+    // ================================================================
+    // Delete Holding
+    // ================================================================
+    window.openDeleteHolding = function (holdingId, ticker) {
+        const modal = $('#delete-modal');
+        $('#delete-id').value = holdingId;
+        $('#delete-ticker').textContent = ticker;
+        modal.showModal();
+    };
+
+    window.confirmDeleteHolding = async function () {
+        const id = $('#delete-id').value;
+        if (!id) return;
+
+        await withLoading($('#delete-btn'), 'Removing...', async () => {
+            try {
+                await deleteJSON(API.holdingById(id));
+                $('#delete-modal').close();
+                showToast('Holding removed');
+                refreshTab('holdings');
+                refreshTab('exposures');
+            } catch (e) {
+                showToast('Failed: ' + e.message, 'error');
+            }
+        });
+    };
+
+    // ================================================================
+    // Record Trade
+    // ================================================================
+    window.openRecordTrade = function (prefillTicker) {
+        const modal = $('#trade-modal');
+        $('#tr-ticker').value = prefillTicker || '';
+        $('#tr-type').value = 'buy';
+        $('#tr-quantity').value = '';
+        $('#tr-price').value = '';
+        $('#tr-date').value = todayISO();
+        $('#tr-currency').value = 'USD';
+        $('#tr-notes').value = '';
+        $('#tr-preview').innerHTML = '';
+        $('#trade-btn').disabled = false;
+        $('#trade-btn').textContent = 'Submit Trade';
+        modal.showModal();
+        if (!prefillTicker) $('#tr-ticker').focus();
+    };
+
+    function updateTradePreview() {
+        const qty = parseFloat($('#tr-quantity')?.value) || 0;
+        const price = parseFloat($('#tr-price')?.value) || 0;
+        const el = $('#tr-preview');
+        if (!el) return;
+        if (qty > 0 && price > 0) {
+            const total = qty * price;
+            const type = $('#tr-type')?.value || 'buy';
+            const ccy = $('#tr-currency')?.value || 'USD';
+            const label = type === 'buy' ? 'Total Cost' : type === 'sell' ? 'Total Proceeds' : 'Dividend Amount';
+            el.innerHTML = `${label}: <strong>${formatCurrency(total, ccy)}</strong>`;
+        } else {
+            el.innerHTML = '';
+        }
+    }
+
+    window.submitTrade = async function () {
+        const ticker = $('#tr-ticker').value.trim().toUpperCase();
+        const quantity = parseFloat($('#tr-quantity').value);
+        const price = parseFloat($('#tr-price').value);
+        const tradeDate = $('#tr-date').value;
+
+        if (!ticker) { showToast('Ticker is required', 'error'); return; }
+        if (!quantity || quantity <= 0) { showToast('Quantity must be > 0', 'error'); return; }
+        if (isNaN(price) || price < 0) { showToast('Price is required', 'error'); return; }
+        if (!tradeDate) { showToast('Trade date is required', 'error'); return; }
+
+        const data = {
+            ticker,
+            trade_type: $('#tr-type').value,
+            quantity,
+            price,
+            trade_date: tradeDate,
+            currency: $('#tr-currency').value || 'USD',
+        };
+        const notes = $('#tr-notes').value.trim();
+        if (notes) data.notes = notes;
+
+        await withLoading($('#trade-btn'), 'Submitting...', async () => {
+            try {
+                await postJSON(API.trades, data);
+                $('#trade-modal').close();
+                const typeLabel = data.trade_type.charAt(0).toUpperCase() + data.trade_type.slice(1);
+                showToast(`${typeLabel}: ${quantity} ${ticker} @ ${formatNum(price)}`);
+                refreshTab('holdings');
+                refreshTab('exposures');
+            } catch (e) {
+                showToast('Failed: ' + e.message, 'error');
+            }
+        });
+    };
+
+    // ================================================================
+    // Exposures Tab
+    // ================================================================
+    async function loadExposures() {
+        const container = $('#exposure-cards');
+        const dims = ['sector', 'geography', 'currency', 'theme'];
+        const labels = { sector: 'Sector', geography: 'Geography', currency: 'Currency', theme: 'Theme' };
+        try {
+            const results = await Promise.all(dims.map(d => fetchJSON(API.exposure(d)).catch(() => null)));
+            container.innerHTML = dims.map((dim, i) => {
+                const data = results[i];
+                const buckets = data?.buckets || [];
+                return `<div class="card">
+                    <div class="card-header">${labels[dim]} Exposure</div>
+                    ${buckets.length ? buckets.map(b => `
+                        <div class="exposure-item">
+                            <div class="exposure-label" title="${esc(b.label)}">${esc(titleCase(b.label))}</div>
+                            <div class="exposure-track"><div class="exposure-fill" style="width:${Math.min(b.weight_pct || 0, 100)}%"></div></div>
+                            <div class="exposure-value">${(b.weight_pct || 0).toFixed(1)}%</div>
+                        </div>`).join('') : '<div class="empty-state" style="padding:1.5rem"><p class="text-sm">Upload a portfolio to see exposure breakdown.</p></div>'}
+                </div>`;
+            }).join('');
+        } catch (e) {
+            container.innerHTML = renderError('exposures: ' + e.message);
+        }
+    }
+
+    // ================================================================
+    // Events Tab
+    // ================================================================
+    let allEvents = [];
+
+    async function loadEvents() {
+        const el = $('#events-table');
+        try {
+            const data = await fetchJSON(API.events);
+            const list = ensureArray(data, 'items', 'events');
+            allEvents = list;
+            renderEventsTable(list);
+        } catch (e) {
+            el.innerHTML = renderError('events: ' + e.message);
+        }
+    }
+
+    function renderEventsTable(list) {
+        const el = $('#events-table');
+        if (!list.length) {
+            el.innerHTML = renderEmpty('&#128240;', 'No events collected yet.', {
+                hint: 'Events are fetched automatically every 30 minutes from your configured news sources, or you can trigger collection manually.',
+                actions: [{ label: 'Run Collection Now', onclick: "runAction('collection')", primary: true }]
+            });
+            return;
+        }
+        el.innerHTML = `<div class="table-wrap"><table>
+            <thead><tr>
+                <th class="sortable" data-sort="title">Title</th>
+                <th class="sortable" data-sort="event_type">Type</th>
+                <th class="sortable" data-sort="materiality">Materiality</th>
+                <th>Source</th>
+                <th class="sortable" data-sort="published_at">Published</th>
+            </tr></thead>
+            <tbody>${list.map(e => `<tr>
+                <td><a href="${esc(e.url || '#')}" target="_blank" rel="noopener">${esc(e.title || 'Untitled')}</a></td>
+                <td>${e.event_type ? `<span class="badge badge-muted">${esc(titleCase(e.event_type))}</span>` : '<span class="text-muted">\u2014</span>'}</td>
+                <td>${e.materiality && e.materiality !== 'unscored' ? `<span class="badge badge-${e.materiality === 'critical' ? 'critical' : e.materiality === 'high' ? 'high' : 'info'}">${esc(e.materiality)}</span>` : '<span class="text-muted">unscored</span>'}</td>
+                <td class="text-sm text-muted">${esc(e.source_id || '\u2014')}</td>
+                <td class="text-sm text-muted">${formatDate(e.published_at)}</td>
+            </tr>`).join('')}</tbody></table></div>`;
+    }
+
+    function filterEvents(query) {
+        const q = query.toLowerCase();
+        const filtered = q ? allEvents.filter(e =>
+            (e.title || '').toLowerCase().includes(q) ||
+            (e.event_type || '').toLowerCase().includes(q)
+        ) : allEvents;
+        renderEventsTable(filtered);
+    }
+
+    // ================================================================
+    // Analysis Notes Tab
+    // ================================================================
+    async function loadAnalysisNotes(ticker) {
+        const el = $('#analysis-table');
+        el.innerHTML = '<div class="spinner">Loading analysis notes...</div>';
+        try {
+            let url = API.analysisNotes;
+            if (ticker) url += `?ticker=${ticker}`;
+            const data = await fetchJSON(url);
+            const list = ensureArray(data, 'items', 'notes');
+
+            const filterEl = $('#analysis-filter');
+            if (filterEl && !ticker) {
+                const tickers = [...new Set(list.map(n => {
+                    try { const c = JSON.parse(n.content || '{}'); return c.ticker || ''; } catch { return ''; }
+                }).filter(Boolean))].sort();
+                filterEl.innerHTML = '<option value="">All tickers</option>' + tickers.map(t =>
+                    `<option value="${esc(t)}">${esc(t)}</option>`
+                ).join('');
+            }
+
+            if (!list.length) {
+                el.innerHTML = renderEmpty('&#128221;', 'No analysis notes yet.', {
+                    hint: 'Analysis is generated when news events mention your holdings. Steps: 1) Upload a portfolio, 2) Wait for event collection (~30 min), 3) Events matching your tickers are analysed automatically.',
+                    actions: [{ label: 'Run Analysis', onclick: "runAction('analysis')", primary: true }]
+                });
+                return;
+            }
+            el.innerHTML = `<div class="table-wrap"><table>
+                <thead><tr>
+                    <th>Ticker</th><th>Impact</th><th>Magnitude</th>
+                    <th>Outlook</th><th>Confidence</th><th>Date</th>
+                </tr></thead>
+                <tbody>${list.map(n => {
+                    let content = {};
+                    try { content = JSON.parse(n.content || '{}'); } catch {}
+                    const direction = content.impact_direction || 'neutral';
+                    const dirClass = direction === 'positive' ? 'text-success' : direction === 'negative' ? 'text-danger' : 'text-muted';
+                    return `<tr>
+                        <td><span class="font-semibold text-mono">${esc(content.ticker || '\u2014')}</span></td>
+                        <td><span class="${dirClass} font-medium">${esc(direction)}</span></td>
+                        <td>${content.impact_magnitude ? `<span class="badge badge-${content.impact_magnitude === 'high' ? 'high' : content.impact_magnitude === 'medium' ? 'warning' : 'info'}">${esc(content.impact_magnitude)}</span>` : '\u2014'}</td>
+                        <td class="text-sm" style="max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(content.short_term_outlook || '')}">${esc(content.short_term_outlook || '\u2014')}</td>
+                        <td>${n.confidence != null ? `<span class="confidence-bar"><span class="bar"><span class="bar-fill" style="width:${Math.round(parseFloat(n.confidence) * 100)}%"></span></span>${Math.round(parseFloat(n.confidence) * 100)}%</span>` : '\u2014'}</td>
+                        <td class="text-sm text-muted">${formatDate(n.created_at)}</td>
+                    </tr>`;
+                }).join('')}</tbody></table></div>`;
+        } catch (e) {
+            el.innerHTML = renderError('analysis: ' + e.message);
+        }
+    }
+
+    // ================================================================
+    // Digest Tab
+    // ================================================================
+    function formatDigestContent(raw) {
+        if (!raw || raw === '[]' || raw === '{}') return '<span class="text-muted">No data available.</span>';
+        let parsed;
+        try { parsed = typeof raw === 'string' ? JSON.parse(raw) : raw; } catch { return esc(raw); }
+        if (Array.isArray(parsed)) {
+            if (!parsed.length) return '<span class="text-muted">No data available.</span>';
+            return '<ul>' + parsed.map(item => {
+                if (typeof item === 'object' && item !== null) {
+                    const title = item.title || item.name || '';
+                    const body = item.body || item.content || item.summary || '';
+                    const severity = item.severity ? `<span class="badge badge-${item.severity === 'critical' ? 'danger' : item.severity === 'high' ? 'warning' : 'muted'}">${esc(item.severity)}</span> ` : '';
+                    return `<li>${severity}<strong>${esc(title)}</strong>${body ? ': ' + esc(body) : ''}</li>`;
+                }
+                return `<li>${esc(String(item))}</li>`;
+            }).join('') + '</ul>';
+        }
+        if (typeof parsed === 'object' && parsed !== null) {
+            return '<ul>' + Object.entries(parsed).map(([k, v]) =>
+                `<li><strong>${esc(k.replace(/_/g, ' '))}:</strong> ${esc(String(v))}</li>`
+            ).join('') + '</ul>';
+        }
+        return esc(String(parsed));
+    }
+
+    async function loadDigest() {
+        const el = $('#digest-content');
+        try {
+            const data = await fetchJSON(API.digestLatest);
+            if (!data) {
+                el.innerHTML = renderEmpty('&#128220;', 'No digests generated yet.', {
+                    hint: 'Digests summarise events, alerts, and analysis for your portfolio. They are generated daily at 07:00 local time, or you can create one now.',
+                    actions: [{ label: 'Generate Digest', onclick: 'generateDigest()', primary: true }]
+                });
+                return;
+            }
+            const sections = data.sections || [];
+            el.innerHTML = `
+                <div class="digest-meta">
+                    <span class="badge badge-primary">${esc(data.digest_type || 'daily')}</span>
+                    <span class="text-sm text-muted">${formatDateShort(data.period_start)} — ${formatDateShort(data.period_end)}</span>
+                    ${data.event_count != null ? `<span class="badge badge-info">${data.event_count} events</span>` : ''}
+                    ${data.alert_count != null ? `<span class="badge badge-warning">${data.alert_count} alerts</span>` : ''}
+                </div>
+                ${sections.map(s => `
+                    <div class="card mb-3 digest-section">
+                        <h3>${esc(s.title)}</h3>
+                        <div class="digest-content">${formatDigestContent(s.content)}</div>
+                    </div>`).join('')}
+                ${!sections.length ? `<div class="card"><div class="digest-content">${esc(data.summary || data.content || 'No content available.')}</div></div>` : ''}`;
+        } catch (e) {
+            el.innerHTML = renderError('digest: ' + e.message);
+        }
+    }
+
+    // ================================================================
+    // Alerts Tab
+    // ================================================================
+    async function loadAlerts() {
+        const el = $('#alerts-content');
+        try {
+            const data = await fetchJSON(API.alertsActive);
+            const list = ensureArray(data, 'items', 'alerts');
+            if (!list.length) {
+                el.innerHTML = renderEmpty('&#9989;', 'No active alerts.', {
+                    hint: 'Alerts are generated when concentration risks exceed thresholds or when holdings lack recent news coverage.'
+                });
+                return;
+            }
+            el.innerHTML = list.map(a => `
+                <div class="alert-card severity-${(a.severity || 'info').toLowerCase()}">
+                    <div class="flex justify-between items-center gap-2">
+                        <div class="alert-title">${severityBadge(a.severity)} ${esc(titleCase(a.title))}</div>
+                        ${!a.acknowledged ? `<button class="btn btn-sm btn-ghost btn-ack" data-alert-id="${esc(a.id)}">Acknowledge</button>` : ''}
+                    </div>
+                    <div class="text-sm text-muted mt-2">${esc(a.message?.replace(/_/g, ' '))}</div>
+                    <div class="alert-meta">
+                        <span class="text-xs text-muted">${timeAgo(a.created_at)}</span>
+                        ${(a.related_holdings || []).length ? `<div class="alert-tickers">${a.related_holdings.map(hid => {
+                            const h = allHoldings.find(x => x.id === hid);
+                            return h ? `<span class="ticker-badge">${esc(h.ticker)}</span>` : '';
+                        }).filter(Boolean).join('')}</div>` : ''}
+                    </div>
+                </div>`).join('');
+        } catch (e) {
+            el.innerHTML = renderError('alerts: ' + e.message);
+        }
+    }
+
+    // ================================================================
+    // Audit Tab
+    // ================================================================
+    async function loadAudit(entityType) {
+        const el = $('#audit-content');
+        el.innerHTML = '<div class="spinner">Loading audit trail...</div>';
+        try {
+            let url = API.audit;
+            if (entityType) url += `?entity_type=${entityType}`;
+            const data = await fetchJSON(url);
+            const list = ensureArray(data, 'items', 'entries');
+            if (!list.length) {
+                el.innerHTML = renderEmpty(null, 'No audit entries found.');
+                return;
+            }
+            el.innerHTML = `<div class="table-wrap"><table>
+                <thead><tr><th>Time</th><th>Entity</th><th>ID</th><th>Action</th><th>Agent</th><th>Reason</th></tr></thead>
+                <tbody>${list.map(e => `<tr>
+                    <td class="text-sm text-muted">${formatDate(e.created_at)}</td>
+                    <td><span class="badge badge-muted">${esc(e.entity_type)}</span></td>
+                    <td class="text-mono text-sm">${esc(e.entity_id)}</td>
+                    <td>${esc(e.action)}</td>
+                    <td class="text-sm">${esc(e.agent_id || e.user_id || '\u2014')}</td>
+                    <td class="text-sm text-muted">${esc(e.reason || '\u2014')}</td>
+                </tr>`).join('')}</tbody></table></div>`;
+        } catch (e) {
+            el.innerHTML = renderError('audit: ' + e.message);
+        }
+    }
+
+    // ================================================================
+    // Health Tab
+    // ================================================================
+    async function loadHealth() {
+        const healthEl = $('#health-content');
+        const agentEl = $('#agent-status');
+        const sourceEl = $('#source-health');
+        try {
+            const [health, agents, sources] = await Promise.all([
+                fetchJSON(API.health),
+                fetchJSON(API.agentStatus).catch(() => null),
+                fetchJSON(API.sources).catch(() => null),
+            ]);
+
+            if (health) {
+                const st = (health.status || 'unknown').toLowerCase();
+                const stLabel = st === 'ok' || st === 'healthy' ? 'Operational' : st.charAt(0).toUpperCase() + st.slice(1);
+                healthEl.innerHTML = `<div class="card mb-3">
+                    <div class="flex items-center gap-2 mb-3">
+                        ${statusDot(st)}
+                        <span class="font-semibold" style="font-size:1.1rem;">${esc(stLabel)}</span>
+                    </div>
+                    <div class="health-grid">
+                        <div class="health-item"><div class="label">Database</div><div class="value">${statusDot(health.database || 'ok')} ${esc(health.database || 'connected')}</div></div>
+                        <div class="health-item"><div class="label">Scheduler</div><div class="value">${statusDot(health.scheduler || 'ok')} ${esc(health.scheduler || 'running')}</div></div>
+                        <div class="health-item"><div class="label">Sources</div><div class="value">${health.sources_active ?? '?'} / ${health.sources_total ?? '?'} active</div></div>
+                        <div class="health-item"><div class="label">Uptime</div><div class="value">${formatUptime(health.uptime_seconds)}</div></div>
+                        <div class="health-item"><div class="label">Last Collection</div><div class="value">${timeAgo(health.last_collection) || '\u2014'}</div></div>
+                        <div class="health-item"><div class="label">Analysis Mode</div><div class="value">${health.llm_available ? `${statusDot('ok')} AI-enhanced` : `${statusDot('idle')} Rule-based`}</div></div>
+                        <div class="health-item"><div class="label">Version</div><div class="value text-mono">${esc(health.version || '\u2014')}</div></div>
+                    </div>
+                </div>`;
+            }
+
+            const agentList = ensureArray(agents, 'items', 'agents');
+            if (agentList.length) {
+                agentEl.innerHTML = `<div class="table-wrap"><table>
+                    <thead><tr><th>Agent</th><th>Status</th><th>Last Run</th><th class="num">Duration</th><th class="num">Runs</th><th class="num">Errors</th></tr></thead>
+                    <tbody>${agentList.map(a => `<tr>
+                        <td class="font-medium">${esc(a.name || a.agent_id)}</td>
+                        <td>${statusDot(a.status)} ${esc(a.status)}</td>
+                        <td class="text-sm text-muted">${timeAgo(a.last_run)}</td>
+                        <td class="num">${a.last_duration_ms != null ? (a.last_duration_ms / 1000).toFixed(1) + 's' : '\u2014'}</td>
+                        <td class="num">${a.run_count ?? '\u2014'}</td>
+                        <td class="num ${(a.error_count || 0) > 0 ? 'text-danger' : ''}">${a.error_count ?? 0}</td>
+                    </tr>`).join('')}</tbody></table></div>`;
+            } else {
+                agentEl.innerHTML = renderEmpty(null, 'No agent data available.');
+            }
+
+            const srcList = ensureArray(sources, 'items', 'sources');
+            if (srcList.length) {
+                sourceEl.innerHTML = `<div class="table-wrap"><table>
+                    <thead><tr><th>Name</th><th>Type</th><th>Domain</th><th>Status</th><th>Enabled</th><th>Last Fetched</th></tr></thead>
+                    <tbody>${srcList.map(s => `<tr>
+                        <td class="font-medium">${esc(s.name)}</td>
+                        <td><span class="badge badge-muted">${esc(s.source_type)}</span></td>
+                        <td class="text-sm text-mono">${esc(s.domain || '\u2014')}</td>
+                        <td>${statusDot(s.last_status || 'idle')} ${esc(s.last_status || 'idle')}</td>
+                        <td>${s.enabled ? '<span class="text-success">Yes</span>' : '<span class="text-muted">No</span>'}</td>
+                        <td class="text-sm text-muted">${timeAgo(s.last_fetched_at)}</td>
+                    </tr>`).join('')}</tbody></table></div>`;
+            } else {
+                sourceEl.innerHTML = renderEmpty(null, 'No sources configured.');
+            }
+        } catch (e) {
+            healthEl.innerHTML = renderError('health: ' + e.message);
+        }
+    }
+
+    // (Sidebar removed — dead code cleaned up)
+
+    // ================================================================
+    // Legacy Actions (Upload, Acknowledge, etc.)
+    // ================================================================
+    window.uploadPortfolio = function () {
+        const modal = $('#upload-modal');
+        $('#upload-form').reset();
+        $('#file-info').textContent = '';
+        $('#upload-btn').disabled = true;
+        modal.showModal();
+    };
+
+    window.onFileSelected = function (input) {
+        const file = input.files[0];
+        const info = $('#file-info');
+        const btn = $('#upload-btn');
+        if (file) {
+            info.textContent = `Selected: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+            btn.disabled = false;
+        } else {
+            info.textContent = '';
+            btn.disabled = true;
+        }
+    };
+
+    window.submitUpload = async function () {
+        const fileInput = $('#portfolio-file');
+        const file = fileInput.files[0];
+        if (!file) return;
+
+        await withLoading($('#upload-btn'), 'Uploading...', async () => {
+            try {
+                const fd = new FormData();
+                fd.append('file', file);
+                const res = await fetch(API.upload, { method: 'POST', body: fd });
+                if (!res.ok) throw new Error('Server error: ' + res.status);
+                const data = await res.json();
+
+                $('#upload-modal').close();
+                const imported = data.holdings_imported ?? data.imported_count ?? data.added ?? 0;
+                const updated = data.holdings_updated ?? data.updated_count ?? data.updated ?? 0;
+                const errors = data.errors || [];
+                showToast(`Portfolio uploaded: ${imported} imported, ${updated} updated, ${errors.length} errors.`);
+                refreshTab('holdings');
+                refreshTab('exposures');
+            } catch (e) {
+                showToast('Upload failed: ' + e.message, 'error');
+            }
+        });
+    };
+
+    window.acknowledgeAlert = async function (id) {
+        try {
+            const res = await fetch(API.alertAck(id), { method: 'POST' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            showToast('Alert acknowledged');
+            refreshTab('alerts');
+            // (sidebar removed)
+        } catch (e) {
+            showToast('Failed: ' + e.message, 'error');
+        }
+    };
+
+    window.runAction = async function (agentId) {
+        const resultEl = $('#action-result');
+        resultEl.innerHTML = '<span class="text-sm text-muted">Running...</span>';
+        try {
+            const res = await fetch(API.agentRun(agentId), { method: 'POST' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            const data = await res.json();
+            resultEl.innerHTML = `<span class="text-sm text-success">Started: ${esc(data.run_id || data.status || 'ok')}</span>`;
+            showToast(`${agentId} agent triggered`);
+        } catch (e) {
+            resultEl.innerHTML = `<span class="text-sm text-danger">${esc(e.message)}</span>`;
+        }
+    };
+
+    window.exportCSV = function (type, format) {
+        const fmt = format || 'csv';
+        const ext = fmt === 'xlsx' ? 'xlsx' : fmt === 'pdf' ? 'pdf' : 'csv';
+        const url = `/api/v1/export/${type}?format=${fmt}`;
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `${type}_export.${ext}`;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        showToast(`Downloading ${type} ${fmt.toUpperCase()}...`);
+    };
+
+    window.triggerCollection = async function () {
+        try {
+            const res = await fetch('/api/v1/agents/collection/run', { method: 'POST' });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            showToast('Collection started — events will appear shortly');
+        } catch (e) {
+            showToast('Collection failed: ' + e.message, 'error');
+        }
+    };
+
+    window.generateDigest = async function () {
+        const digestEl = $('#digest-content');
+        if (digestEl && digestEl.closest('.tab-panel')?.classList.contains('active')) {
+            digestEl.innerHTML = '<div class="spinner">Generating digest...</div>';
+        }
+        try {
+            const res = await fetch(API.digestGen, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ digest_type: 'ad-hoc', scope: 'portfolio' })
+            });
+            if (!res.ok) throw new Error('HTTP ' + res.status);
+            showToast('Digest generation queued');
+            setTimeout(() => refreshTab('digest'), 4000);
+        } catch (e) {
+            showToast('Digest generation failed: ' + e.message, 'error');
+            if (digestEl) refreshTab('digest');
+        }
+    };
+
+    // ================================================================
+    // Reset Portfolio
+    // ================================================================
+    window.openResetPortfolio = function () {
+        const modal = $('#reset-modal');
+        $('#reset-confirm-input').value = '';
+        modal.showModal();
+        $('#reset-confirm-input').focus();
+    };
+
+    window.confirmResetPortfolio = async function () {
+        const input = $('#reset-confirm-input');
+        if (input.value.trim() !== 'RESET') {
+            showToast('Type RESET to confirm', 'error');
+            input.focus();
+            return;
+        }
+
+        await withLoading($('#reset-btn'), 'Resetting...', async () => {
+            try {
+                const res = await fetch('/api/v1/portfolio/reset', { method: 'POST' });
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                $('#reset-modal').close();
+                showToast('All data cleared. Start fresh!');
+
+                // Refresh everything
+                Object.keys(tabLoaded).forEach(k => tabLoaded[k] = false);
+                switchTab('holdings');
+                // (sidebar removed)
+            } catch (e) {
+                showToast('Reset failed: ' + e.message, 'error');
+            }
+        });
+    };
+
+    // ================================================================
+    // ================================================================
+    // Command Center
+    // ================================================================
+    const _cmdMessages = [];  // Session-only transcript
+
+    function loadCommand() {
+        // Update mode indicator
+        _updateCmdMode();
+        // Wire up enter key
+        const input = document.getElementById('cmd-input');
+        if (input && !input._cmdWired) {
+            input._cmdWired = true;
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendCommand(); }
+            });
+        }
+        // Wire up example prompt chips
+        document.querySelectorAll('.cmd-prompt-chip').forEach(chip => {
+            if (!chip._cmdWired) {
+                chip._cmdWired = true;
+                chip.addEventListener('click', () => {
+                    const prompt = chip.dataset.prompt;
+                    if (prompt) {
+                        document.getElementById('cmd-input').value = prompt;
+                        sendCommand();
+                    }
+                });
+            }
+        });
+    }
+
+    async function _updateCmdMode() {
+        try {
+            const h = await fetchJSON(API.health).catch(() => null);
+            const modeEl = document.getElementById('cmd-mode');
+            if (modeEl && h) {
+                const mode = h.llm_available ? 'AI-enhanced' : 'Rule-based';
+                const dot = h.llm_available ? 'green' : 'yellow';
+                modeEl.innerHTML = `<span class="cmd-meta-chip"><span class="dot ${dot}"></span>${mode}</span>`;
+            }
+        } catch {}
+    }
+
+    window.sendCommand = async function () {
+        const input = document.getElementById('cmd-input');
+        const query = (input?.value || '').trim();
+        if (!query) return;
+
+        const transcript = document.getElementById('cmd-transcript');
+        const welcome = document.getElementById('cmd-welcome');
+        const clearBtn = document.getElementById('cmd-clear');
+        const sendBtn = document.getElementById('cmd-send');
+
+        // Hide welcome, show clear
+        if (welcome) welcome.style.display = 'none';
+        if (clearBtn) clearBtn.style.display = '';
+
+        // Show user message
+        const userDiv = document.createElement('div');
+        userDiv.className = 'cmd-msg';
+        userDiv.innerHTML = `<div class="cmd-msg-label cmd-msg-label-right">You</div><div class="cmd-msg-user"><div class="cmd-msg-user-bubble">${esc(query)}</div></div>`;
+        transcript.appendChild(userDiv);
+
+        // Clear input and disable
+        input.value = '';
+        input.disabled = true;
+        if (sendBtn) sendBtn.disabled = true;
+
+        // Show loading
+        const loadDiv = document.createElement('div');
+        loadDiv.className = 'cmd-loading';
+        loadDiv.innerHTML = '<div class="spinner" style="width:16px;height:16px;border-width:2px;"></div> Thinking...';
+        transcript.appendChild(loadDiv);
+        transcript.scrollTop = transcript.scrollHeight;
+
+        try {
+            const res = await fetch('/api/v1/chat', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query }),
+            });
+
+            loadDiv.remove();
+
+            if (!res.ok) {
+                _appendCmdError('Server error: HTTP ' + res.status);
+                return;
+            }
+
+            const data = await res.json();
+            _appendCmdResponse(data);
+            _cmdMessages.push({ query, response: data });
+
+        } catch (e) {
+            loadDiv.remove();
+            _appendCmdError('Could not reach Axion: ' + e.message);
+        } finally {
+            input.disabled = false;
+            if (sendBtn) sendBtn.disabled = false;
+            input.focus();
+        }
+    };
+
+    function _appendCmdResponse(data) {
+        const transcript = document.getElementById('cmd-transcript');
+        const div = document.createElement('div');
+        div.className = 'cmd-msg';
+
+        // Determine card modifier
+        let cardClass = 'cmd-msg-response';
+        if (data.actions_taken?.length) cardClass += ' cmd-action';
+        else if (data.warnings?.length) cardClass += ' cmd-warning';
+
+        // Format answer — basic markdown: **bold**, bullet points
+        let answer = esc(data.answer || 'No response.');
+        answer = answer.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+        answer = answer.replace(/^  - /gm, '&nbsp;&nbsp;• ');
+        answer = answer.replace(/^- /gm, '• ');
+
+        // Meta chips
+        const metaParts = [];
+        if (data.mode) {
+            const dot = data.mode === 'ai-enhanced' ? 'green' : 'yellow';
+            metaParts.push(`<span class="cmd-meta-chip"><span class="dot ${dot}"></span>${esc(data.mode)}</span>`);
+        }
+        if (data.provider) {
+            metaParts.push(`<span class="cmd-meta-chip">${esc(data.provider)}</span>`);
+        }
+        if (data.context_summary) {
+            metaParts.push(`<span class="cmd-meta-chip">${esc(data.context_summary)}</span>`);
+        }
+        if (data.actions_taken?.length) {
+            for (const a of data.actions_taken) {
+                metaParts.push(`<span class="cmd-meta-chip" style="color:var(--success);">&#10003; ${esc(a.replace(/_/g, ' '))}</span>`);
+            }
+        }
+
+        // Warnings
+        let warningHtml = '';
+        if (data.warnings?.length) {
+            warningHtml = data.warnings.map(w =>
+                `<div class="text-xs" style="color:var(--warning);margin-top:0.35rem;">${esc(w)}</div>`
+            ).join('');
+        }
+
+        div.innerHTML = `<div class="cmd-msg-label">Axion</div><div class="${cardClass}">
+            <div class="cmd-msg-answer">${answer}</div>
+            ${warningHtml}
+            ${metaParts.length ? `<div class="cmd-msg-meta">${metaParts.join('')}</div>` : ''}
+        </div>`;
+
+        transcript.appendChild(div);
+        transcript.scrollTop = transcript.scrollHeight;
+    }
+
+    function _appendCmdError(msg) {
+        const transcript = document.getElementById('cmd-transcript');
+        const div = document.createElement('div');
+        div.className = 'cmd-msg';
+        div.innerHTML = `<div class="cmd-msg-response cmd-warning">
+            <div class="cmd-msg-answer">${esc(msg)}</div>
+            <div class="text-xs text-muted" style="margin-top:0.35rem;">Try again or check Health tab for system status.</div>
+        </div>`;
+        transcript.appendChild(div);
+        transcript.scrollTop = transcript.scrollHeight;
+    }
+
+    window.clearCommand = function () {
+        const transcript = document.getElementById('cmd-transcript');
+        const welcome = document.getElementById('cmd-welcome');
+        const clearBtn = document.getElementById('cmd-clear');
+        transcript.innerHTML = '';
+        if (welcome) { transcript.appendChild(welcome); welcome.style.display = ''; }
+        if (clearBtn) clearBtn.style.display = 'none';
+        _cmdMessages.length = 0;
+    };
+
+    // ================================================================
+    // Settings (localStorage-based)
+    // ================================================================
+    const SETTINGS_KEY = 'axion_settings';
+    const DEFAULT_SETTINGS = {
+        refreshInterval: 60000,
+        pageSize: 50,
+        displayCurrency: 'USD',
+        soundAlerts: false,
+        desktopNotif: false,
+        defaultTab: 'holdings',
+    };
+
+    function getSettings() {
+        try {
+            const raw = localStorage.getItem(SETTINGS_KEY);
+            return raw ? { ...DEFAULT_SETTINGS, ...JSON.parse(raw) } : { ...DEFAULT_SETTINGS };
+        } catch { return { ...DEFAULT_SETTINGS }; }
+    }
+
+    function applySettings(s) {
+        // Update refresh interval
+        // (sidebar auto-refresh removed — overview band handles live updates)
+    }
+
+    function loadSettings() {
+        const s = getSettings();
+        const el = (id) => document.getElementById(id);
+        if (el('setting-refresh')) el('setting-refresh').value = String(s.refreshInterval);
+        if (el('setting-page-size')) el('setting-page-size').value = String(s.pageSize);
+        if (el('setting-currency')) el('setting-currency').value = s.displayCurrency;
+        if (el('setting-sound')) el('setting-sound').checked = s.soundAlerts;
+        if (el('setting-desktop-notif')) el('setting-desktop-notif').checked = s.desktopNotif;
+        if (el('setting-default-tab')) el('setting-default-tab').value = s.defaultTab;
+    }
+
+    window.saveSettings = function () {
+        const s = {
+            refreshInterval: parseInt(document.getElementById('setting-refresh')?.value) || 60000,
+            pageSize: parseInt(document.getElementById('setting-page-size')?.value) || 50,
+            displayCurrency: document.getElementById('setting-currency')?.value || 'USD',
+            soundAlerts: document.getElementById('setting-sound')?.checked || false,
+            desktopNotif: document.getElementById('setting-desktop-notif')?.checked || false,
+            defaultTab: document.getElementById('setting-default-tab')?.value || 'holdings',
+        };
+        localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
+        applySettings(s);
+        showToast('Settings saved');
+
+        if (s.desktopNotif && Notification.permission === 'default') {
+            Notification.requestPermission();
+        }
+    };
+
+    window.resetSettings = function () {
+        localStorage.removeItem(SETTINGS_KEY);
+        loadSettings();
+        applySettings(DEFAULT_SETTINGS);
+        showToast('Settings reset to defaults');
+    };
+
+    // ================================================================
+    // Quit Axion
+    // ================================================================
+
+    window.quitAxion = async function () {
+        if (!confirm('Quit Axion?\n\nThis will stop the intelligence engine and close the application.')) return;
+        showToast('Shutting down Axion...');
+        try {
+            await fetch('/api/v1/shutdown', { method: 'POST' });
+        } catch (e) {
+            // Server may close before response — that's expected
+        }
+        // Also write quit signal file for the desktop shell
+        try {
+            await fetch('/api/v1/settings/quit-signal', { method: 'POST' });
+        } catch (e) { /* ignore */ }
+    };
+
+    // ================================================================
+    // API Key Configuration
+    // ================================================================
+
+    async function loadApiKeyStatus() {
+        try {
+            const res = await fetch('/api/v1/settings/api-key');
+            if (!res.ok) return;
+            const data = await res.json();
+            const dot = document.getElementById('api-key-dot');
+            const mode = document.getElementById('api-key-mode');
+            const hint = document.getElementById('api-key-hint');
+            const input = document.getElementById('setting-api-key');
+            const actions = document.getElementById('api-key-actions');
+            if (!dot || !mode) return;
+
+            if (data.configured) {
+                dot.className = 'status-dot status-connected';
+                mode.textContent = 'AI-enhanced mode' + (data.llm_available ? '' : ' (restart required)');
+                hint.textContent = 'Anthropic API key is configured. Classification, macro screening, impact analysis, and digest generation use Claude for richer results.';
+                if (input) { input.placeholder = data.masked_key || 'sk-ant-****'; input.value = ''; }
+                if (actions) actions.style.display = '';
+            } else {
+                dot.className = 'status-dot status-stopped';
+                mode.textContent = 'Rule-based mode';
+                hint.textContent = 'No API key configured. Analysis uses built-in rules and keyword matching. Add an Anthropic API key below to enable AI-enhanced analysis.';
+                if (input) { input.placeholder = 'sk-ant-...'; input.value = ''; }
+                if (actions) actions.style.display = 'none';
+            }
+        } catch (e) {
+            console.warn('Failed to load API key status:', e);
+        }
+    }
+
+    window.saveApiKey = async function () {
+        const input = document.getElementById('setting-api-key');
+        const btn = document.getElementById('save-api-key-btn');
+        const key = (input?.value || '').trim();
+        if (!key) { showToast('Please enter an API key.', 'warning'); return; }
+        if (!key.startsWith('sk-ant-')) { showToast("Key must start with 'sk-ant-'.", 'warning'); return; }
+
+        try {
+            await withLoading(btn, 'Saving...', async () => {
+                const res = await fetch('/api/v1/settings/api-key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ api_key: key }),
+                });
+                const data = await res.json();
+                if (!res.ok) { showToast(data.detail || 'Save failed.', 'error'); return; }
+                showToast(data.message, 'success');
+                input.value = '';
+                await loadApiKeyStatus();
+            });
+        } catch (e) {
+            showToast('Failed to save key: ' + e.message, 'error');
+        }
+    };
+
+    window.removeApiKey = async function () {
+        if (!confirm('Remove the API key and switch to rule-based mode?')) return;
+        try {
+            const res = await fetch('/api/v1/settings/api-key', { method: 'DELETE' });
+            const data = await res.json();
+            if (!res.ok) { showToast(data.detail || 'Remove failed.', 'error'); return; }
+            showToast(data.message, 'success');
+            await loadApiKeyStatus();
+        } catch (e) {
+            showToast('Failed to remove key: ' + e.message, 'error');
+        }
+    };
+
+    // Patch the tab loader so API key status loads with the Settings tab
+    tabLoaders.settings = function () {
+        loadSettings();
+        loadApiKeyStatus();
+    };
+
+    // ================================================================
+    // Holding Detail Slide-out
+    // ================================================================
+    window.openHoldingDetail = async function (holdingId) {
+        const panel = $('#holding-detail');
+        const overlay = $('#detail-overlay');
+        const body = $('#detail-body');
+        if (!panel) return;
+
+        panel.classList.add('open');
+        overlay.classList.add('open');
+        body.innerHTML = '<div class="spinner">Loading...</div>';
+
+        const h = allHoldings.find(x => x.id === holdingId);
+        if (!h) {
+            body.innerHTML = '<div class="error-state">Holding not found</div>';
+            return;
+        }
+
+        const mv = h.market_value || ((h.current_price || 0) * (h.quantity || 0));
+        const cost = (h.quantity || 0) * (h.avg_cost_basis || 0);
+        const pnl = mv - cost;
+        const pnlPct = cost ? (pnl / cost) : 0;
+
+        $('#detail-title').textContent = h.ticker;
+
+        // Fetch related data in parallel
+        const [events, notes, alerts] = await Promise.all([
+            fetchJSON(`${API.events}?ticker=${h.ticker}&limit=10`).catch(() => []),
+            fetchJSON(`${API.analysisNotes}?ticker=${h.ticker}`).catch(() => []),
+            fetchJSON(`${API.alertsActive}?ticker=${h.ticker}`).catch(() => []),
+        ]);
+
+        const eventList = ensureArray(events, 'items', 'events');
+        const noteList = ensureArray(notes, 'items', 'notes');
+        const alertList = ensureArray(alerts, 'items', 'alerts');
+
+        body.innerHTML = `
+            <div class="detail-section">
+                <h4>Position</h4>
+                <div class="detail-row"><span class="label">Ticker</span><span class="value">${esc(h.ticker)}</span></div>
+                <div class="detail-row"><span class="label">Name</span><span class="value" style="font-family:inherit">${esc(h.name || h.company_name || '\u2014')}</span></div>
+                <div class="detail-row"><span class="label">Sector</span><span class="value" style="font-family:inherit">${esc(h.sector || '\u2014')}</span></div>
+                <div class="detail-row"><span class="label">Geography</span><span class="value" style="font-family:inherit">${esc(h.geography || '\u2014')}</span></div>
+                <div class="detail-row"><span class="label">Shares</span><span class="value">${formatNum(h.quantity, 0)}</span></div>
+                <div class="detail-row"><span class="label">Avg Cost</span><span class="value">${formatNum(h.avg_cost_basis)}</span></div>
+                <div class="detail-row"><span class="label">Current Price</span><span class="value">${formatNum(h.current_price)}</span></div>
+                <div class="detail-row"><span class="label">Market Value</span><span class="value">${formatCurrency(mv)}</span></div>
+                <div class="detail-row"><span class="label">Weight</span><span class="value">${h.weight_pct != null ? h.weight_pct.toFixed(1) + '%' : '\u2014'}</span></div>
+                <div class="detail-row"><span class="label">P&L</span><span class="value ${pnlClass(pnl)}">${formatCurrency(pnl)}</span></div>
+                <div class="detail-row"><span class="label">P&L %</span><span class="value ${pnlClass(pnlPct)}">${formatPct(pnlPct)}</span></div>
+            </div>
+
+            <div class="detail-section">
+                <h4>Risk Alerts (${alertList.length})</h4>
+                ${alertList.length ? alertList.map(a => `
+                    <div style="padding:0.3rem 0;border-bottom:1px solid var(--border);font-size:0.82rem;">
+                        ${severityBadge(a.severity)} <span style="margin-left:0.3rem">${esc(a.title)}</span>
+                    </div>`).join('') : '<span class="text-sm text-muted">No active alerts</span>'}
+            </div>
+
+            <div class="detail-section">
+                <h4>Recent Events (${eventList.length})</h4>
+                ${eventList.length ? `<table class="detail-mini-table">
+                    <tbody>${eventList.slice(0, 8).map(e => `<tr>
+                        <td>${e.event_type ? `<span class="badge badge-muted">${esc(titleCase(e.event_type))}</span>` : ''}</td>
+                        <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(e.title)}">${esc(e.title || 'Untitled')}</td>
+                        <td class="text-muted text-xs">${formatDateShort(e.published_at)}</td>
+                    </tr>`).join('')}</tbody>
+                </table>` : '<span class="text-sm text-muted">No events</span>'}
+            </div>
+
+            <div class="detail-section">
+                <h4>Analysis Notes (${noteList.length})</h4>
+                ${noteList.length ? noteList.slice(0, 5).map(n => {
+                    let c = {};
+                    try { c = JSON.parse(n.content || '{}'); } catch {}
+                    const dir = c.impact_direction || 'neutral';
+                    const dirCls = dir === 'positive' ? 'text-success' : dir === 'negative' ? 'text-danger' : 'text-muted';
+                    return `<div style="padding:0.35rem 0;border-bottom:1px solid var(--border);font-size:0.82rem;">
+                        <span class="${dirCls} font-medium">${esc(dir)}</span>
+                        ${c.impact_magnitude ? `<span class="badge badge-muted" style="margin-left:0.3rem">${esc(c.impact_magnitude)}</span>` : ''}
+                        <div class="text-xs text-muted mt-1" style="max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${esc(c.short_term_outlook || '')}</div>
+                    </div>`;
+                }).join('') : '<span class="text-sm text-muted">No analysis notes</span>'}
+            </div>
+
+            <div class="mt-3" style="display:flex;gap:0.5rem;">
+                <button class="btn btn-outline btn-sm" onclick="openEditHolding('${esc(h.id)}')">Edit</button>
+                <button class="btn btn-outline btn-sm" onclick="openRecordTrade('${esc(h.ticker)}')">Record Trade</button>
+            </div>`;
+    };
+
+    window.closeHoldingDetail = function () {
+        const panel = $('#holding-detail');
+        const overlay = $('#detail-overlay');
+        if (panel) panel.classList.remove('open');
+        if (overlay) overlay.classList.remove('open');
+    };
+
+    // ================================================================
+    // WebSocket Real-Time Updates
+    // ================================================================
+    function connectWebSocket() {
+        const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${proto}//${location.host}/api/v1/ws`;
+        let ws;
+        try {
+            ws = new WebSocket(wsUrl);
+        } catch { return; }
+
+        ws.onmessage = (event) => {
+            try {
+                const msg = JSON.parse(event.data);
+                if (msg.type === 'alert') {
+                    // (sidebar removed)
+                    if ($('.tab-link.active')?.dataset.tab === 'alerts') refreshTab('alerts');
+                    const s = getSettings();
+                    if (s.desktopNotif && Notification.permission === 'granted') {
+                        new Notification('Axion Alert', { body: msg.title || 'New alert', icon: '/dashboard/favicon.ico' });
+                    }
+                } else if (msg.type === 'agent_complete') {
+                    showToast(`${msg.agent || 'Agent'} completed`);
+                    const active = $('.tab-link.active')?.dataset.tab;
+                    if (active === 'health') refreshTab('health');
+                } else if (msg.type === 'event') {
+                    if ($('.tab-link.active')?.dataset.tab === 'events') refreshTab('events');
+                } else if (msg.type === 'holding_update') {
+                    refreshTab('holdings');
+                    refreshTab('exposures');
+                }
+            } catch {}
+        };
+
+        ws.onclose = () => {
+            setTimeout(connectWebSocket, 5000);
+        };
+
+        ws.onerror = () => {
+            ws.close();
+        };
+    }
+
+    // ================================================================
+    // Keyboard Shortcuts
+    // ================================================================
+    document.addEventListener('keydown', function (e) {
+        // Escape closes any open modal
+        if (e.key === 'Escape') {
+            $$('dialog[open]').forEach(d => d.close());
+        }
+        // Ctrl+N / Cmd+N = Add Holding (when not in input)
+        if ((e.ctrlKey || e.metaKey) && e.key === 'n' && !e.target.closest('input, textarea, select, dialog')) {
+            e.preventDefault();
+            window.openAddHolding();
+        }
+    });
+
+    // ================================================================
+    // Initialization
+    // ================================================================
+    document.addEventListener('DOMContentLoaded', function () {
+        // Check nav overflow — toggle fade mask
+        function checkNavOverflow() {
+            const tabs = document.querySelector('.nav-tabs');
+            if (tabs) tabs.classList.toggle('no-overflow', tabs.scrollWidth <= tabs.clientWidth + 2);
+        }
+        checkNavOverflow();
+        window.addEventListener('resize', checkNavOverflow);
+
+        // Populate currency dropdowns
+        populateCurrencySelects();
+
+        // Tab navigation
+        $$('.tab-link').forEach(link => {
+            link.addEventListener('click', () => switchTab(link.dataset.tab));
+        });
+
+        // Holdings search
+        const search = $('#holdings-search');
+        if (search) {
+            search.addEventListener('input', () => filterHoldings(search.value));
+        }
+
+        // Audit filter
+        const auditFilter = $('#audit-filter');
+        if (auditFilter) {
+            auditFilter.addEventListener('change', () => {
+                tabLoaded.audit = true;
+                loadAudit(auditFilter.value);
+            });
+        }
+
+        // Events search
+        const eventsSearch = $('#events-search');
+        if (eventsSearch) {
+            eventsSearch.addEventListener('input', () => filterEvents(eventsSearch.value));
+        }
+
+        // Analysis filter
+        const analysisFilter = $('#analysis-filter');
+        if (analysisFilter) {
+            analysisFilter.addEventListener('change', () => {
+                tabLoaded.analysis = true;
+                loadAnalysisNotes(analysisFilter.value);
+            });
+        }
+
+        // Live previews for forms
+        ['ah-quantity', 'ah-price', 'ah-cost', 'ah-currency'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('input', updateAddPreview);
+        });
+        ['tr-quantity', 'tr-price', 'tr-type', 'tr-currency'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.addEventListener('input', updateTradePreview);
+            if (el) el.addEventListener('change', updateTradePreview);
+        });
+
+        // Table sort delegation
+        document.addEventListener('click', (e) => {
+            const th = e.target.closest('th.sortable');
+            if (!th) return;
+            const col = th.dataset.sort;
+            if (!col) return;
+            const panel = th.closest('.tab-panel');
+            if (!panel) return;
+            const panelId = panel.id;
+            if (panelId === 'tab-events') {
+                sortTable('events-table', allEvents, renderEventsTable, col);
+            } else if (panelId === 'tab-holdings') {
+                sortTable('holdings-table', allHoldings, renderHoldingsTable, col);
+            }
+        });
+
+        // Alert acknowledge via event delegation
+        const alertsContent = $('#alerts-content');
+        if (alertsContent) {
+            alertsContent.addEventListener('click', (e) => {
+                const btn = e.target.closest('.btn-ack');
+                if (btn && btn.dataset.alertId) {
+                    window.acknowledgeAlert(btn.dataset.alertId);
+                }
+            });
+        }
+
+        // Modal close buttons via event delegation
+        document.addEventListener('click', (e) => {
+            const btn = e.target.closest('[data-close-modal]');
+            if (btn) {
+                const dialog = btn.closest('dialog');
+                if (dialog) dialog.close();
+            }
+        });
+
+        // Drop zone drag & drop
+        const dz = $('#drop-zone');
+        if (dz) {
+            dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+            dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+            dz.addEventListener('drop', e => {
+                e.preventDefault();
+                dz.classList.remove('drag-over');
+                const fi = $('#portfolio-file');
+                fi.files = e.dataTransfer.files;
+                window.onFileSelected(fi);
+            });
+        }
+
+        // Apply saved settings
+        const savedSettings = getSettings();
+        const defaultTab = savedSettings.defaultTab || 'holdings';
+
+        // Load default tab
+        switchTab(defaultTab);
+
+        // Apply refresh interval from settings
+        applySettings(savedSettings);
+
+        // Tab badge counts (update every 60s alongside sidebar)
+        async function updateTabBadges() {
+            try {
+                const [alerts, events] = await Promise.all([
+                    fetchJSON(API.alertsActive + '?limit=1000').catch(() => []),
+                    fetchJSON(API.events + '?limit=1000').catch(() => []),
+                ]);
+                const alertList = ensureArray(alerts, 'items', 'alerts');
+                const eventList = ensureArray(events, 'items', 'events');
+                const ab = document.getElementById('badge-alerts');
+                const eb = document.getElementById('badge-events');
+                if (ab) { if (alertList.length > 0) { ab.textContent = alertList.length > 99 ? '99+' : alertList.length; ab.hidden = false; ab.className = 'tab-badge badge-warning'; } else { ab.hidden = true; } }
+                if (eb) { if (eventList.length > 0) { eb.textContent = eventList.length > 99 ? '99+' : eventList.length; eb.hidden = false; } else { eb.hidden = true; } }
+            } catch {}
+        }
+        updateTabBadges();
+        setInterval(updateTabBadges, 60000);
+
+        // Overview band auto-refresh (health chips update every 60s)
+        setInterval(async () => {
+            try {
+                const h = await fetchJSON(API.health).catch(() => null);
+                if (!h) return;
+                const chips = document.querySelectorAll('.overview-chip');
+                if (chips.length >= 3) {
+                    const srcChip = Array.from(chips).find(c => c.textContent.includes('sources'));
+                    const collChip = Array.from(chips).find(c => c.textContent.includes('Collected'));
+                    if (srcChip) srcChip.textContent = `${h.sources_active ?? '?'} sources`;
+                    if (collChip) collChip.textContent = `Collected ${h.last_collection ? timeAgo(h.last_collection) : 'never'}`;
+                }
+                window._lastHealthData = h;
+            } catch {}
+        }, 60000);
+
+        // Connect WebSocket for real-time updates
+        connectWebSocket();
+    });
+
+    // Cleanup on page unload
+    window.addEventListener('beforeunload', () => {
+        // (sidebar cleanup removed)
+    });
+})();

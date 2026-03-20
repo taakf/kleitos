@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Axion — Portfolio Intelligence</title>
+    <link rel="icon" href="/dashboard/favicon.svg" type="image/svg+xml">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/dashboard/css/styles.css?v=23">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="nav">
+        <div class="nav-container">
+            <div class="nav-brand">AXION <span>Portfolio Intelligence</span> <span class="brand-maker">by 4Labs</span></div>
+            <div class="nav-tabs" role="tablist" aria-label="Dashboard navigation">
+                <button class="tab-link active" data-tab="portfolio" role="tab" aria-selected="true">Portfolio</button>
+                <button class="tab-link" data-tab="intelligence" role="tab" aria-selected="false">Intelligence <span id="badge-events" class="tab-badge" hidden></span></button>
+                <button class="tab-link" data-tab="alerts" role="tab" aria-selected="false">Alerts <span id="badge-alerts" class="tab-badge" hidden></span></button>
+                <button class="tab-link" data-tab="command" role="tab" aria-selected="false">Command</button>
+                <button class="tab-link" data-tab="settings" role="tab" aria-selected="false">Settings</button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Layout -->
+    <div class="container">
+        <div class="main-grid">
+            <!-- Content Area -->
+            <div id="main-content">
+
+                <!-- Portfolio Tab (parent) -->
+                <div id="tab-portfolio" class="tab-panel active" role="tabpanel">
+                    <div class="sub-tabs" role="tablist" aria-label="Portfolio sections">
+                        <button class="sub-tab active" data-subtab="holdings" data-parent="portfolio">Holdings</button>
+                        <button class="sub-tab" data-subtab="exposures" data-parent="portfolio">Exposures</button>
+                    </div>
+
+                    <!-- Holdings sub-tab -->
+                    <div id="subtab-holdings" class="sub-panel active">
+                        <div id="holdings-summary"></div>
+                        <div class="tab-header">
+                            <div class="tab-actions">
+                                <input type="search" id="holdings-search" class="input search-input" placeholder="Search...">
+                                <button class="btn btn-primary" onclick="openAddHolding()">+ Add</button>
+                                <button class="btn btn-outline" onclick="uploadPortfolio()">Upload</button>
+                                <button class="btn btn-outline" onclick="openRecordTrade()">Trade</button>
+                                <button class="btn btn-ghost" onclick="exportCSV('portfolio','csv')" title="Export CSV">CSV</button>
+                                <button class="btn btn-ghost" onclick="exportCSV('portfolio','xlsx')" title="Export Excel">XLSX</button>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div id="holdings-table"><div class="spinner">Loading holdings...</div></div>
+                        </div>
+                    </div>
+
+                    <!-- Exposures sub-tab -->
+                    <div id="subtab-exposures" class="sub-panel">
+                        <div class="tab-header">
+                            <h2>Portfolio Exposures</h2>
+                        </div>
+                        <div class="exposure-grid" id="exposure-cards">
+                            <div class="card"><div class="spinner">Loading...</div></div>
+                            <div class="card"><div class="spinner">Loading...</div></div>
+                            <div class="card"><div class="spinner">Loading...</div></div>
+                            <div class="card"><div class="spinner">Loading...</div></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Intelligence Tab (parent) -->
+                <div id="tab-intelligence" class="tab-panel" role="tabpanel">
+                    <div class="sub-tabs" role="tablist" aria-label="Intelligence sections">
+                        <button class="sub-tab active" data-subtab="events" data-parent="intelligence">Events</button>
+                        <button class="sub-tab" data-subtab="analysis" data-parent="intelligence">Analysis</button>
+                        <button class="sub-tab" data-subtab="digest" data-parent="intelligence">Digest</button>
+                    </div>
+
+                    <!-- Events sub-tab -->
+                    <div id="subtab-events" class="sub-panel active">
+                        <div class="tab-header">
+                            <h2>Events</h2>
+                            <div class="tab-actions">
+                                <input type="search" id="events-search" class="input search-input" placeholder="Search events...">
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div id="events-table"><div class="spinner">Loading events...</div></div>
+                        </div>
+                    </div>
+
+                    <!-- Analysis sub-tab -->
+                    <div id="subtab-analysis" class="sub-panel">
+                        <div class="tab-header">
+                            <h2>Analysis Notes</h2>
+                            <div class="tab-actions">
+                                <select id="analysis-filter" class="select-input" style="width:180px;">
+                                    <option value="">All tickers</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div id="analysis-table"><div class="spinner">Loading analysis notes...</div></div>
+                        </div>
+                    </div>
+
+                    <!-- Digest sub-tab -->
+                    <div id="subtab-digest" class="sub-panel">
+                        <div class="tab-header">
+                            <h2>Intelligence Digest</h2>
+                            <button class="btn btn-outline" onclick="generateDigest()">Generate Fresh Digest</button>
+                        </div>
+                        <div id="digest-content"><div class="spinner">Loading latest digest...</div></div>
+                    </div>
+                </div>
+
+                <!-- Alerts Tab -->
+                <div id="tab-alerts" class="tab-panel" role="tabpanel">
+                    <div class="tab-header">
+                        <h2>Alerts</h2>
+                    </div>
+                    <div id="alerts-content"><div class="spinner">Loading alerts...</div></div>
+                </div>
+
+                <!-- Audit (accessible from Settings, no top-level tab) -->
+                <div id="tab-audit" class="tab-panel" role="tabpanel">
+                    <div class="tab-header">
+                        <h2>Audit Trail</h2>
+                        <div class="tab-actions">
+                            <button class="btn btn-ghost text-xs" onclick="switchTab('settings')">&larr; Settings</button>
+                            <select id="audit-filter" class="select-input" style="width:200px;">
+                                <option value="">All entities</option>
+                                <option value="holding">Holdings</option>
+                                <option value="trade">Trades</option>
+                                <option value="event">Events</option>
+                                <option value="classification">Classifications</option>
+                                <option value="alert">Alerts</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div id="audit-content"><div class="spinner">Loading audit trail...</div></div>
+                    </div>
+                </div>
+
+                <!-- Command Center Tab -->
+                <div id="tab-command" class="tab-panel" role="tabpanel">
+                    <div class="cmd-container">
+                        <div class="cmd-transcript" id="cmd-transcript">
+                            <div class="cmd-welcome" id="cmd-welcome">
+                                <div class="cmd-welcome-mark">A</div>
+                                <h3>Command Center</h3>
+                                <p class="text-sm text-muted" style="max-width:400px;line-height:1.5;">Query your portfolio, review events and risks, or trigger intelligence workflows.</p>
+                                <div class="cmd-prompts" id="cmd-prompts">
+                                    <button class="cmd-prompt-chip" data-prompt="What matters most in my portfolio today?">What matters most today?</button>
+                                    <button class="cmd-prompt-chip" data-prompt="Summarize my top risks">Top risks</button>
+                                    <button class="cmd-prompt-chip" data-prompt="Show recent events affecting my holdings">Recent events</button>
+                                    <button class="cmd-prompt-chip" data-prompt="What is my portfolio exposure breakdown?">Exposure breakdown</button>
+                                    <span class="cmd-prompt-divider"></span>
+                                    <button class="cmd-prompt-chip cmd-prompt-action" data-prompt="Run collection now">&#8635; Run collection</button>
+                                    <button class="cmd-prompt-chip cmd-prompt-action" data-prompt="Generate a digest now">&#9654; Generate digest</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="cmd-composer">
+                            <div class="cmd-input-row">
+                                <input type="text" id="cmd-input" class="cmd-input" placeholder="Ask Axion about your portfolio..." autocomplete="off" spellcheck="false">
+                                <button class="btn btn-primary cmd-send" id="cmd-send" onclick="sendCommand()">
+                                    <span id="cmd-send-label">Send</span>
+                                </button>
+                            </div>
+                            <div class="cmd-footer">
+                                <button class="btn btn-ghost text-xs" id="cmd-clear" onclick="clearCommand()" style="display:none;">Clear</button>
+                                <span class="cmd-mode" id="cmd-mode"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Settings Tab (includes Health, links to Audit) -->
+                <div id="tab-settings" class="tab-panel" role="tabpanel">
+                    <div class="tab-header">
+                        <h2>Settings</h2>
+                    </div>
+
+                    <!-- AI Configuration -->
+                    <div class="card" id="ai-config-card" style="margin-bottom:1rem;">
+                        <div class="card-header">AI Configuration</div>
+
+                        <!-- Restart-needed banner (hidden by default) -->
+                        <div id="ai-restart-banner" class="restart-banner" style="display:none;">
+                            <span>Changes saved. Restart Axion to apply.</span>
+                            <button class="btn btn-sm btn-outline" onclick="quitAxion()" style="margin-left:0.5rem;font-size:0.72rem;">Restart Now</button>
+                        </div>
+
+                        <!-- AI Status -->
+                        <div class="settings-group" style="flex-direction:column;align-items:flex-start;">
+                            <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.25rem;">
+                                <span id="api-key-dot" class="status-dot"></span>
+                                <span id="api-key-mode" class="text-sm"></span>
+                            </div>
+                            <p id="api-key-hint" class="text-xs text-muted" style="line-height:1.5;max-width:600px;"></p>
+                        </div>
+
+                        <!-- Capabilities reference -->
+                        <div id="ai-capabilities-ref" class="capabilities-ref">
+                            <div class="capabilities-ref-row">
+                                <span class="capabilities-ref-label"><span class="dot green"></span>Core features <span class="text-xs text-muted">(always available)</span></span>
+                                <span class="capabilities-ref-text">Portfolio tracking, rule-based alerts, news collection, CSV/PDF import, holdings management, trade recording, exposure analysis.</span>
+                            </div>
+                            <div class="capabilities-ref-row" id="ai-features-row">
+                                <span class="capabilities-ref-label"><span class="dot yellow"></span>AI features <span class="text-xs text-muted">(requires provider key)</span></span>
+                                <span class="capabilities-ref-text">Event classification, analysis notes, intelligence digests, natural language chat, image/scanned PDF extraction.</span>
+                            </div>
+                        </div>
+
+                        <!-- Primary AI -->
+                        <div class="settings-group" style="flex-direction:column;align-items:flex-start;">
+                            <label for="setting-primary-provider" class="text-sm" style="margin-bottom:0.35rem;">Primary AI</label>
+                            <select id="setting-primary-provider" class="select-input" style="width:240px;">
+                                <option value="">None — AI disabled</option>
+                                <option value="anthropic">Anthropic (Claude)</option>
+                                <option value="openai">OpenAI (GPT)</option>
+                                <option value="google">Google (Gemini)</option>
+                            </select>
+                            <p class="text-xs text-muted" style="margin-top:0.25rem;line-height:1.4;">
+                                AI enables: event classification, portfolio analysis, digest generation, Command Center chat, and image/scanned-PDF extraction.
+                            </p>
+                        </div>
+
+                        <!-- Primary key entry (shown when a primary provider is selected) -->
+                        <div id="provider-primary-key-card" class="ai-provider-card" style="display:none;">
+                            <div style="display:flex;gap:0.5rem;align-items:center;">
+                                <input type="password" id="setting-primary-key" class="select-input" style="flex:1;font-family:monospace;font-size:0.82rem;min-width:0;" placeholder="API key..." autocomplete="off" spellcheck="false">
+                                <button class="btn btn-primary" onclick="saveProviderKey('primary')" style="white-space:nowrap;">Save Key</button>
+                            </div>
+                            <div class="ai-provider-status" id="primary-key-status">
+                                <span class="text-xs text-muted">No key configured</span>
+                            </div>
+                        </div>
+
+                        <!-- Fallback AI -->
+                        <div id="fallback-section" class="settings-group" style="flex-direction:column;align-items:flex-start;display:none;">
+                            <label for="setting-backup-provider" class="text-sm" style="margin-bottom:0.35rem;">Fallback AI <span class="text-xs text-muted">(optional)</span></label>
+                            <select id="setting-backup-provider" class="select-input" style="width:240px;">
+                                <option value="">None</option>
+                                <option value="anthropic">Anthropic (Claude)</option>
+                                <option value="openai">OpenAI (GPT)</option>
+                                <option value="google">Google (Gemini)</option>
+                            </select>
+                            <p class="text-xs text-muted" style="margin-top:0.25rem;line-height:1.4;">
+                                If the primary provider fails (rate limit, outage), Axion automatically retries with the fallback.
+                            </p>
+                        </div>
+
+                        <!-- Fallback key entry -->
+                        <div id="provider-backup-key-card" class="ai-provider-card" style="display:none;">
+                            <div style="display:flex;gap:0.5rem;align-items:center;">
+                                <input type="password" id="setting-backup-key" class="select-input" style="flex:1;font-family:monospace;font-size:0.82rem;min-width:0;" placeholder="API key..." autocomplete="off" spellcheck="false">
+                                <button class="btn btn-primary" onclick="saveProviderKey('backup')" style="white-space:nowrap;">Save Key</button>
+                            </div>
+                            <div class="ai-provider-status" id="backup-key-status">
+                                <span class="text-xs text-muted">No key configured</span>
+                            </div>
+                        </div>
+
+                        <!-- Save provider selection -->
+                        <div style="margin-top:0.75rem;display:flex;align-items:center;gap:0.75rem;">
+                            <button class="btn btn-primary" id="save-provider-btn" onclick="saveProviderSelection()">Save Provider Selection</button>
+                            <span id="provider-save-status" class="text-xs text-muted"></span>
+                        </div>
+                        <p class="text-xs text-muted" style="margin-top:0.5rem;padding:0 0.1rem;">Provider selection and API keys are stored in ~/.axion.env. Restart Axion after changes.</p>
+                        <div id="api-key-actions" class="settings-group" style="display:none;margin-top:0.5rem;">
+                            <button class="btn btn-ghost text-xs" onclick="removeApiKey()">Remove all keys and disable AI</button>
+                        </div>
+                    </div>
+
+                    <!-- Telegram Integration -->
+                    <div class="card" id="telegram-config-card" style="margin-bottom:1rem;">
+                        <div class="card-header">Telegram Notifications</div>
+                        <div class="settings-group" style="flex-direction:column;align-items:flex-start;">
+                            <div id="telegram-status" style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.3rem;">
+                                <span class="status-dot status-stopped" id="telegram-dot"></span>
+                                <span class="text-sm" id="telegram-label">Not configured</span>
+                            </div>
+                            <div id="telegram-help" class="text-xs text-muted" style="line-height:1.5;max-width:600px;">
+                                <p style="margin-bottom:0.3rem;">Axion can send portfolio alerts and digests via Telegram.</p>
+                                <p>To set up: create a bot via <strong>@BotFather</strong> on Telegram, then add the token and chat ID to <code>~/.axion.env</code>:</p>
+                                <code style="display:block;margin:0.4rem 0;padding:0.35rem 0.5rem;background:var(--bg-secondary);border-radius:4px;font-size:0.78rem;">KLEITOS_TELEGRAM_TOKEN=your-bot-token<br>KLEITOS_TELEGRAM_CHAT_ID=your-chat-id</code>
+                                <p>Restart Axion after adding the token.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Preferences (compact row) -->
+                    <div class="settings-grid" style="margin-bottom:1rem;">
+                        <div class="card">
+                            <div class="card-header">Display</div>
+                            <div class="settings-group">
+                                <label for="setting-refresh">Auto-refresh</label>
+                                <select id="setting-refresh" class="select-input" style="width:160px;">
+                                    <option value="0">Off</option>
+                                    <option value="30000">30 seconds</option>
+                                    <option value="60000" selected>1 minute</option>
+                                    <option value="120000">2 minutes</option>
+                                    <option value="300000">5 minutes</option>
+                                </select>
+                            </div>
+                            <div class="settings-group">
+                                <label for="setting-page-size">Page size</label>
+                                <select id="setting-page-size" class="select-input" style="width:160px;">
+                                    <option value="25">25 rows</option>
+                                    <option value="50" selected>50 rows</option>
+                                    <option value="100">100 rows</option>
+                                    <option value="200">200 rows</option>
+                                </select>
+                            </div>
+                            <div class="settings-group">
+                                <label for="setting-currency">Currency</label>
+                                <select id="setting-currency" class="select-input" style="width:160px;">
+                                    <option value="USD" selected>USD ($)</option>
+                                    <option value="EUR">EUR (&euro;)</option>
+                                    <option value="GBP">GBP (&pound;)</option>
+                                    <option value="CHF">CHF</option>
+                                    <option value="JPY">JPY (&yen;)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div class="card-header">Preferences</div>
+                            <div class="settings-group">
+                                <label for="setting-default-tab">Default tab</label>
+                                <select id="setting-default-tab" class="select-input" style="width:160px;">
+                                    <option value="portfolio" selected>Portfolio</option>
+                                    <option value="intelligence">Intelligence</option>
+                                    <option value="alerts">Alerts</option>
+                                    <option value="command">Command</option>
+                                </select>
+                            </div>
+                            <div class="settings-group">
+                                <label class="toggle-label">
+                                    <input type="checkbox" id="setting-sound" class="toggle-input">
+                                    <span>Alert sounds</span>
+                                </label>
+                            </div>
+                            <div class="settings-group">
+                                <label class="toggle-label">
+                                    <input type="checkbox" id="setting-desktop-notif" class="toggle-input">
+                                    <span>Desktop notifications</span>
+                                </label>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- System Health (folded in) -->
+                    <div class="card" style="margin-bottom:1rem;">
+                        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+                            System Health
+                            <button class="btn btn-ghost text-xs" onclick="switchTab('audit')">View Audit Trail &rarr;</button>
+                        </div>
+                        <div id="health-content"><div class="spinner">Checking system health...</div></div>
+                        <h4 class="mt-3 mb-2" style="padding:0 0.1rem;">Agent Activity</h4>
+                        <div id="agent-status"><div class="spinner">Loading agents...</div></div>
+                        <h4 class="mt-3 mb-2" style="padding:0 0.1rem;">Source Health</h4>
+                        <div id="source-health"><div class="spinner">Loading sources...</div></div>
+                    </div>
+
+                    <!-- System actions -->
+                    <div class="card" style="margin-bottom:1rem;">
+                        <div class="card-header">System</div>
+                        <div class="settings-group" style="flex-direction:column;align-items:flex-start;">
+                            <p class="text-xs text-muted" style="margin-bottom:0.75rem; line-height:1.6;">
+                                Closing the window keeps Axion running in the background.
+                                To fully stop the application, use the button below.
+                            </p>
+                            <button class="btn btn-ghost text-danger" onclick="quitAxion()" style="border-color: var(--danger);">
+                                Quit Axion
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="mt-3">
+                        <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+                        <button class="btn btn-ghost" onclick="resetSettings()">Reset to Defaults</button>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Holding Detail Slide-out -->
+            <div id="holding-detail" class="detail-panel" aria-label="Holding Detail">
+                <div class="detail-header">
+                    <h3 id="detail-title">Holding Detail</h3>
+                    <button class="btn btn-ghost" onclick="closeHoldingDetail()">&times;</button>
+                </div>
+                <div id="detail-body"><div class="spinner">Loading...</div></div>
+            </div>
+
+            <!-- Action result toast target (used by runAction) -->
+            <div id="action-result" style="display:none;"></div>
+        </div>
+    </div>
+
+    <!-- Overlay for detail panel -->
+    <div id="detail-overlay" class="detail-overlay" onclick="closeHoldingDetail()"></div>
+
+    <!-- ==================== MODALS ==================== -->
+
+    <!-- Reset Portfolio Modal -->
+    <dialog id="reset-modal" aria-label="Reset Portfolio">
+        <div class="modal-header">
+            <h3 style="color:var(--danger);">Reset All Data</h3>
+            <button class="btn btn-ghost" data-close-modal>&times;</button>
+        </div>
+        <div class="modal-body">
+            <p>This will permanently delete <strong>all</strong> portfolio data:</p>
+            <ul style="margin:0.75rem 0;padding-left:1.25rem;font-size:0.9rem;color:var(--text-muted);">
+                <li>All holdings and trades</li>
+                <li>All events and analysis notes</li>
+                <li>All alerts and digests</li>
+                <li>All agent runs and audit logs</li>
+            </ul>
+            <p class="text-sm" style="margin-top:0.75rem;">Type <strong>RESET</strong> to confirm:</p>
+            <input type="text" id="reset-confirm-input" class="input" placeholder="Type RESET" style="margin-top:0.5rem;">
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button class="btn btn-danger" id="reset-btn" onclick="confirmResetPortfolio()">Reset Everything</button>
+        </div>
+    </dialog>
+
+    <!-- Upload Portfolio Modal -->
+    <dialog id="upload-modal" aria-label="Upload Portfolio">
+        <div class="modal-header">
+            <h3>Upload Portfolio</h3>
+            <button class="btn btn-ghost" data-close-modal>&times;</button>
+        </div>
+        <form id="upload-form" enctype="multipart/form-data">
+            <div class="drop-zone" id="drop-zone" onclick="document.getElementById('portfolio-file').click()">
+                <div style="font-size:1.5rem;margin-bottom:0.5rem;">&#128196;</div>
+                <p>Click to select or drag & drop</p>
+                <p class="text-xs text-muted mt-2">CSV, PDF, or image (PNG/JPG) with portfolio data</p>
+            </div>
+            <input type="file" id="portfolio-file" name="file" accept=".csv,.pdf,.png,.jpg,.jpeg" style="display:none;" onchange="onFileSelected(this)">
+            <div id="file-info" class="mt-2 text-sm text-muted"></div>
+            <div id="upload-ai-notice" class="mt-2 text-xs" style="display:none;padding:0.5rem 0.75rem;border-radius:var(--radius);">
+            </div>
+        </form>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button class="btn btn-primary" id="upload-btn" onclick="submitUpload()" disabled>Upload</button>
+        </div>
+    </dialog>
+
+    <!-- Add Holding Modal -->
+    <dialog id="add-holding-modal" aria-label="Add Holding">
+        <div class="modal-header">
+            <h3 id="add-holding-title">Add Holding</h3>
+            <button class="btn btn-ghost" data-close-modal>&times;</button>
+        </div>
+        <form id="add-holding-form" class="modal-form" onsubmit="return false;">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="ah-ticker">Ticker *</label>
+                    <input type="text" id="ah-ticker" class="input" placeholder="e.g. AAPL" required>
+                </div>
+                <div class="form-group">
+                    <label for="ah-quantity">Shares *</label>
+                    <input type="number" id="ah-quantity" class="input" placeholder="100" step="any" min="0.001" required>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="ah-cost">Avg Cost Basis</label>
+                    <input type="number" id="ah-cost" class="input" placeholder="175.00" step="any" min="0">
+                </div>
+                <div class="form-group">
+                    <label for="ah-price">Current Price</label>
+                    <input type="number" id="ah-price" class="input" placeholder="180.50" step="any" min="0">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="ah-currency">Currency</label>
+                    <select id="ah-currency" class="select-input currency-select"></select>
+                </div>
+                <div class="form-group">
+                    <label for="ah-isin">ISIN <span class="text-muted">(optional)</span></label>
+                    <input type="text" id="ah-isin" class="input" placeholder="US0378331005">
+                </div>
+            </div>
+            <div class="form-preview" id="ah-preview"></div>
+        </form>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button class="btn btn-primary" id="add-holding-btn" onclick="submitAddHolding()">Add to Portfolio</button>
+        </div>
+    </dialog>
+
+    <!-- Edit Holding Modal -->
+    <dialog id="edit-holding-modal" aria-label="Edit Holding">
+        <div class="modal-header">
+            <h3 id="edit-holding-title">Edit Holding</h3>
+            <button class="btn btn-ghost" data-close-modal>&times;</button>
+        </div>
+        <form id="edit-holding-form" class="modal-form" onsubmit="return false;">
+            <input type="hidden" id="eh-id">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Ticker</label>
+                    <div class="input-display" id="eh-ticker-display"></div>
+                </div>
+                <div class="form-group">
+                    <label for="eh-quantity">Shares</label>
+                    <input type="number" id="eh-quantity" class="input" step="any" min="0.001">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="eh-cost">Avg Cost Basis</label>
+                    <input type="number" id="eh-cost" class="input" step="any" min="0">
+                </div>
+                <div class="form-group">
+                    <label for="eh-price">Current Price</label>
+                    <input type="number" id="eh-price" class="input" step="any" min="0">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="eh-currency">Currency</label>
+                    <select id="eh-currency" class="select-input currency-select"></select>
+                </div>
+                <div class="form-group"></div>
+            </div>
+        </form>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button class="btn btn-primary" id="edit-holding-btn" onclick="submitEditHolding()">Save Changes</button>
+        </div>
+    </dialog>
+
+    <!-- Record Trade Modal -->
+    <dialog id="trade-modal" aria-label="Record Trade">
+        <div class="modal-header">
+            <h3>Record Trade</h3>
+            <button class="btn btn-ghost" data-close-modal>&times;</button>
+        </div>
+        <form id="trade-form" class="modal-form" onsubmit="return false;">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="tr-ticker">Ticker *</label>
+                    <input type="text" id="tr-ticker" class="input" placeholder="e.g. AAPL" required>
+                </div>
+                <div class="form-group">
+                    <label for="tr-type">Trade Type *</label>
+                    <select id="tr-type" class="select-input">
+                        <option value="buy">Buy</option>
+                        <option value="sell">Sell</option>
+                        <option value="dividend">Dividend</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="tr-quantity">Quantity *</label>
+                    <input type="number" id="tr-quantity" class="input" placeholder="100" step="any" min="0.001" required>
+                </div>
+                <div class="form-group">
+                    <label for="tr-price">Price *</label>
+                    <input type="number" id="tr-price" class="input" placeholder="180.50" step="any" min="0" required>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="tr-date">Trade Date *</label>
+                    <input type="date" id="tr-date" class="input" required>
+                </div>
+                <div class="form-group">
+                    <label for="tr-currency">Currency</label>
+                    <select id="tr-currency" class="select-input currency-select"></select>
+                </div>
+            </div>
+            <div class="form-group" style="width:100%">
+                <label for="tr-notes">Notes <span class="text-muted">(optional)</span></label>
+                <input type="text" id="tr-notes" class="input" placeholder="e.g. Earnings play, rebalance...">
+            </div>
+            <div class="form-preview" id="tr-preview"></div>
+        </form>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button class="btn btn-primary" id="trade-btn" onclick="submitTrade()">Submit Trade</button>
+        </div>
+    </dialog>
+
+    <!-- Delete Confirm Modal -->
+    <dialog id="delete-modal" aria-label="Confirm Delete">
+        <div class="modal-header">
+            <h3>Remove Holding</h3>
+            <button class="btn btn-ghost" data-close-modal>&times;</button>
+        </div>
+        <div class="modal-body">
+            <p>Are you sure you want to remove <strong id="delete-ticker"></strong> from the portfolio?</p>
+            <p class="text-sm text-muted mt-2">This will close the position. The holding and its history will remain in audit logs.</p>
+        </div>
+        <input type="hidden" id="delete-id">
+        <div class="modal-footer">
+            <button class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button class="btn btn-danger" id="delete-btn" onclick="confirmDeleteHolding()">Remove</button>
+        </div>
+    </dialog>
+
+    <!-- Review Import Modal -->
+    <dialog id="review-modal" aria-label="Review Import" class="review-modal">
+        <div class="modal-header">
+            <h3 id="review-modal-title">Review Extracted Data</h3>
+            <button class="btn btn-ghost" data-close-modal>&times;</button>
+        </div>
+        <div class="modal-body">
+            <p id="review-message" class="text-sm text-muted" style="margin-bottom:0.75rem;"></p>
+            <div class="review-table-wrap">
+                <table class="review-table" id="review-table">
+                    <thead>
+                        <tr>
+                            <th></th>
+                            <th>Ticker</th>
+                            <th>Name</th>
+                            <th>Shares</th>
+                            <th>Price</th>
+                            <th>Cost</th>
+                            <th>Value</th>
+                            <th>Currency</th>
+                        </tr>
+                    </thead>
+                    <tbody id="review-tbody"></tbody>
+                </table>
+            </div>
+            <p id="review-summary" class="text-xs text-muted mt-2"></p>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button class="btn btn-outline" onclick="selectAllReviewRows()">Select All</button>
+            <button class="btn btn-primary" id="review-confirm-btn" onclick="confirmReviewedImport()">Confirm Import</button>
+        </div>
+    </dialog>
+
+    <script src="/dashboard/js/app.js?v=23"></script>
+</body>
+</html>

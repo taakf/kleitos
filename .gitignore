@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+.eggs/
+
+# Environment
+.env
+*.env
+!.env.template
+
+# Data (runtime)
+kleitos-data/
+*.db
+*.db-wal
+*.db-shm
+
+# IDE / tools
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Logs
+*.log
+server_out.txt
+server_err.txt
+
+# PyInstaller
+*.spec
+
+# Installer EXE (large binary — rebuild locally)
+Axion-Installers/Windows/Axion/Axion.exe
+
+# Test
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Node (OpenClaw)
+node_modules/

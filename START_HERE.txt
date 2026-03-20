@@ -1,0 +1,45 @@
+
+  Axion — Portfolio Intelligence
+  by 4Labs
+
+  ==========================================
+  GETTING STARTED
+  ==========================================
+
+  WINDOWS
+  -------
+  Double-click Axion.bat
+  Everything sets up automatically on first launch.
+  The dashboard opens in your browser at http://localhost:7777
+
+  MACOS
+  -----
+  Open Terminal and run:
+    chmod +x scripts/install-mac.sh && ./scripts/install-mac.sh
+  Or double-click Axion.app (if present).
+
+  DOCKER
+  ------
+  docker compose up --build
+  Open http://localhost:7777 in your browser.
+
+  ==========================================
+  FIRST STEPS
+  ==========================================
+
+  1. Upload the included sample_portfolio.csv (or your own)
+  2. Go to Settings to add an Anthropic API key (optional)
+  3. Wait 30 minutes for the first news collection
+  4. Check the dashboard for events, alerts, and analysis
+
+  For detailed instructions: see OPERATOR_CHECKLIST.md
+  For full documentation: see README.md
+
+  ==========================================
+  SUPPORT
+  ==========================================
+
+  Known limitations: KNOWN_LIMITATIONS.md
+  Troubleshooting:   docs/TROUBLESHOOTING.md
+  Release notes:     RELEASE_NOTES_V1.md
+

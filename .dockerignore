@@ -1,0 +1,42 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.ruff_cache
+*.egg-info
+
+# Virtual environments
+.venv
+venv
+env
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Data (will be volume-mounted)
+kleitos-data/
+*.db
+*.db-wal
+*.db-shm
+
+# Docs (not needed in container)
+docs/
+ARCHITECTURE.md
+README.md
+
+# Shell scripts (not needed in container)
+*.sh
+
+# Tests (not needed in production image)
+tests/
+
+# Claude/IDE configs
+.claude/

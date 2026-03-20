@@ -1,0 +1,58 @@
+# =============================================================
+# Axion by 4Labs - Docker Compose Configuration
+# =============================================================
+# Usage:
+#   docker compose up --build          # Build & start
+#   docker compose up -d               # Start in background
+#   docker compose logs -f axion       # Follow logs
+#   docker compose down                # Stop
+# =============================================================
+
+services:
+  axion:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: axion-app
+    ports:
+      - "7777:7777"
+    volumes:
+      # Persist database and logs between restarts
+      - kleitos-data:/data
+    environment:
+      - KLEITOS_DATA_DIR=/data
+      - KLEITOS_DB_PATH=/data/db/kleitos.db
+      - KLEITOS_LOG_LEVEL=INFO
+      # LLM - uncomment and add your key for AI analysis features
+      # - ANTHROPIC_API_KEY=sk-ant-...
+      # News sources - uncomment to enable
+      # - NEWSAPI_KEY=your-key
+      # - FINNHUB_KEY=your-key
+    restart: unless-stopped
+    # Graceful shutdown: send SIGTERM, wait up to 30s for clean exit
+    stop_grace_period: 30s
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "2.0"
+        reservations:
+          memory: 256M
+          cpus: "0.5"
+    # Log rotation
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7777/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+volumes:
+  kleitos-data:
+    driver: local

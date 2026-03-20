@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Axion — Portfolio Intelligence</title>
+    <link rel="icon" href="/dashboard/favicon.svg" type="image/svg+xml">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/dashboard/css/styles.css?v=20">
+</head>
+<body>
+    <!-- Navigation -->
+    <nav class="nav">
+        <div class="nav-container">
+            <div class="nav-brand">AXION <span>Portfolio Intelligence</span> <span class="brand-maker">by 4Labs</span></div>
+            <div class="nav-tabs" role="tablist" aria-label="Dashboard navigation">
+                <button class="tab-link active" data-tab="holdings" role="tab" aria-selected="true">Holdings</button>
+                <button class="tab-link" data-tab="exposures" role="tab" aria-selected="false">Exposures</button>
+                <button class="tab-link" data-tab="events" role="tab" aria-selected="false">Events <span id="badge-events" class="tab-badge" hidden></span></button>
+                <button class="tab-link" data-tab="analysis" role="tab" aria-selected="false">Analysis</button>
+                <button class="tab-link" data-tab="digest" role="tab" aria-selected="false">Digest</button>
+                <button class="tab-link" data-tab="alerts" role="tab" aria-selected="false">Alerts <span id="badge-alerts" class="tab-badge" hidden></span></button>
+                <button class="tab-link" data-tab="audit" role="tab" aria-selected="false">Audit</button>
+                <button class="tab-link" data-tab="command" role="tab" aria-selected="false">Command</button>
+                <button class="tab-link" data-tab="health" role="tab" aria-selected="false">Health</button>
+                <button class="tab-link" data-tab="settings" role="tab" aria-selected="false">Settings</button>
+            </div>
+        </div>
+    </nav>
+
+    <!-- Main Layout -->
+    <div class="container">
+        <div class="main-grid">
+            <!-- Content Area -->
+            <div id="main-content">
+
+                <!-- Holdings Tab -->
+                <div id="tab-holdings" class="tab-panel active" role="tabpanel">
+                    <div id="holdings-summary"></div>
+                    <div class="tab-header">
+                        <div class="tab-actions">
+                            <input type="search" id="holdings-search" class="input search-input" placeholder="Search...">
+                            <button class="btn btn-primary" onclick="openAddHolding()">+ Add</button>
+                            <button class="btn btn-outline" onclick="uploadPortfolio()">Upload CSV</button>
+                            <button class="btn btn-outline" onclick="openRecordTrade()">Trade</button>
+                            <button class="btn btn-ghost" onclick="exportCSV('portfolio','csv')" title="Export CSV">CSV</button>
+                            <button class="btn btn-ghost" onclick="exportCSV('portfolio','xlsx')" title="Export Excel">XLSX</button>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div id="holdings-table"><div class="spinner">Loading holdings...</div></div>
+                    </div>
+                </div>
+
+                <!-- Exposures Tab -->
+                <div id="tab-exposures" class="tab-panel" role="tabpanel">
+                    <div class="tab-header">
+                        <h2>Portfolio Exposures</h2>
+                    </div>
+                    <div class="exposure-grid" id="exposure-cards">
+                        <div class="card"><div class="spinner">Loading...</div></div>
+                        <div class="card"><div class="spinner">Loading...</div></div>
+                        <div class="card"><div class="spinner">Loading...</div></div>
+                        <div class="card"><div class="spinner">Loading...</div></div>
+                    </div>
+                </div>
+
+                <!-- Events Tab -->
+                <div id="tab-events" class="tab-panel" role="tabpanel">
+                    <div class="tab-header">
+                        <h2>Events</h2>
+                        <div class="tab-actions">
+                            <input type="search" id="events-search" class="input search-input" placeholder="Search events...">
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div id="events-table"><div class="spinner">Loading events...</div></div>
+                    </div>
+                </div>
+
+                <!-- Analysis Notes Tab -->
+                <div id="tab-analysis" class="tab-panel" role="tabpanel">
+                    <div class="tab-header">
+                        <h2>Analysis Notes</h2>
+                        <div class="tab-actions">
+                            <select id="analysis-filter" class="select-input" style="width:180px;">
+                                <option value="">All tickers</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div id="analysis-table"><div class="spinner">Loading analysis notes...</div></div>
+                    </div>
+                </div>
+
+                <!-- Digest Tab -->
+                <div id="tab-digest" class="tab-panel" role="tabpanel">
+                    <div class="tab-header">
+                        <h2>Intelligence Digest</h2>
+                        <button class="btn btn-outline" onclick="generateDigest()">Generate Fresh Digest</button>
+                    </div>
+                    <div id="digest-content"><div class="spinner">Loading latest digest...</div></div>
+                </div>
+
+                <!-- Alerts Tab -->
+                <div id="tab-alerts" class="tab-panel" role="tabpanel">
+                    <div class="tab-header">
+                        <h2>Alerts</h2>
+                    </div>
+                    <div id="alerts-content"><div class="spinner">Loading alerts...</div></div>
+                </div>
+
+                <!-- Audit Tab -->
+                <div id="tab-audit" class="tab-panel" role="tabpanel">
+                    <div class="tab-header">
+                        <h2>Audit Trail</h2>
+                        <div class="tab-actions">
+                            <select id="audit-filter" class="select-input" style="width:200px;">
+                                <option value="">All entities</option>
+                                <option value="holding">Holdings</option>
+                                <option value="trade">Trades</option>
+                                <option value="event">Events</option>
+                                <option value="classification">Classifications</option>
+                                <option value="alert">Alerts</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div id="audit-content"><div class="spinner">Loading audit trail...</div></div>
+                    </div>
+                </div>
+
+                <!-- Command Center Tab -->
+                <div id="tab-command" class="tab-panel" role="tabpanel">
+                    <div class="cmd-container">
+                        <div class="cmd-transcript" id="cmd-transcript">
+                            <div class="cmd-welcome" id="cmd-welcome">
+                                <div class="cmd-welcome-mark">A</div>
+                                <h3>Command Center</h3>
+                                <p class="text-sm text-muted" style="max-width:400px;line-height:1.5;">Query your portfolio, review events and risks, or trigger intelligence workflows.</p>
+                                <div class="cmd-prompts" id="cmd-prompts">
+                                    <button class="cmd-prompt-chip" data-prompt="What matters most in my portfolio today?">What matters most today?</button>
+                                    <button class="cmd-prompt-chip" data-prompt="Summarize my top risks">Top risks</button>
+                                    <button class="cmd-prompt-chip" data-prompt="Show recent events affecting my holdings">Recent events</button>
+                                    <button class="cmd-prompt-chip" data-prompt="What is my portfolio exposure breakdown?">Exposure breakdown</button>
+                                    <span class="cmd-prompt-divider"></span>
+                                    <button class="cmd-prompt-chip cmd-prompt-action" data-prompt="Run collection now">&#8635; Run collection</button>
+                                    <button class="cmd-prompt-chip cmd-prompt-action" data-prompt="Generate a digest now">&#9654; Generate digest</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="cmd-composer">
+                            <div class="cmd-input-row">
+                                <input type="text" id="cmd-input" class="cmd-input" placeholder="Ask Axion about your portfolio..." autocomplete="off" spellcheck="false">
+                                <button class="btn btn-primary cmd-send" id="cmd-send" onclick="sendCommand()">
+                                    <span id="cmd-send-label">Send</span>
+                                </button>
+                            </div>
+                            <div class="cmd-footer">
+                                <button class="btn btn-ghost text-xs" id="cmd-clear" onclick="clearCommand()" style="display:none;">Clear</button>
+                                <span class="cmd-mode" id="cmd-mode"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Health Tab -->
+                <div id="tab-health" class="tab-panel" role="tabpanel">
+                    <div class="tab-header">
+                        <h2>System Health</h2>
+                    </div>
+                    <div id="health-content"><div class="spinner">Checking system health...</div></div>
+                    <h3 class="mt-4 mb-2">Agent Activity</h3>
+                    <div class="card">
+                        <div id="agent-status"><div class="spinner">Loading agents...</div></div>
+                    </div>
+                    <h3 class="mt-4 mb-2">Source Health</h3>
+                    <div class="card">
+                        <div id="source-health"><div class="spinner">Loading sources...</div></div>
+                    </div>
+                </div>
+
+                <!-- Settings Tab -->
+                <div id="tab-settings" class="tab-panel" role="tabpanel">
+                    <div class="tab-header">
+                        <h2>Settings</h2>
+                    </div>
+                    <div class="settings-grid">
+                        <div class="card" id="api-key-card" style="grid-column:1/-1;">
+                            <div class="card-header">Analysis Mode</div>
+                            <div id="api-key-status" class="settings-group">
+                                <div style="display:flex;align-items:center;gap:0.5rem;margin-bottom:0.5rem;">
+                                    <span id="api-key-dot" class="status-dot"></span>
+                                    <span id="api-key-mode" class="text-sm"></span>
+                                </div>
+                                <p id="api-key-hint" class="text-xs text-muted" style="margin-bottom:0.75rem;line-height:1.5;max-width:600px;"></p>
+                            </div>
+                            <div class="settings-group">
+                                <label for="setting-api-key" class="text-sm" style="display:block;margin-bottom:0.35rem;">Anthropic API Key</label>
+                                <div style="display:flex;gap:0.5rem;align-items:center;max-width:520px;">
+                                    <input type="password" id="setting-api-key" class="select-input" style="flex:1;font-family:monospace;font-size:0.82rem;min-width:0;" placeholder="sk-ant-..." autocomplete="off" spellcheck="false">
+                                    <button class="btn btn-primary" onclick="saveApiKey()" id="save-api-key-btn" style="white-space:nowrap;">Save Key</button>
+                                </div>
+                                <p class="text-xs text-muted" style="margin-top:0.4rem;">Stored securely in your user config. Close and relaunch Axion to activate.</p>
+                            </div>
+                            <div id="api-key-actions" class="settings-group" style="display:none;margin-top:0.5rem;">
+                                <button class="btn btn-ghost text-xs" onclick="removeApiKey()">Remove key and switch to rule-based mode</button>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div class="card-header">Display</div>
+                            <div class="settings-group">
+                                <label for="setting-refresh">Auto-refresh interval</label>
+                                <select id="setting-refresh" class="select-input" style="width:200px;">
+                                    <option value="0">Off</option>
+                                    <option value="30000">30 seconds</option>
+                                    <option value="60000" selected>1 minute</option>
+                                    <option value="120000">2 minutes</option>
+                                    <option value="300000">5 minutes</option>
+                                </select>
+                            </div>
+                            <div class="settings-group">
+                                <label for="setting-page-size">Default page size</label>
+                                <select id="setting-page-size" class="select-input" style="width:200px;">
+                                    <option value="25">25 rows</option>
+                                    <option value="50" selected>50 rows</option>
+                                    <option value="100">100 rows</option>
+                                    <option value="200">200 rows</option>
+                                </select>
+                            </div>
+                            <div class="settings-group">
+                                <label for="setting-currency">Display currency</label>
+                                <select id="setting-currency" class="select-input" style="width:200px;">
+                                    <option value="USD" selected>USD ($)</option>
+                                    <option value="EUR">EUR (&euro;)</option>
+                                    <option value="GBP">GBP (&pound;)</option>
+                                    <option value="CHF">CHF</option>
+                                    <option value="JPY">JPY (&yen;)</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div class="card-header">Notifications</div>
+                            <div class="settings-group">
+                                <label class="toggle-label">
+                                    <input type="checkbox" id="setting-sound" class="toggle-input">
+                                    <span>Play sound on new alerts</span>
+                                </label>
+                            </div>
+                            <div class="settings-group">
+                                <label class="toggle-label">
+                                    <input type="checkbox" id="setting-desktop-notif" class="toggle-input">
+                                    <span>Desktop notifications for critical alerts</span>
+                                </label>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div class="card-header">Data</div>
+                            <div class="settings-group">
+                                <label for="setting-default-tab">Default tab on load</label>
+                                <select id="setting-default-tab" class="select-input" style="width:200px;">
+                                    <option value="holdings" selected>Holdings</option>
+                                    <option value="exposures">Exposures</option>
+                                    <option value="events">Events</option>
+                                    <option value="alerts">Alerts</option>
+                                    <option value="health">Health</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card" style="margin-top:1rem;">
+                        <div class="card-header">System</div>
+                        <div class="settings-group">
+                            <p class="text-xs text-muted" style="margin-bottom:0.75rem; line-height:1.6;">
+                                Closing the window keeps Axion running in the background so your portfolio continues to be monitored.
+                                To reopen, launch Axion again. To fully stop the application, use the button below.
+                            </p>
+                            <button class="btn btn-ghost text-danger" onclick="quitAxion()" style="border-color: var(--danger);">
+                                Quit Axion
+                            </button>
+                        </div>
+                    </div>
+                    <div class="mt-3">
+                        <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
+                        <button class="btn btn-ghost" onclick="resetSettings()">Reset to Defaults</button>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Holding Detail Slide-out -->
+            <div id="holding-detail" class="detail-panel" aria-label="Holding Detail">
+                <div class="detail-header">
+                    <h3 id="detail-title">Holding Detail</h3>
+                    <button class="btn btn-ghost" onclick="closeHoldingDetail()">&times;</button>
+                </div>
+                <div id="detail-body"><div class="spinner">Loading...</div></div>
+            </div>
+
+            <!-- Action result toast target (used by runAction) -->
+            <div id="action-result" style="display:none;"></div>
+        </div>
+    </div>
+
+    <!-- Overlay for detail panel -->
+    <div id="detail-overlay" class="detail-overlay" onclick="closeHoldingDetail()"></div>
+
+    <!-- ==================== MODALS ==================== -->
+
+    <!-- Reset Portfolio Modal -->
+    <dialog id="reset-modal" aria-label="Reset Portfolio">
+        <div class="modal-header">
+            <h3 style="color:var(--danger);">Reset All Data</h3>
+            <button class="btn btn-ghost" data-close-modal>&times;</button>
+        </div>
+        <div class="modal-body">
+            <p>This will permanently delete <strong>all</strong> portfolio data:</p>
+            <ul style="margin:0.75rem 0;padding-left:1.25rem;font-size:0.9rem;color:var(--text-muted);">
+                <li>All holdings and trades</li>
+                <li>All events and analysis notes</li>
+                <li>All alerts and digests</li>
+                <li>All agent runs and audit logs</li>
+            </ul>
+            <p class="text-sm" style="margin-top:0.75rem;">Type <strong>RESET</strong> to confirm:</p>
+            <input type="text" id="reset-confirm-input" class="input" placeholder="Type RESET" style="margin-top:0.5rem;">
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button class="btn btn-danger" id="reset-btn" onclick="confirmResetPortfolio()">Reset Everything</button>
+        </div>
+    </dialog>
+
+    <!-- Upload CSV Modal -->
+    <dialog id="upload-modal" aria-label="Upload Portfolio">
+        <div class="modal-header">
+            <h3>Upload Portfolio CSV</h3>
+            <button class="btn btn-ghost" data-close-modal>&times;</button>
+        </div>
+        <form id="upload-form" enctype="multipart/form-data">
+            <div class="drop-zone" id="drop-zone" onclick="document.getElementById('portfolio-file').click()">
+                <div style="font-size:1.5rem;margin-bottom:0.5rem;">&#128196;</div>
+                <p>Click to select or drag & drop</p>
+                <p class="text-xs text-muted mt-2">CSV file with columns: ticker, quantity, price, cost, currency</p>
+            </div>
+            <input type="file" id="portfolio-file" name="file" accept=".csv" style="display:none;" onchange="onFileSelected(this)">
+            <div id="file-info" class="mt-2 text-sm text-muted"></div>
+        </form>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button class="btn btn-primary" id="upload-btn" onclick="submitUpload()" disabled>Upload</button>
+        </div>
+    </dialog>
+
+    <!-- Add Holding Modal -->
+    <dialog id="add-holding-modal" aria-label="Add Holding">
+        <div class="modal-header">
+            <h3 id="add-holding-title">Add Holding</h3>
+            <button class="btn btn-ghost" data-close-modal>&times;</button>
+        </div>
+        <form id="add-holding-form" class="modal-form" onsubmit="return false;">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="ah-ticker">Ticker *</label>
+                    <input type="text" id="ah-ticker" class="input" placeholder="e.g. AAPL" required>
+                </div>
+                <div class="form-group">
+                    <label for="ah-quantity">Shares *</label>
+                    <input type="number" id="ah-quantity" class="input" placeholder="100" step="any" min="0.001" required>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="ah-cost">Avg Cost Basis</label>
+                    <input type="number" id="ah-cost" class="input" placeholder="175.00" step="any" min="0">
+                </div>
+                <div class="form-group">
+                    <label for="ah-price">Current Price</label>
+                    <input type="number" id="ah-price" class="input" placeholder="180.50" step="any" min="0">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="ah-currency">Currency</label>
+                    <select id="ah-currency" class="select-input currency-select"></select>
+                </div>
+                <div class="form-group">
+                    <label for="ah-isin">ISIN <span class="text-muted">(optional)</span></label>
+                    <input type="text" id="ah-isin" class="input" placeholder="US0378331005">
+                </div>
+            </div>
+            <div class="form-preview" id="ah-preview"></div>
+        </form>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button class="btn btn-primary" id="add-holding-btn" onclick="submitAddHolding()">Add to Portfolio</button>
+        </div>
+    </dialog>
+
+    <!-- Edit Holding Modal -->
+    <dialog id="edit-holding-modal" aria-label="Edit Holding">
+        <div class="modal-header">
+            <h3 id="edit-holding-title">Edit Holding</h3>
+            <button class="btn btn-ghost" data-close-modal>&times;</button>
+        </div>
+        <form id="edit-holding-form" class="modal-form" onsubmit="return false;">
+            <input type="hidden" id="eh-id">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Ticker</label>
+                    <div class="input-display" id="eh-ticker-display"></div>
+                </div>
+                <div class="form-group">
+                    <label for="eh-quantity">Shares</label>
+                    <input type="number" id="eh-quantity" class="input" step="any" min="0.001">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="eh-cost">Avg Cost Basis</label>
+                    <input type="number" id="eh-cost" class="input" step="any" min="0">
+                </div>
+                <div class="form-group">
+                    <label for="eh-price">Current Price</label>
+                    <input type="number" id="eh-price" class="input" step="any" min="0">
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="eh-currency">Currency</label>
+                    <select id="eh-currency" class="select-input currency-select"></select>
+                </div>
+                <div class="form-group"></div>
+            </div>
+        </form>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button class="btn btn-primary" id="edit-holding-btn" onclick="submitEditHolding()">Save Changes</button>
+        </div>
+    </dialog>
+
+    <!-- Record Trade Modal -->
+    <dialog id="trade-modal" aria-label="Record Trade">
+        <div class="modal-header">
+            <h3>Record Trade</h3>
+            <button class="btn btn-ghost" data-close-modal>&times;</button>
+        </div>
+        <form id="trade-form" class="modal-form" onsubmit="return false;">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="tr-ticker">Ticker *</label>
+                    <input type="text" id="tr-ticker" class="input" placeholder="e.g. AAPL" required>
+                </div>
+                <div class="form-group">
+                    <label for="tr-type">Trade Type *</label>
+                    <select id="tr-type" class="select-input">
+                        <option value="buy">Buy</option>
+                        <option value="sell">Sell</option>
+                        <option value="dividend">Dividend</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="tr-quantity">Quantity *</label>
+                    <input type="number" id="tr-quantity" class="input" placeholder="100" step="any" min="0.001" required>
+                </div>
+                <div class="form-group">
+                    <label for="tr-price">Price *</label>
+                    <input type="number" id="tr-price" class="input" placeholder="180.50" step="any" min="0" required>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="tr-date">Trade Date *</label>
+                    <input type="date" id="tr-date" class="input" required>
+                </div>
+                <div class="form-group">
+                    <label for="tr-currency">Currency</label>
+                    <select id="tr-currency" class="select-input currency-select"></select>
+                </div>
+            </div>
+            <div class="form-group" style="width:100%">
+                <label for="tr-notes">Notes <span class="text-muted">(optional)</span></label>
+                <input type="text" id="tr-notes" class="input" placeholder="e.g. Earnings play, rebalance...">
+            </div>
+            <div class="form-preview" id="tr-preview"></div>
+        </form>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button class="btn btn-primary" id="trade-btn" onclick="submitTrade()">Submit Trade</button>
+        </div>
+    </dialog>
+
+    <!-- Delete Confirm Modal -->
+    <dialog id="delete-modal" aria-label="Confirm Delete">
+        <div class="modal-header">
+            <h3>Remove Holding</h3>
+            <button class="btn btn-ghost" data-close-modal>&times;</button>
+        </div>
+        <div class="modal-body">
+            <p>Are you sure you want to remove <strong id="delete-ticker"></strong> from the portfolio?</p>
+            <p class="text-sm text-muted mt-2">This will close the position. The holding and its history will remain in audit logs.</p>
+        </div>
+        <input type="hidden" id="delete-id">
+        <div class="modal-footer">
+            <button class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button class="btn btn-danger" id="delete-btn" onclick="confirmDeleteHolding()">Remove</button>
+        </div>
+    </dialog>
+
+    <script src="/dashboard/js/app.js?v=20"></script>
+</body>
+</html>

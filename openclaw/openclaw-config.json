@@ -1,0 +1,135 @@
+{
+  "$schema": "https://docs.openclaw.ai/config-schema.json",
+  "_comment": "Axion Multi-Agent OpenClaw Configuration. Copy to ~/.openclaw/openclaw.json",
+
+  "agent": {
+    "model": "anthropic/claude-sonnet-4-6",
+    "maxTokens": 4096,
+    "temperature": 0.1
+  },
+
+  "agents": {
+    "defaults": {
+      "workspace": "~/.openclaw/workspaces/commander"
+    },
+    "roster": {
+      "commander": {
+        "workspace": "~/.openclaw/workspaces/commander",
+        "model": "anthropic/claude-sonnet-4-6",
+        "description": "Primary client-facing portfolio intelligence assistant. Routes queries to domain agents and delivers results via Telegram.",
+        "channels": ["telegram"]
+      },
+      "intake": {
+        "workspace": "~/.openclaw/workspaces/intake",
+        "model": "anthropic/claude-sonnet-4-6",
+        "description": "Portfolio data intake and reconciliation"
+      },
+      "classification": {
+        "workspace": "~/.openclaw/workspaces/classification",
+        "model": "anthropic/claude-sonnet-4-6",
+        "description": "Security classification and exposure mapping"
+      },
+      "collection": {
+        "workspace": "~/.openclaw/workspaces/collection",
+        "model": "anthropic/claude-haiku-4-5-20251001",
+        "description": "News and event collection from approved sources"
+      },
+      "coverage": {
+        "workspace": "~/.openclaw/workspaces/coverage",
+        "model": "anthropic/claude-haiku-4-5-20251001",
+        "description": "Coverage quality assurance and gap detection"
+      },
+      "analysis": {
+        "workspace": "~/.openclaw/workspaces/analysis",
+        "model": "anthropic/claude-sonnet-4-6",
+        "description": "Portfolio impact analysis and digest generation"
+      },
+      "risk": {
+        "workspace": "~/.openclaw/workspaces/risk",
+        "model": "anthropic/claude-sonnet-4-6",
+        "description": "Risk monitoring and alerting"
+      }
+    }
+  },
+
+  "routing": {
+    "_comment": "Route all client messages to the Commander agent by default",
+    "default": "commander",
+    "channels": {
+      "telegram": {
+        "agent": "commander",
+        "description": "Client messages from Telegram routed to Commander"
+      }
+    }
+  },
+
+  "tools": {
+    "_comment": "Axion API tools — available to all agents via HTTP bridge",
+    "axion_api": {
+      "type": "http",
+      "base_url": "http://localhost:7777/api/v1",
+      "endpoints": {
+        "portfolio_summary":   { "method": "GET",  "path": "/portfolio/summary" },
+        "portfolio_holdings":  { "method": "GET",  "path": "/portfolio/holdings" },
+        "portfolio_exposure":  { "method": "GET",  "path": "/portfolio/exposure" },
+        "events_list":         { "method": "GET",  "path": "/events" },
+        "events_recent":       { "method": "GET",  "path": "/events/recent" },
+        "alerts_active":       { "method": "GET",  "path": "/alerts/active" },
+        "alert_acknowledge":   { "method": "POST", "path": "/alerts/{id}/acknowledge" },
+        "digests_latest":      { "method": "GET",  "path": "/digests/latest" },
+        "digests_generate":    { "method": "POST", "path": "/digests/generate" },
+        "agents_status":       { "method": "GET",  "path": "/agents/status" },
+        "agent_run":           { "method": "POST", "path": "/agents/{agent_id}/run" },
+        "health":              { "method": "GET",  "path": "/health" },
+        "analysis_notes":      { "method": "GET",  "path": "/analysis/notes" },
+        "audit_trail":         { "method": "GET",  "path": "/audit" }
+      }
+    },
+    "axion_bridge": {
+      "type": "http",
+      "base_url": "http://localhost:7777/api/v1/openclaw",
+      "_comment": "Direct tool invocation bridge for advanced OpenClaw agents",
+      "endpoints": {
+        "list_tools":    { "method": "GET",  "path": "/tools" },
+        "call_tool":     { "method": "POST", "path": "/call/{tool_name}" },
+        "bridge_status": { "method": "GET",  "path": "/status" }
+      }
+    }
+  },
+
+  "notifications": {
+    "_comment": "Notification routing — which events trigger which channels",
+    "rules": [
+      {
+        "event": "alert.critical",
+        "channel": "telegram",
+        "agent": "commander",
+        "immediate": true
+      },
+      {
+        "event": "alert.high",
+        "channel": "telegram",
+        "agent": "commander",
+        "immediate": true
+      },
+      {
+        "event": "digest.daily",
+        "channel": "telegram",
+        "agent": "commander",
+        "schedule": "07:00"
+      },
+      {
+        "event": "digest.weekly",
+        "channel": "telegram",
+        "agent": "commander",
+        "schedule": "monday 08:00"
+      }
+    ]
+  },
+
+  "skills": {
+    "load": {
+      "extraDirs": []
+    }
+  }
+}
