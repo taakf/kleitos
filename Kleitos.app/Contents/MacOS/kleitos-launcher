@@ -191,7 +191,7 @@ if [[ ! -f "${PLIST_PATH}" ]]; then
         <string>uvicorn</string>
         <string>src.main:app</string>
         <string>--host</string>
-        <string>0.0.0.0</string>
+        <string>127.0.0.1</string>
         <string>--port</string>
         <string>${PORT}</string>
     </array>
@@ -249,7 +249,7 @@ export PATH="${VENV_DIR}/bin:${PATH}"
 
 # Start uvicorn in background
 "${PYTHON}" -m uvicorn src.main:app \
-    --host 0.0.0.0 \
+    --host 127.0.0.1 \
     --port ${PORT} \
     >> "${LOG_DIR}/kleitos-stdout.log" \
     2>> "${LOG_DIR}/kleitos-stderr.log" &

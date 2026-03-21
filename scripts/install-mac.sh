@@ -158,7 +158,7 @@ APP_SRC="${PROJECT_DIR}/Axion.app"
 APP_DST="/Applications/Axion.app"
 
 if [[ -d "${APP_SRC}" ]]; then
-    chmod +x "${APP_SRC}/Contents/MacOS/kleitos-launcher"
+    chmod +x "${APP_SRC}/Contents/MacOS/axion-launcher"
 
     # Write project dir to a well-known file so the launcher can find it
     # (works even when .app is copied to /Applications)
@@ -195,7 +195,7 @@ cat > "${PLIST_PATH}" <<PLISTEOF
         <string>uvicorn</string>
         <string>src.main:app</string>
         <string>--host</string>
-        <string>0.0.0.0</string>
+        <string>127.0.0.1</string>
         <string>--port</string>
         <string>${PORT}</string>
     </array>

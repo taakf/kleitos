@@ -26,7 +26,7 @@ except ImportError:
 
 PROJECT_DIR = Path(__file__).resolve().parent.parent
 ASSETS_DIR = PROJECT_DIR / "assets"
-RESOURCES_DIR = PROJECT_DIR / "Kleitos.app" / "Contents" / "Resources"
+RESOURCES_DIR = PROJECT_DIR / "Axion.app" / "Contents" / "Resources"
 
 
 def lerp_color(c1, c2, t):
@@ -234,7 +234,7 @@ def generate_icns(img_1024):
         return
 
     RESOURCES_DIR.mkdir(parents=True, exist_ok=True)
-    iconset_dir = Path(tempfile.mkdtemp()) / "kleitos.iconset"
+    iconset_dir = Path(tempfile.mkdtemp()) / "axion.iconset"
     iconset_dir.mkdir()
 
     # macOS iconset requires specific filenames and sizes
@@ -257,7 +257,7 @@ def generate_icns(img_1024):
         resized.save(iconset_dir / filename, "PNG")
 
     # Use iconutil to create .icns
-    icns_path = RESOURCES_DIR / "kleitos.icns"
+    icns_path = RESOURCES_DIR / "axion.icns"
     try:
         subprocess.run(
             ["iconutil", "-c", "icns", str(iconset_dir), "-o", str(icns_path)],

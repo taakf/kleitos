@@ -493,7 +493,7 @@ class AxionMenuBar(rumps.App):
 
                 self.server_proc = subprocess.Popen(
                     [python, "-m", "uvicorn", "src.main:app",
-                     "--host", "0.0.0.0", "--port", str(PORT)],
+                     "--host", "127.0.0.1", "--port", str(PORT)],
                     cwd=str(PROJECT_DIR),
                     env=env,
                     stdout=stdout_fh,

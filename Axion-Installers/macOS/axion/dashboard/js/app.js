@@ -192,10 +192,32 @@
         return `<div class="error-state">Failed to load ${esc(msg)}</div>`;
     }
 
+    // ── SVG icon library (24×24 line-art for empty states) ──
+    const ICONS = {
+        portfolio: '<svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 16l4-5 4 3 5-6"/></svg>',
+        events:    '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" rx="2"/><path d="M4 9h16"/><path d="M9 4v5"/><path d="M8 13h3"/><path d="M8 16h5"/></svg>',
+        analysis:  '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/><path d="M8 11h6"/><path d="M11 8v6"/></svg>',
+        digest:    '<svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/><path d="M14 2v5h5"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>',
+        alerts:    '<svg viewBox="0 0 24 24"><path d="M12 2L3 20h18L12 2z"/><path d="M12 9v4"/><circle cx="12" cy="16" r="0.5" fill="currentColor"/></svg>',
+        check:     '<svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>',
+        upload:    '<svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>',
+        audit:     '<svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M9 14l2 2 4-4"/></svg>',
+    };
+
+    function svgIcon(name) {
+        return ICONS[name] ? `<div class="empty-icon">${ICONS[name]}</div>` : '';
+    }
+
     function renderEmpty(icon, text, opts) {
-        // opts: { hint, actions: [{label, onclick, primary}] }
+        // icon can be an SVG name (string key in ICONS) or raw HTML
         const o = opts || {};
-        let html = `<div class="empty-state">${icon ? `<div class="icon">${icon}</div>` : ''}<p>${esc(text)}</p>`;
+        let iconHtml = '';
+        if (icon && ICONS[icon]) {
+            iconHtml = svgIcon(icon);
+        } else if (icon) {
+            iconHtml = `<div class="icon">${icon}</div>`;
+        }
+        let html = `<div class="empty-state">${iconHtml}<p>${esc(text)}</p>`;
         if (o.hint) html += `<p class="text-sm text-muted mt-2">${esc(o.hint)}</p>`;
         if (o.actions && o.actions.length) {
             html += `<div class="mt-3" style="display:flex;gap:0.5rem;justify-content:center;flex-wrap:wrap;">`;
@@ -205,6 +227,14 @@
             html += `</div>`;
         }
         html += `</div>`;
+        return html;
+    }
+
+    function renderSkeleton(rows = 5) {
+        let html = '<div class="skeleton-band"><div class="skeleton skeleton-cell w-lg"></div><div class="skeleton skeleton-cell w-md"></div><div class="skeleton skeleton-cell w-sm"></div></div>';
+        for (let i = 0; i < rows; i++) {
+            html += `<div class="skeleton-row"><div class="skeleton skeleton-cell w-md"></div><div class="skeleton skeleton-cell w-xl"></div><div class="skeleton skeleton-cell w-md"></div><div class="skeleton skeleton-cell w-sm"></div><div class="skeleton skeleton-cell w-md"></div></div>`;
+        }
         return html;
     }
 
@@ -289,6 +319,7 @@
         digest:    loadDigest,
     };
 
+    window.switchTab = switchTab;
     function switchTab(name) {
         // For primary tabs, update the nav
         $$('.tab-link').forEach(l => {
@@ -338,6 +369,10 @@
         const summaryEl = $('#holdings-summary');
         const tableEl = $('#holdings-table');
         if (!tableEl) { console.error('holdings-table element not found'); return; }
+        // Show skeleton while loading (only on first load)
+        if (!allHoldings.length && tableEl.querySelector('.spinner')) {
+            tableEl.innerHTML = renderSkeleton(6);
+        }
         try {
             const [summary, holdings, health] = await Promise.all([
                 fetchJSON(API.summary).catch(() => null),
@@ -422,7 +457,7 @@
         const circle = '&#9675;';  // ○
 
         // Capabilities summary — show what's available right now
-        const coreFeatures = 'Portfolio tracking, rule-based alerts, news collection, CSV and structured PDF import, holdings management, trade recording, and exposure analysis.';
+        const coreFeatures = 'Portfolio tracking, alerts, news collection, CSV and structured PDF import, holdings management, trade recording, and exposure analysis.';
         const aiFeatures = 'Event classification, portfolio analysis notes, intelligence digests, natural language chat, and image/scanned PDF extraction.';
 
         return `<div class="welcome-card">
@@ -787,6 +822,9 @@
 
     async function loadEvents() {
         const el = $('#events-table');
+        if (!allEvents.length && el.querySelector('.spinner')) {
+            el.innerHTML = renderSkeleton(4);
+        }
         try {
             const data = await fetchJSON(API.events);
             const list = ensureArray(data, 'items', 'events');
@@ -800,7 +838,7 @@
     function renderEventsTable(list) {
         const el = $('#events-table');
         if (!list.length) {
-            el.innerHTML = renderEmpty('&#128240;', 'No events collected yet.', {
+            el.innerHTML = renderEmpty('events', 'No events collected yet.', {
                 hint: 'Events are fetched automatically every 30 minutes from your configured news sources, or you can trigger collection manually.',
                 actions: [{ label: 'Run Collection Now', onclick: "runAction('collection')", primary: true }]
             });
@@ -855,7 +893,7 @@
             }
 
             if (!list.length) {
-                el.innerHTML = renderEmpty('&#128221;', 'No analysis notes yet.', {
+                el.innerHTML = renderEmpty('analysis', 'No analysis notes yet.', {
                     hint: 'Analysis is generated when news events mention your holdings. Steps: 1) Upload a portfolio, 2) Wait for event collection (~30 min), 3) Events matching your tickers are analysed automatically.',
                     actions: [{ label: 'Run Analysis', onclick: "runAction('analysis')", primary: true }]
                 });
@@ -917,7 +955,7 @@
         try {
             const data = await fetchJSON(API.digestLatest);
             if (!data) {
-                el.innerHTML = renderEmpty('&#128220;', 'No digests generated yet.', {
+                el.innerHTML = renderEmpty('digest', 'No digests generated yet.', {
                     hint: 'Digests summarise events, alerts, and analysis for your portfolio. They are generated daily at 07:00 local time, or you can create one now.',
                     actions: [{ label: 'Generate Digest', onclick: 'generateDigest()', primary: true }]
                 });
@@ -951,7 +989,7 @@
             const data = await fetchJSON(API.alertsActive);
             const list = ensureArray(data, 'items', 'alerts');
             if (!list.length) {
-                el.innerHTML = renderEmpty('&#9989;', 'No active alerts.', {
+                el.innerHTML = renderEmpty('check', 'No active alerts.', {
                     hint: 'Alerts are generated when concentration risks exceed thresholds or when holdings lack recent news coverage.'
                 });
                 return;
@@ -1100,15 +1138,13 @@
             label.textContent = 'Enabled but not configured';
             if (help) {
                 help.style.display = '';
-                help.textContent = 'Set KLEITOS_TELEGRAM_TOKEN and KLEITOS_TELEGRAM_CHAT_ID in ~/.axion.env to activate notifications.';
+                help.innerHTML = 'Bot token detected but chat ID is missing. Add your Telegram chat ID to <code>~/.axion.env</code> and restart Axion.';
             }
         } else {
             dot.className = 'status-dot status-stopped';
             label.textContent = 'Disabled';
-            if (help) {
-                help.style.display = '';
-                help.textContent = 'Set KLEITOS_TELEGRAM_TOKEN and KLEITOS_TELEGRAM_CHAT_ID in ~/.axion.env. Telegram is auto-enabled when the token is set.';
-            }
+            // Keep the original HTML setup instructions visible (don't overwrite)
+            if (help) help.style.display = '';
         }
     }
 
@@ -1143,8 +1179,8 @@
                     aiNotice.textContent = 'Image extraction requires an AI provider. Configure one in Settings if you haven\u2019t already.';
                 } else if (isPdf) {
                     aiNotice.style.display = '';
-                    aiNotice.style.background = 'var(--bg-secondary)';
-                    aiNotice.style.color = 'var(--text-muted)';
+                    aiNotice.style.background = 'var(--surface)';
+                    aiNotice.style.color = 'var(--muted)';
                     aiNotice.textContent = 'Structured PDFs with tables are parsed directly. Scanned PDFs will use AI vision if available.';
                 } else {
                     aiNotice.style.display = 'none';
@@ -1427,16 +1463,13 @@
     };
 
     window.runAction = async function (agentId) {
-        const resultEl = $('#action-result');
-        resultEl.innerHTML = '<span class="text-sm text-muted">Running...</span>';
         try {
             const res = await fetch(API.agentRun(agentId), { method: 'POST' });
             if (!res.ok) throw new Error('HTTP ' + res.status);
-            const data = await res.json();
-            resultEl.innerHTML = `<span class="text-sm text-success">Started: ${esc(data.run_id || data.status || 'ok')}</span>`;
+            await res.json();
             showToast(`${agentId} agent triggered`);
         } catch (e) {
-            resultEl.innerHTML = `<span class="text-sm text-danger">${esc(e.message)}</span>`;
+            showToast(`Failed to run ${agentId}: ${e.message}`, 'error');
         }
     };
 
@@ -1553,12 +1586,18 @@
     async function _updateCmdMode() {
         try {
             const h = await fetchJSON(API.health).catch(() => null);
-            const modeEl = document.getElementById('cmd-mode');
-            if (modeEl && h) {
+            const badgeEl = document.getElementById('cmd-mode-badge');
+            if (h) {
                 const mode = h.llm_available ? 'AI-enhanced' : 'Core mode';
-                const dot = h.llm_available ? 'green' : 'yellow';
-                const tip = h.llm_available ? '' : ' — portfolio queries use rule-based lookups. Add an AI key in Settings for natural language analysis.';
-                modeEl.innerHTML = `<span class="cmd-meta-chip" title="${mode}${tip}"><span class="dot ${dot}"></span>${mode}</span>`;
+                const tip = h.llm_available ? '' : ' — portfolio queries use core lookups. Add an AI key in Settings for natural language analysis.';
+                if (badgeEl) {
+                    badgeEl.style.display = '';
+                    badgeEl.title = `${mode}${tip}`;
+                    const badgeDot = badgeEl.querySelector('.dot');
+                    const badgeText = badgeEl.querySelector('.cmd-mode-label-text');
+                    if (badgeDot) badgeDot.style.background = h.llm_available ? 'var(--success)' : 'var(--warning)';
+                    if (badgeText) badgeText.textContent = mode;
+                }
             }
         } catch {}
     }
@@ -1643,7 +1682,8 @@
         const metaParts = [];
         if (data.mode) {
             const dot = data.mode === 'ai-enhanced' ? 'green' : 'yellow';
-            metaParts.push(`<span class="cmd-meta-chip"><span class="dot ${dot}"></span>${esc(data.mode)}</span>`);
+            const modeLabel = data.mode === 'rule-based' ? 'Core mode' : data.mode;
+            metaParts.push(`<span class="cmd-meta-chip"><span class="dot ${dot}"></span>${esc(modeLabel)}</span>`);
         }
         if (data.provider) {
             metaParts.push(`<span class="cmd-meta-chip">${esc(data.provider)}</span>`);
@@ -1703,9 +1743,6 @@
     const SETTINGS_KEY = 'axion_settings';
     const DEFAULT_SETTINGS = {
         refreshInterval: 60000,
-        pageSize: 50,
-        displayCurrency: 'USD',
-        soundAlerts: false,
         desktopNotif: false,
         defaultTab: 'portfolio',
     };
@@ -1717,18 +1754,35 @@
         } catch { return { ...DEFAULT_SETTINGS }; }
     }
 
+    let _autoRefreshTimer = null;
+
     function applySettings(s) {
-        // Update refresh interval
-        // (sidebar auto-refresh removed — overview band handles live updates)
+        // Auto-refresh: periodically reload the active tab's data
+        if (_autoRefreshTimer) { clearInterval(_autoRefreshTimer); _autoRefreshTimer = null; }
+        const interval = parseInt(s.refreshInterval) || 0;
+        if (interval > 0) {
+            _autoRefreshTimer = setInterval(() => {
+                const activeTab = document.querySelector('.tab-link.active');
+                if (!activeTab) return;
+                const tabName = activeTab.dataset.tab;
+                // Refresh the active primary tab (and active sub-tab if applicable)
+                if (tabName === 'portfolio') {
+                    const activeSub = document.querySelector('#tab-portfolio .sub-tab.active');
+                    if (activeSub) refreshTab(activeSub.dataset.subtab);
+                } else if (tabName === 'intelligence') {
+                    const activeSub = document.querySelector('#tab-intelligence .sub-tab.active');
+                    if (activeSub) refreshTab(activeSub.dataset.subtab);
+                } else if (tabLoaders[tabName]) {
+                    refreshTab(tabName);
+                }
+            }, interval);
+        }
     }
 
     function loadSettings() {
         const s = getSettings();
         const el = (id) => document.getElementById(id);
         if (el('setting-refresh')) el('setting-refresh').value = String(s.refreshInterval);
-        if (el('setting-page-size')) el('setting-page-size').value = String(s.pageSize);
-        if (el('setting-currency')) el('setting-currency').value = s.displayCurrency;
-        if (el('setting-sound')) el('setting-sound').checked = s.soundAlerts;
         if (el('setting-desktop-notif')) el('setting-desktop-notif').checked = s.desktopNotif;
         if (el('setting-default-tab')) el('setting-default-tab').value = s.defaultTab;
     }
@@ -1736,9 +1790,6 @@
     window.saveSettings = function () {
         const s = {
             refreshInterval: parseInt(document.getElementById('setting-refresh')?.value) || 60000,
-            pageSize: parseInt(document.getElementById('setting-page-size')?.value) || 50,
-            displayCurrency: document.getElementById('setting-currency')?.value || 'USD',
-            soundAlerts: document.getElementById('setting-sound')?.checked || false,
             desktopNotif: document.getElementById('setting-desktop-notif')?.checked || false,
             defaultTab: document.getElementById('setting-default-tab')?.value || 'portfolio',
         };
@@ -2056,7 +2107,7 @@
         const pnl = mv - cost;
         const pnlPct = cost ? (pnl / cost) : 0;
 
-        $('#detail-title').textContent = h.ticker;
+        $('#detail-title').textContent = `${h.ticker}${h.name ? ' — ' + h.name : ''}`;
 
         // Fetch related data in parallel
         const [events, notes, alerts] = await Promise.all([
@@ -2070,23 +2121,35 @@
         const alertList = ensureArray(alerts, 'items', 'alerts');
 
         body.innerHTML = `
+            <div class="detail-value-card">
+                <div class="detail-value-stat">
+                    <span class="label">Market Value</span>
+                    <span class="value value-lg">${formatCurrency(mv)}</span>
+                </div>
+                <div class="detail-value-divider"></div>
+                <div class="detail-value-stat">
+                    <span class="label">P&L</span>
+                    <span class="value ${pnlClass(pnl)}">${formatCurrency(pnl)}</span>
+                </div>
+                <div class="detail-value-stat">
+                    <span class="label">P&L %</span>
+                    <span class="value ${pnlClass(pnlPct)}">${formatPct(pnlPct)}</span>
+                </div>
+            </div>
+
             <div class="detail-section">
                 <h4>Position</h4>
-                <div class="detail-row"><span class="label">Ticker</span><span class="value">${esc(h.ticker)}</span></div>
-                <div class="detail-row"><span class="label">Name</span><span class="value" style="font-family:inherit">${esc(h.name || h.company_name || '\u2014')}</span></div>
                 <div class="detail-row"><span class="label">Sector</span><span class="value" style="font-family:inherit">${esc(h.sector || '\u2014')}</span></div>
                 <div class="detail-row"><span class="label">Geography</span><span class="value" style="font-family:inherit">${esc(h.geography || '\u2014')}</span></div>
                 <div class="detail-row"><span class="label">Shares</span><span class="value">${formatNum(h.quantity, 0)}</span></div>
                 <div class="detail-row"><span class="label">Avg Cost</span><span class="value">${formatNum(h.avg_cost_basis)}</span></div>
                 <div class="detail-row"><span class="label">Current Price</span><span class="value">${formatNum(h.current_price)}</span></div>
-                <div class="detail-row"><span class="label">Market Value</span><span class="value">${formatCurrency(mv)}</span></div>
                 <div class="detail-row"><span class="label">Weight</span><span class="value">${h.weight_pct != null ? h.weight_pct.toFixed(1) + '%' : '\u2014'}</span></div>
-                <div class="detail-row"><span class="label">P&L</span><span class="value ${pnlClass(pnl)}">${formatCurrency(pnl)}</span></div>
-                <div class="detail-row"><span class="label">P&L %</span><span class="value ${pnlClass(pnlPct)}">${formatPct(pnlPct)}</span></div>
+                <div class="detail-row"><span class="label">Currency</span><span class="value" style="font-family:inherit">${esc(h.currency || 'USD')}</span></div>
             </div>
 
             <div class="detail-section">
-                <h4>Risk Alerts (${alertList.length})</h4>
+                <h4>Risk Alerts${alertList.length ? ' (' + alertList.length + ')' : ''}</h4>
                 ${alertList.length ? alertList.map(a => `
                     <div style="padding:0.3rem 0;border-bottom:1px solid var(--border);font-size:0.82rem;">
                         ${severityBadge(a.severity)} <span style="margin-left:0.3rem">${esc(a.title)}</span>
@@ -2094,7 +2157,7 @@
             </div>
 
             <div class="detail-section">
-                <h4>Recent Events (${eventList.length})</h4>
+                <h4>Recent Events${eventList.length ? ' (' + eventList.length + ')' : ''}</h4>
                 ${eventList.length ? `<table class="detail-mini-table">
                     <tbody>${eventList.slice(0, 8).map(e => `<tr>
                         <td>${e.event_type ? `<span class="badge badge-muted">${esc(titleCase(e.event_type))}</span>` : ''}</td>

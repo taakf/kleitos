@@ -20,19 +20,32 @@ import time
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
-# Paths
+# Paths — prefer env vars from launcher, fall back to relative resolution
 # ---------------------------------------------------------------------------
 _FROZEN = getattr(sys, "frozen", False)
 
-if _FROZEN:
+# When launched from Axion.app, the launcher sets these env vars
+_RUNTIME_DIR_ENV = os.environ.get("AXION_RUNTIME_DIR")
+_DATA_DIR_ENV = os.environ.get("AXION_DATA_DIR")
+_BUNDLE_DIR_ENV = os.environ.get("AXION_BUNDLE_DIR")
+
+if _RUNTIME_DIR_ENV:
+    # Launched from Axion.app — use the stable runtime layout
+    PROJECT_DIR = Path(_RUNTIME_DIR_ENV)
+elif _FROZEN:
     _EXE_DIR = Path(sys.executable).resolve().parent
     PROJECT_DIR = _EXE_DIR.parent if (_EXE_DIR.parent / "src").exists() else _EXE_DIR
 else:
     SCRIPT_DIR = Path(__file__).resolve().parent
     PROJECT_DIR = SCRIPT_DIR.parent
 
-VENV_DIR = PROJECT_DIR / ".venv"
-DATA_DIR = Path.home() / "kleitos-data"
+if _DATA_DIR_ENV:
+    DATA_DIR = Path(_DATA_DIR_ENV)
+    VENV_DIR = DATA_DIR / ".venv"
+else:
+    DATA_DIR = Path.home() / "kleitos-data"
+    VENV_DIR = PROJECT_DIR / ".venv"
+
 LOG_DIR = DATA_DIR / "logs"
 PID_FILE = DATA_DIR / "kleitos.pid"
 
@@ -55,23 +68,176 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 
 # ---------------------------------------------------------------------------
+# macOS App Identity — set Dock icon + process name to "Axion"
+# ---------------------------------------------------------------------------
+def _setup_macos_identity():
+    """On macOS, set the app icon and process name so macOS identifies this
+    process as 'Axion' (not 'python'). This works because the launcher uses
+    `exec` to replace itself with this Python process, keeping the same PID
+    and inheriting the .app bundle association."""
+    if sys.platform != "darwin":
+        return
+
+    try:
+        from AppKit import NSApplication, NSImage, NSProcessInfo
+        import ctypes
+        import ctypes.util
+
+        app = NSApplication.sharedApplication()
+
+        # Set the process name (visible in Activity Monitor and system prompts)
+        NSProcessInfo.processInfo().setProcessName_("Axion")
+
+        # Also set the C-level process name for ps/top
+        libc = ctypes.cdll.LoadLibrary(ctypes.util.find_library("c"))
+        try:
+            libc.setprogname(b"Axion")
+        except Exception:
+            pass
+
+        # Set the Dock icon from the .app bundle's .icns file
+        icon_loaded = False
+
+        # Try bundle path from launcher env var
+        if _BUNDLE_DIR_ENV:
+            icns_path = os.path.join(_BUNDLE_DIR_ENV, "Resources", "axion.icns")
+            if os.path.isfile(icns_path):
+                img = NSImage.alloc().initWithContentsOfFile_(icns_path)
+                if img:
+                    app.setApplicationIconImage_(img)
+                    icon_loaded = True
+                    log.info(f"macOS identity: Dock icon set from {icns_path}")
+
+        # Fallback: search common locations
+        if not icon_loaded:
+            for candidate in [
+                Path.home() / "Desktop/kleitos/Axion.app/Contents/Resources/axion.icns",
+                Path("/Applications/Axion.app/Contents/Resources/axion.icns"),
+            ]:
+                if candidate.is_file():
+                    img = NSImage.alloc().initWithContentsOfFile_(str(candidate))
+                    if img:
+                        app.setApplicationIconImage_(img)
+                        icon_loaded = True
+                        log.info(f"macOS identity: Dock icon set from {candidate}")
+                        break
+
+        if not icon_loaded:
+            log.warning("macOS identity: Could not find axion.icns — using default icon")
+
+        log.info("macOS identity: process name set to 'Axion'")
+
+    except ImportError:
+        log.warning("macOS identity: PyObjC not available — cannot set app identity")
+    except Exception as e:
+        log.warning(f"macOS identity: Failed to set identity: {e}")
+
+
+def _fix_macos_menu_bar():
+    """Fix the macOS menu bar to show 'Axion' instead of 'Python'.
+
+    pywebview creates the Cocoa NSApplication and menu bar using the executable
+    name ('python3.12'). This function dispatches the rename to the MAIN THREAD
+    via performSelectorOnMainThread, because Cocoa requires all menu/UI
+    modifications to happen on the main thread.
+
+    Called from pywebview's func callback (which runs on a background thread).
+    """
+    if sys.platform != "darwin":
+        return
+    try:
+        from AppKit import NSApplication, NSMenu, NSMenuItem, NSObject
+        import objc
+
+        # Define a helper NSObject subclass whose method can be dispatched
+        # to the main thread via performSelectorOnMainThread
+        class _AxionMenuFixer(NSObject):
+            def doFix_(self, sender):
+                try:
+                    app = NSApplication.sharedApplication()
+                    mainMenu = app.mainMenu()
+
+                    if mainMenu and mainMenu.numberOfItems() > 0:
+                        appMenuItem = mainMenu.itemAtIndex_(0)
+                        submenu = appMenuItem.submenu()
+                        if submenu:
+                            old_title = submenu.title()
+                            submenu.setTitle_("Axion")
+                            # Rename menu items containing "Python"
+                            for i in range(submenu.numberOfItems()):
+                                item = submenu.itemAtIndex_(i)
+                                title = item.title()
+                                if "Python" in title or "python" in title:
+                                    new_title = (title
+                                                 .replace("Python", "Axion")
+                                                 .replace("python", "Axion"))
+                                    item.setTitle_(new_title)
+                            log.info(
+                                f"macOS menu bar: renamed '{old_title}' → 'Axion'"
+                                " (on main thread)"
+                            )
+                    else:
+                        mainMenu = NSMenu.alloc().init()
+                        appMenuItem = NSMenuItem.alloc().init()
+                        appMenu = NSMenu.alloc().initWithTitle_("Axion")
+                        appMenuItem.setSubmenu_(appMenu)
+                        mainMenu.addItem_(appMenuItem)
+                        app.setMainMenu_(mainMenu)
+                        log.info("macOS menu bar: created Axion menu (on main thread)")
+                except Exception as e:
+                    log.warning(f"macOS menu bar fix (main thread): {e}")
+
+        fixer = _AxionMenuFixer.alloc().init()
+        # Dispatch to main thread. waitUntilDone=False so we don't block
+        # the background thread (avoids potential deadlock with Cocoa run loop).
+        fixer.performSelectorOnMainThread_withObject_waitUntilDone_(
+            "doFix:", None, False
+        )
+        log.info("macOS menu bar: dispatched rename to main thread")
+
+    except ImportError:
+        log.warning("macOS menu bar: PyObjC not available")
+    except Exception as e:
+        log.warning(f"macOS menu bar fix failed: {e}")
+
+
+# Set identity early, before any windows are created
+_setup_macos_identity()
+
+
+# ---------------------------------------------------------------------------
 # Single-instance guard (Windows named mutex)
 # ---------------------------------------------------------------------------
 _mutex_handle = None
 
+_lock_fd = None
+
 def _acquire_single_instance():
     """Returns True if this is the only instance."""
-    if sys.platform != "win32":
+    if sys.platform == "win32":
+        global _mutex_handle
+        import ctypes
+        _mutex_handle = ctypes.windll.kernel32.CreateMutexW(None, False, "Global\\AxionDesktopApp")
+        last_error = ctypes.windll.kernel32.GetLastError()
+        if last_error == 183:  # ERROR_ALREADY_EXISTS
+            ctypes.windll.kernel32.CloseHandle(_mutex_handle)
+            _mutex_handle = None
+            return False
         return True
-    global _mutex_handle
-    import ctypes
-    _mutex_handle = ctypes.windll.kernel32.CreateMutexW(None, False, "Global\\AxionDesktopApp")
-    last_error = ctypes.windll.kernel32.GetLastError()
-    if last_error == 183:  # ERROR_ALREADY_EXISTS
-        ctypes.windll.kernel32.CloseHandle(_mutex_handle)
-        _mutex_handle = None
-        return False
-    return True
+    else:
+        # macOS/Linux: fcntl file lock
+        import fcntl
+        global _lock_fd
+        lock_path = DATA_DIR / "app.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            _lock_fd = open(lock_path, "w")
+            fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _lock_fd.write(str(os.getpid()))
+            _lock_fd.flush()
+            return True
+        except (IOError, OSError):
+            return False
 
 
 # ---------------------------------------------------------------------------
@@ -272,7 +438,10 @@ def _start_server():
     env = os.environ.copy()
     env["KLEITOS_DATA_DIR"] = str(DATA_DIR)
     env["KLEITOS_DB_PATH"] = str(DATA_DIR / "db" / "kleitos.db")
-    env["PATH"] = f"{VENV_DIR / 'Scripts'};{env.get('PATH', '')}"
+    if sys.platform == "win32":
+        env["PATH"] = f"{VENV_DIR / 'Scripts'};{env.get('PATH', '')}"
+    else:
+        env["PATH"] = f"{VENV_DIR / 'bin'}:{env.get('PATH', '')}"
 
     stdout_fh = open(LOG_DIR / "kleitos-stdout.log", "a")
     stderr_fh = open(LOG_DIR / "kleitos-stderr.log", "a")
@@ -395,28 +564,34 @@ SPLASH_HTML = """<!DOCTYPE html>
 # Windows toast notification (best-effort)
 # ---------------------------------------------------------------------------
 def _notify(message):
-    """Show a Windows toast notification. Fails silently."""
-    if sys.platform != "win32":
-        return
+    """Show a native notification. Fails silently."""
     try:
-        ps_script = (
-            "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, "
-            "ContentType = WindowsRuntime] > $null; "
-            "$t = [Windows.UI.Notifications.ToastNotificationManager]::"
-            "GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); "
-            "$n = $t.GetElementsByTagName('text'); "
-            f"$n.Item(0).AppendChild($t.CreateTextNode('Axion')) > $null; "
-            f"$n.Item(1).AppendChild($t.CreateTextNode('{message}')) > $null; "
-            "$toast = [Windows.UI.Notifications.ToastNotification]::new($t); "
-            "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Axion')"
-            ".Show($toast)"
-        )
-        subprocess.Popen(
-            ["powershell", "-NoProfile", "-Command", ps_script],
-            creationflags=subprocess.CREATE_NO_WINDOW,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        if sys.platform == "darwin":
+            subprocess.Popen(
+                ["osascript", "-e",
+                 f'display notification "{message}" with title "Axion"'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        elif sys.platform == "win32":
+            ps_script = (
+                "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, "
+                "ContentType = WindowsRuntime] > $null; "
+                "$t = [Windows.UI.Notifications.ToastNotificationManager]::"
+                "GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); "
+                "$n = $t.GetElementsByTagName('text'); "
+                f"$n.Item(0).AppendChild($t.CreateTextNode('Axion')) > $null; "
+                f"$n.Item(1).AppendChild($t.CreateTextNode('{message}')) > $null; "
+                "$toast = [Windows.UI.Notifications.ToastNotification]::new($t); "
+                "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Axion')"
+                ".Show($toast)"
+            )
+            subprocess.Popen(
+                ["powershell", "-NoProfile", "-Command", ps_script],
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
     except Exception:
         pass
 
@@ -626,11 +801,16 @@ def _run_app(dev_mode=False):
 
     # Start the server connection in background after window appears
     def _setup(window_ref):
+        # Fix macOS menu bar title — give pywebview a moment to finish
+        # creating the Cocoa menu, then dispatch rename to main thread
+        time.sleep(0.5)
+        _fix_macos_menu_bar()
         threading.Thread(target=_on_loaded, daemon=True).start()
         threading.Thread(target=_signal_watcher, daemon=True).start()
         threading.Thread(target=_start_tray, daemon=True).start()
 
-    webview.start(func=_setup, args=[window], gui="edgechromium")
+    gui_backend = "edgechromium" if sys.platform == "win32" else None
+    webview.start(func=_setup, args=[window], gui=gui_backend)
 
     # After webview.start() returns (window destroyed), clean up tray
     _stop_tray()
@@ -658,14 +838,10 @@ def _fallback_browser(dev_mode=False):
 if __name__ == "__main__":
     # Single-instance guard
     if not _acquire_single_instance():
-        # Another instance is running — ask it to show its window
-        log.info("Another instance running — sending show signal")
+        # Another instance is running — ask it to show its window and exit.
+        # Do NOT open the browser — the native window is the primary interface.
+        log.info("Another instance running — sending show signal and exiting")
         _request_show()
-        # Brief wait, then fallback to browser if window didn't appear
-        time.sleep(2)
-        if _is_server_running():
-            import webbrowser
-            webbrowser.open(DASHBOARD_URL)
         sys.exit(0)
 
     dev_mode = "--dev" in sys.argv

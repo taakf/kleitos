@@ -3,7 +3,7 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleExecutable</key>
-    <string>axion-launcher</string>
+    <string>Axion</string>
     <key>CFBundleIdentifier</key>
     <string>com.axion.app</string>
     <key>CFBundleName</key>
@@ -22,8 +22,10 @@
     <string>12.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
-    <key>LSUIElement</key>
+    <key>NSSupportsAutomaticTermination</key>
     <true/>
+    <key>NSSupportsSuddenTermination</key>
+    <false/>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
 </dict>

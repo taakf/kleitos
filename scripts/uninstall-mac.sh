@@ -18,8 +18,9 @@ YELLOW="\033[33m"
 RESET="\033[0m"
 
 PORT="${KLEITOS_PORT:-7777}"
-PLIST_NAME="com.kleitos.app"
+PLIST_NAME="com.axion.app"
 PLIST_PATH="${HOME}/Library/LaunchAgents/${PLIST_NAME}.plist"
+PLIST_LEGACY="${HOME}/Library/LaunchAgents/com.kleitos.app.plist"
 DATA_DIR="${HOME}/kleitos-data"
 
 info()  { echo -e "${GREEN}[+]${RESET} $*"; }
@@ -37,13 +38,13 @@ echo -e "${BOLD}Uninstalling Axion...${RESET}"
 echo ""
 
 # 1. Stop the service
-if [[ -f "${PLIST_PATH}" ]]; then
-    launchctl unload "${PLIST_PATH}" 2>/dev/null || true
-    rm -f "${PLIST_PATH}"
-    info "Stopped service and removed auto-start"
-else
-    info "No launchd service found"
-fi
+for plist_file in "${PLIST_PATH}" "${PLIST_LEGACY}"; do
+    if [[ -f "${plist_file}" ]]; then
+        launchctl unload "${plist_file}" 2>/dev/null || true
+        rm -f "${plist_file}"
+        info "Stopped service and removed auto-start: $(basename "${plist_file}")"
+    fi
+done
 
 # 2. Kill any running process
 if [[ -f "${DATA_DIR}/kleitos.pid" ]]; then

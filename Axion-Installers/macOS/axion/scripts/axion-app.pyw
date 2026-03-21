@@ -59,19 +59,34 @@ logging.getLogger("urllib3").setLevel(logging.WARNING)
 # ---------------------------------------------------------------------------
 _mutex_handle = None
 
+_lock_fd = None
+
 def _acquire_single_instance():
     """Returns True if this is the only instance."""
-    if sys.platform != "win32":
+    if sys.platform == "win32":
+        global _mutex_handle
+        import ctypes
+        _mutex_handle = ctypes.windll.kernel32.CreateMutexW(None, False, "Global\\AxionDesktopApp")
+        last_error = ctypes.windll.kernel32.GetLastError()
+        if last_error == 183:  # ERROR_ALREADY_EXISTS
+            ctypes.windll.kernel32.CloseHandle(_mutex_handle)
+            _mutex_handle = None
+            return False
         return True
-    global _mutex_handle
-    import ctypes
-    _mutex_handle = ctypes.windll.kernel32.CreateMutexW(None, False, "Global\\AxionDesktopApp")
-    last_error = ctypes.windll.kernel32.GetLastError()
-    if last_error == 183:  # ERROR_ALREADY_EXISTS
-        ctypes.windll.kernel32.CloseHandle(_mutex_handle)
-        _mutex_handle = None
-        return False
-    return True
+    else:
+        # macOS/Linux: fcntl file lock
+        import fcntl
+        global _lock_fd
+        lock_path = DATA_DIR / "app.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            _lock_fd = open(lock_path, "w")
+            fcntl.flock(_lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            _lock_fd.write(str(os.getpid()))
+            _lock_fd.flush()
+            return True
+        except (IOError, OSError):
+            return False
 
 
 # ---------------------------------------------------------------------------
@@ -272,7 +287,10 @@ def _start_server():
     env = os.environ.copy()
     env["KLEITOS_DATA_DIR"] = str(DATA_DIR)
     env["KLEITOS_DB_PATH"] = str(DATA_DIR / "db" / "kleitos.db")
-    env["PATH"] = f"{VENV_DIR / 'Scripts'};{env.get('PATH', '')}"
+    if sys.platform == "win32":
+        env["PATH"] = f"{VENV_DIR / 'Scripts'};{env.get('PATH', '')}"
+    else:
+        env["PATH"] = f"{VENV_DIR / 'bin'}:{env.get('PATH', '')}"
 
     stdout_fh = open(LOG_DIR / "kleitos-stdout.log", "a")
     stderr_fh = open(LOG_DIR / "kleitos-stderr.log", "a")
@@ -395,28 +413,34 @@ SPLASH_HTML = """<!DOCTYPE html>
 # Windows toast notification (best-effort)
 # ---------------------------------------------------------------------------
 def _notify(message):
-    """Show a Windows toast notification. Fails silently."""
-    if sys.platform != "win32":
-        return
+    """Show a native notification. Fails silently."""
     try:
-        ps_script = (
-            "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, "
-            "ContentType = WindowsRuntime] > $null; "
-            "$t = [Windows.UI.Notifications.ToastNotificationManager]::"
-            "GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); "
-            "$n = $t.GetElementsByTagName('text'); "
-            f"$n.Item(0).AppendChild($t.CreateTextNode('Axion')) > $null; "
-            f"$n.Item(1).AppendChild($t.CreateTextNode('{message}')) > $null; "
-            "$toast = [Windows.UI.Notifications.ToastNotification]::new($t); "
-            "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Axion')"
-            ".Show($toast)"
-        )
-        subprocess.Popen(
-            ["powershell", "-NoProfile", "-Command", ps_script],
-            creationflags=subprocess.CREATE_NO_WINDOW,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        if sys.platform == "darwin":
+            subprocess.Popen(
+                ["osascript", "-e",
+                 f'display notification "{message}" with title "Axion"'],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        elif sys.platform == "win32":
+            ps_script = (
+                "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, "
+                "ContentType = WindowsRuntime] > $null; "
+                "$t = [Windows.UI.Notifications.ToastNotificationManager]::"
+                "GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02); "
+                "$n = $t.GetElementsByTagName('text'); "
+                f"$n.Item(0).AppendChild($t.CreateTextNode('Axion')) > $null; "
+                f"$n.Item(1).AppendChild($t.CreateTextNode('{message}')) > $null; "
+                "$toast = [Windows.UI.Notifications.ToastNotification]::new($t); "
+                "[Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Axion')"
+                ".Show($toast)"
+            )
+            subprocess.Popen(
+                ["powershell", "-NoProfile", "-Command", ps_script],
+                creationflags=subprocess.CREATE_NO_WINDOW,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
     except Exception:
         pass
 
@@ -630,7 +654,8 @@ def _run_app(dev_mode=False):
         threading.Thread(target=_signal_watcher, daemon=True).start()
         threading.Thread(target=_start_tray, daemon=True).start()
 
-    webview.start(func=_setup, args=[window], gui="edgechromium")
+    gui_backend = "edgechromium" if sys.platform == "win32" else None
+    webview.start(func=_setup, args=[window], gui=gui_backend)
 
     # After webview.start() returns (window destroyed), clean up tray
     _stop_tray()
