@@ -542,6 +542,10 @@ async def delete_holding(
     session.add(audit)
     await session.commit()
 
+    # Recalculate portfolio weights after removal
+    ledger = PortfolioLedger()
+    await ledger.recalculate_weights()
+
     return {"id": holding_id, "status": "closed", "message": "Holding closed successfully"}
 
 

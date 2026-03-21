@@ -2,6 +2,7 @@
 
 import json
 import logging
+import re
 from datetime import datetime, timezone
 from enum import Enum
 
@@ -88,6 +89,82 @@ class UploadResult(BaseModel):
     holdings_imported: int
     holdings_updated: int
     errors: list[str]
+
+
+class ExtractedRow(BaseModel):
+    """A single extracted row for review before import."""
+    ticker: str
+    name: str | None = None
+    quantity: float
+    current_price: float | None = None
+    avg_cost_basis: float | None = None
+    market_value: float | None = None
+    currency: str = "USD"
+    isin: str | None = None
+    weight_pct: float | None = None
+
+    @field_validator("ticker")
+    @classmethod
+    def validate_ticker(cls, v: str) -> str:
+        v = v.strip().upper()
+        if not v or len(v) > 10:
+            raise ValueError("Ticker must be 1\u201310 characters.")
+        if not re.fullmatch(r"[A-Z0-9.]+", v):
+            raise ValueError("Ticker must contain only letters, digits, or '.'")
+        return v
+
+    @field_validator("quantity")
+    @classmethod
+    def validate_quantity(cls, v: float) -> float:
+        if v <= 0:
+            raise ValueError("Quantity must be greater than 0.")
+        return v
+
+    @field_validator("current_price", "avg_cost_basis", "market_value")
+    @classmethod
+    def validate_non_negative(cls, v: float | None) -> float | None:
+        if v is not None and v < 0:
+            raise ValueError("Value cannot be negative.")
+        return v
+
+    @field_validator("currency", mode="before")
+    @classmethod
+    def validate_currency(cls, v: str | None) -> str:
+        if v is None or not str(v).strip():
+            return "USD"
+        v = str(v).strip().upper()
+        if not re.fullmatch(r"[A-Z]{3}", v):
+            raise ValueError("Currency must be exactly 3 uppercase letters (e.g. USD, EUR, GBP).")
+        return v
+
+    @field_validator("weight_pct")
+    @classmethod
+    def validate_weight_pct(cls, v: float | None) -> float | None:
+        if v is not None and (v < 0 or v > 100):
+            raise ValueError("Weight must be between 0 and 100.")
+        return v
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str | None) -> str | None:
+        if v is not None and len(v) > 200:
+            raise ValueError("Name must be 200 characters or fewer.")
+        return v.strip() if v else None
+
+
+class ExtractResult(BaseModel):
+    """Result of file extraction — rows for human review."""
+    status: str  # "ok", "empty", "error", "ai_required"
+    source_type: str  # "csv", "pdf", "image"
+    filename: str
+    rows: list[ExtractedRow]
+    row_count: int
+    message: str
+
+
+class ImportReviewedRequest(BaseModel):
+    """Request to import human-reviewed rows into the portfolio."""
+    rows: list[ExtractedRow]
 
 
 class TradeType(str, Enum):
@@ -465,6 +542,10 @@ async def delete_holding(
     session.add(audit)
     await session.commit()
 
+    # Recalculate portfolio weights after removal
+    ledger = PortfolioLedger()
+    await ledger.recalculate_weights()
+
     return {"id": holding_id, "status": "closed", "message": "Holding closed successfully"}
 
 
@@ -595,46 +676,160 @@ async def get_trade(
     )
 
 
-@router.post("/upload", response_model=UploadResult)
-async def upload_portfolio(file: UploadFile = File(...)) -> UploadResult:
-    """Upload a CSV portfolio file to import/update holdings."""
-    # Accept common CSV content types + check filename extension as fallback
-    allowed_types = {"text/csv", "application/vnd.ms-excel", "application/octet-stream", "text/plain"}
-    filename = file.filename or ""
-    if file.content_type not in allowed_types and not filename.lower().endswith(".csv"):
-        raise HTTPException(status_code=400, detail="Unsupported file type. Use CSV.")
+@router.post("/extract", response_model=ExtractResult)
+async def extract_portfolio(file: UploadFile = File(...)) -> ExtractResult:
+    """Extract portfolio data from a file for human review before import.
+
+    Supports CSV (direct parsing), PDF (table extraction via pdfplumber,
+    with AI vision fallback for scanned PDFs), and images (AI vision).
+    Returns extracted rows that the user can review, edit, and then confirm.
+    """
+    from src.ledger.extract import extract_csv, extract_pdf, extract_pdf_vision, extract_image
+
+    filename = file.filename or "unknown"
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
 
     contents = await file.read()
     if len(contents) > 10 * 1024 * 1024:
-        raise HTTPException(status_code=400, detail="File too large. Maximum size is 10 MB.")
-    try:
-        text = contents.decode("utf-8")
-    except UnicodeDecodeError:
-        raise HTTPException(status_code=400, detail="File must be UTF-8 encoded.")
+        raise HTTPException(status_code=400, detail="File too large. Maximum 10 MB.")
+
+    rows: list[dict] = []
+    source_type = "csv"
+
+    if ext == "csv" or (not ext and file.content_type and "csv" in file.content_type):
+        source_type = "csv"
+        try:
+            text = contents.decode("utf-8")
+        except UnicodeDecodeError:
+            raise HTTPException(status_code=400, detail="CSV must be UTF-8 encoded.")
+        rows = extract_csv(text)
+    elif ext == "pdf":
+        source_type = "pdf"
+        rows = extract_pdf(contents)
+        # If pdfplumber found no tables, try AI vision fallback (scanned PDF)
+        if not rows:
+            rows = await extract_pdf_vision(contents, filename)
+            if rows:
+                source_type = "pdf_vision"
+    elif ext in ("png", "jpg", "jpeg"):
+        source_type = "image"
+        rows = await extract_image(contents, filename)
+        if not rows:
+            return ExtractResult(
+                status="ai_required",
+                source_type=source_type,
+                filename=filename,
+                rows=[],
+                row_count=0,
+                message="Image extraction requires an AI vision provider. Configure one in Settings, then retry.",
+            )
+    else:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '.{ext}'. Use CSV, PDF, or image (PNG/JPG).",
+        )
+
+    if not rows:
+        return ExtractResult(
+            status="empty",
+            source_type=source_type,
+            filename=filename,
+            rows=[],
+            row_count=0,
+            message=f"No portfolio data found in {filename}. Check file format and column headers.",
+        )
+
+    # Build ExtractedRow objects — use permissive defaults so partial data
+    # reaches the review table.  The user can fix fields before confirming.
+    extracted = []
+    skipped = 0
+    for r in rows:
+        ticker_raw = (r.get("ticker") or "").strip().upper()
+        if not ticker_raw:
+            skipped += 1
+            continue  # no ticker = unusable row
+        try:
+            extracted.append(ExtractedRow(
+                ticker=ticker_raw,
+                name=r.get("name"),
+                quantity=r.get("quantity") or 0,  # 0 shows in review; import rejects <= 0
+                current_price=r.get("current_price"),
+                avg_cost_basis=r.get("avg_cost_basis"),
+                market_value=r.get("market_value"),
+                currency=r.get("currency"),
+                isin=r.get("isin"),
+                weight_pct=r.get("weight_pct"),
+            ))
+        except Exception:
+            skipped += 1
+            continue  # malformed row — skip, don't crash extract
+
+    return ExtractResult(
+        status="ok",
+        source_type=source_type,
+        filename=filename,
+        rows=extracted,
+        row_count=len(extracted),
+        message=(
+            f"Extracted {len(extracted)} holdings from {filename}."
+            + (f" ({skipped} rows skipped — missing ticker or malformed.)" if skipped else "")
+            + " Review and edit below, then confirm import."
+        ),
+    )
+
+
+@router.post("/import-reviewed", response_model=UploadResult)
+async def import_reviewed(body: ImportReviewedRequest) -> UploadResult:
+    """Import human-reviewed and edited holdings into the portfolio.
+
+    This is the confirmation step after extract → review → edit.
+    Only rows the user has approved are imported.
+    """
+    if not body.rows:
+        raise HTTPException(status_code=400, detail="No rows to import.")
+
+    # --- Duplicate ticker check (batch-level) ---
+    seen: dict[str, int] = {}
+    for i, row in enumerate(body.rows):
+        t = row.ticker  # already uppercased by validator
+        if t in seen:
+            raise HTTPException(
+                status_code=422,
+                detail=f"Duplicate ticker: {t} appears in rows {seen[t] + 1} and {i + 1}. Merge or remove one.",
+            )
+        seen[t] = i
 
     ledger = PortfolioLedger()
-    holdings_data = await ledger.parse_csv(text)
-
-    if not holdings_data:
-        raise HTTPException(status_code=400, detail="No valid holdings found in CSV.")
-
     imported = 0
     updated = 0
     errors: list[str] = []
 
-    for row in holdings_data:
+    for row in body.rows:
+        data = {
+            "ticker": row.ticker,
+            "quantity": row.quantity,
+            "current_price": row.current_price,
+            "avg_cost_basis": row.avg_cost_basis,
+            "currency": row.currency,
+            "isin": row.isin,
+        }
+        # Compute market_value if we have price
+        price = row.current_price or row.avg_cost_basis
+        if price and row.quantity:
+            data["market_value"] = round(price * row.quantity, 4)
+        elif row.market_value:
+            data["market_value"] = row.market_value
+
         try:
-            _id, action = await ledger.upsert_holding(row, agent_id="csv_upload")
+            _id, action = await ledger.upsert_holding(data, agent_id="reviewed_import")
             if action == "created":
                 imported += 1
             else:
                 updated += 1
         except Exception as exc:
-            ticker = row.get("ticker", "UNKNOWN")
-            errors.append(f"{ticker}: {exc}")
-            logger.warning("Error upserting holding %s: %s", ticker, exc)
+            errors.append(f"{row.ticker}: {exc}")
+            logger.warning("Error importing reviewed holding %s: %s", row.ticker, exc)
 
-    # Recalculate market_value and weight_pct for all holdings after upload
     await ledger.recalculate_weights()
 
     return UploadResult(
@@ -642,6 +837,15 @@ async def upload_portfolio(file: UploadFile = File(...)) -> UploadResult:
         holdings_imported=imported,
         holdings_updated=updated,
         errors=errors,
+    )
+
+
+@router.post("/upload")
+async def upload_portfolio_removed() -> None:
+    """Removed — use /extract then /import-reviewed."""
+    raise HTTPException(
+        status_code=410,
+        detail="Direct upload removed. Use /extract then /import-reviewed.",
     )
 
 
