@@ -158,7 +158,7 @@ APP_SRC="${PROJECT_DIR}/Axion.app"
 APP_DST="/Applications/Axion.app"
 
 if [[ -d "${APP_SRC}" ]]; then
-    chmod +x "${APP_SRC}/Contents/MacOS/kleitos-launcher"
+    chmod +x "${APP_SRC}/Contents/MacOS/axion-launcher"
 
     # Write project dir to a well-known file so the launcher can find it
     # (works even when .app is copied to /Applications)
@@ -167,6 +167,9 @@ if [[ -d "${APP_SRC}" ]]; then
     # Copy to /Applications
     rm -rf "${APP_DST}" 2>/dev/null || true
     cp -R "${APP_SRC}" "${APP_DST}"
+
+    # Ad-hoc sign the bundle so Finder launch does not SIGKILL it
+    codesign --force --deep --sign - "${APP_DST}" 2>/dev/null || true
     info "Installed /Applications/Axion.app"
 else
     warn "Axion.app bundle not found, skipping"
@@ -195,7 +198,7 @@ cat > "${PLIST_PATH}" <<PLISTEOF
         <string>uvicorn</string>
         <string>src.main:app</string>
         <string>--host</string>
-        <string>0.0.0.0</string>
+        <string>127.0.0.1</string>
         <string>--port</string>
         <string>${PORT}</string>
     </array>

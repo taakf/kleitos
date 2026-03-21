@@ -167,6 +167,9 @@ if [[ -d "${APP_SRC}" ]]; then
     # Copy to /Applications
     rm -rf "${APP_DST}" 2>/dev/null || true
     cp -R "${APP_SRC}" "${APP_DST}"
+
+    # Ad-hoc sign the bundle so Finder launch does not SIGKILL it
+    codesign --force --deep --sign - "${APP_DST}" 2>/dev/null || true
     info "Installed /Applications/Axion.app"
 else
     warn "Axion.app bundle not found, skipping"
