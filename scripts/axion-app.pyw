@@ -561,18 +561,29 @@ SPLASH_HTML = """<!DOCTYPE html>
 
 
 # ---------------------------------------------------------------------------
-# Windows toast notification (best-effort)
+# Native notifications — attributed to "Axion", not Script Editor
 # ---------------------------------------------------------------------------
 def _notify(message):
-    """Show a native notification. Fails silently."""
+    """Show a native notification from the Axion app process.
+    On macOS, uses NSUserNotificationCenter so the notification is attributed
+    to the running app (Axion), not to Script Editor (which happens with osascript).
+    """
     try:
         if sys.platform == "darwin":
-            subprocess.Popen(
-                ["osascript", "-e",
-                 f'display notification "{message}" with title "Axion"'],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
+            try:
+                from Foundation import NSUserNotification, NSUserNotificationCenter
+                notif = NSUserNotification.alloc().init()
+                notif.setTitle_("Axion")
+                notif.setInformativeText_(message)
+                NSUserNotificationCenter.defaultUserNotificationCenter() \
+                    .deliverNotification_(notif)
+            except ImportError:
+                # Fallback if PyObjC Foundation not available
+                subprocess.Popen(
+                    ["osascript", "-e",
+                     f'display notification "{message}" with title "Axion"'],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
         elif sys.platform == "win32":
             ps_script = (
                 "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, "
@@ -589,8 +600,7 @@ def _notify(message):
             subprocess.Popen(
                 ["powershell", "-NoProfile", "-Command", ps_script],
                 creationflags=subprocess.CREATE_NO_WINDOW,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             )
     except Exception:
         pass
@@ -620,6 +630,7 @@ def _run_app(dev_mode=False):
         return
 
     log.info("Starting Axion desktop app")
+    _notify("Axion is ready!")
 
     # Clean stale signals
     _SHOW_SIGNAL.unlink(missing_ok=True)
@@ -683,29 +694,16 @@ def _run_app(dev_mode=False):
             log.error(f"Startup error: {e}", exc_info=True)
 
     def _on_closing():
-        """Close button: hide window instead of quitting (server keeps running).
-        Return False to cancel the close.  Return nothing to allow real quit."""
-        if _app_state["quitting"]:
-            # Real quit requested — allow close and stop server
-            log.info("Quitting Axion — stopping server and tray")
-            if not dev_mode:
-                _stop_server()
-            _stop_tray()
-            _SHOW_SIGNAL.unlink(missing_ok=True)
-            _QUIT_SIGNAL.unlink(missing_ok=True)
-            return  # Allow the close
-
-        # Hide instead of close — server keeps running
-        log.info("Window hidden — Axion still running in background")
-        _app_state["hidden"] = True
-        window.hide()
-
-        # One-time notification so user understands the behavior
-        if not _app_state["hide_notified"]:
-            _app_state["hide_notified"] = True
-            _notify("Axion is still running. Launch again to reopen, or quit from Settings.")
-
-        return False  # Cancel the close
+        """Close button = quit the app. Stops the server and exits cleanly.
+        This is the standard Mac single-window app behavior."""
+        log.info("Window closing — quitting Axion")
+        _app_state["quitting"] = True
+        if not dev_mode:
+            _stop_server()
+        _stop_tray()
+        _SHOW_SIGNAL.unlink(missing_ok=True)
+        _QUIT_SIGNAL.unlink(missing_ok=True)
+        return  # Allow the close → webview.start() returns → process exits
 
     window.events.closing += _on_closing
 

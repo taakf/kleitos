@@ -90,6 +90,9 @@ log() {
 }
 
 notify() {
+    # Skip osascript notifications when called from native binary
+    # (the native binary sends notifications via PyObjC after Python init)
+    [[ "${AXION_BOOTSTRAP_ONLY:-}" == "1" ]] && return 0
     osascript -e "display notification \"$1\" with title \"${APP_NAME}\"" 2>/dev/null || true
 }
 

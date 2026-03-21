@@ -344,14 +344,32 @@ static int run_python_app(void) {
 }
 
 /* ---------------------------------------------------------------------------
- * macOS notification helper
+ * macOS notification helper — uses NSUserNotificationCenter via Python
+ *
+ * We avoid osascript because macOS attributes osascript notifications
+ * to "Script Editor", not to the calling app. Instead, we use PyObjC
+ * through the embedded Python interpreter (after Py_Initialize).
+ * For pre-Python notifications (errors before Python starts), we log only.
  * --------------------------------------------------------------------------- */
 static void notify(const char *message) {
-    char cmd[4096];
-    snprintf(cmd, sizeof(cmd),
-             "osascript -e 'display notification \"%s\" with title \"Axion\"' "
-             "2>/dev/null &", message);
-    system(cmd);
+    /* Only works after Python is initialized */
+    if (!Py_IsInitialized()) {
+        ax_log("Notification (pre-Python): %s", message);
+        return;
+    }
+    char py_cmd[4096];
+    snprintf(py_cmd, sizeof(py_cmd),
+        "try:\n"
+        "    from Foundation import NSUserNotification, NSUserNotificationCenter\n"
+        "    _n = NSUserNotification.alloc().init()\n"
+        "    _n.setTitle_('Axion')\n"
+        "    _n.setInformativeText_('%s')\n"
+        "    NSUserNotificationCenter.defaultUserNotificationCenter()"
+        ".deliverNotification_(_n)\n"
+        "except Exception:\n"
+        "    pass\n",
+        message);
+    PyRun_SimpleString(py_cmd);
 }
 
 /* ---------------------------------------------------------------------------
@@ -384,19 +402,21 @@ int main(int argc, char *argv[]) {
 
     /* Bootstrap if needed */
     if (ensure_bootstrapped() != 0) {
-        notify("Setup failed. Check ~/kleitos-data/logs/");
+        ax_log("FATAL: Setup failed");
+        /* Can't use notify() here — Python not initialized yet */
         return 1;
     }
 
     /* Start server */
     if (start_server() != 0) {
-        notify("Server failed to start. Check logs.");
+        ax_log("FATAL: Server failed to start");
         return 1;
     }
 
-    notify("Axion is ready!");
-
-    /* Run the Python GUI (blocks until window closed) */
+    /* Run the Python GUI (blocks until window closed).
+     * The "Axion is ready!" notification is sent from axion-app.pyw
+     * after Python + PyObjC are initialized, so it comes from the
+     * Axion app identity, not from Script Editor. */
     int result = run_python_app();
 
     /* Cleanup happens via atexit */
