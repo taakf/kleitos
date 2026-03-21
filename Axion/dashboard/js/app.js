@@ -26,6 +26,8 @@
         agentRun:     (id) => `/api/v1/agents/${id}/run`,
         sources:      '/api/v1/sources',
         upload:       '/api/v1/portfolio/upload',
+        extract:      '/api/v1/portfolio/extract',
+        importReviewed: '/api/v1/portfolio/import-reviewed',
         events:       '/api/v1/events',
         eventsRecent: '/api/v1/events/recent',
         analysisNotes:'/api/v1/analysis/notes',
@@ -190,10 +192,32 @@
         return `<div class="error-state">Failed to load ${esc(msg)}</div>`;
     }
 
+    // ── SVG icon library (24×24 line-art for empty states) ──
+    const ICONS = {
+        portfolio: '<svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 16l4-5 4 3 5-6"/></svg>',
+        events:    '<svg viewBox="0 0 24 24"><path d="M4 4h16v16H4z" rx="2"/><path d="M4 9h16"/><path d="M9 4v5"/><path d="M8 13h3"/><path d="M8 16h5"/></svg>',
+        analysis:  '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.35-4.35"/><path d="M8 11h6"/><path d="M11 8v6"/></svg>',
+        digest:    '<svg viewBox="0 0 24 24"><path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z"/><path d="M14 2v5h5"/><path d="M8 13h8"/><path d="M8 17h5"/></svg>',
+        alerts:    '<svg viewBox="0 0 24 24"><path d="M12 2L3 20h18L12 2z"/><path d="M12 9v4"/><circle cx="12" cy="16" r="0.5" fill="currentColor"/></svg>',
+        check:     '<svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>',
+        upload:    '<svg viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>',
+        audit:     '<svg viewBox="0 0 24 24"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/><path d="M9 14l2 2 4-4"/></svg>',
+    };
+
+    function svgIcon(name) {
+        return ICONS[name] ? `<div class="empty-icon">${ICONS[name]}</div>` : '';
+    }
+
     function renderEmpty(icon, text, opts) {
-        // opts: { hint, actions: [{label, onclick, primary}] }
+        // icon can be an SVG name (string key in ICONS) or raw HTML
         const o = opts || {};
-        let html = `<div class="empty-state">${icon ? `<div class="icon">${icon}</div>` : ''}<p>${esc(text)}</p>`;
+        let iconHtml = '';
+        if (icon && ICONS[icon]) {
+            iconHtml = svgIcon(icon);
+        } else if (icon) {
+            iconHtml = `<div class="icon">${icon}</div>`;
+        }
+        let html = `<div class="empty-state">${iconHtml}<p>${esc(text)}</p>`;
         if (o.hint) html += `<p class="text-sm text-muted mt-2">${esc(o.hint)}</p>`;
         if (o.actions && o.actions.length) {
             html += `<div class="mt-3" style="display:flex;gap:0.5rem;justify-content:center;flex-wrap:wrap;">`;
@@ -203,6 +227,14 @@
             html += `</div>`;
         }
         html += `</div>`;
+        return html;
+    }
+
+    function renderSkeleton(rows = 5) {
+        let html = '<div class="skeleton-band"><div class="skeleton skeleton-cell w-lg"></div><div class="skeleton skeleton-cell w-md"></div><div class="skeleton skeleton-cell w-sm"></div></div>';
+        for (let i = 0; i < rows; i++) {
+            html += `<div class="skeleton-row"><div class="skeleton skeleton-cell w-md"></div><div class="skeleton skeleton-cell w-xl"></div><div class="skeleton skeleton-cell w-md"></div><div class="skeleton skeleton-cell w-sm"></div><div class="skeleton skeleton-cell w-md"></div></div>`;
+        }
         return html;
     }
 
@@ -270,19 +302,26 @@
     // ================================================================
     const tabLoaded = {};
     const tabLoaders = {
+        portfolio:    function () { loadSubTab('portfolio', 'holdings'); },
+        intelligence: function () { loadSubTab('intelligence', 'events'); },
+        alerts:    loadAlerts,
+        audit:     loadAudit,
+        command:   loadCommand,
+        settings:  loadSettings,
+    };
+
+    // Sub-tab loaders map
+    const subTabLoaders = {
         holdings:  loadHoldings,
         exposures: loadExposures,
         events:    loadEvents,
         analysis:  loadAnalysisNotes,
         digest:    loadDigest,
-        alerts:    loadAlerts,
-        audit:     loadAudit,
-        command:   loadCommand,
-        health:    loadHealth,
-        settings:  loadSettings,
     };
 
+    window.switchTab = switchTab;
     function switchTab(name) {
+        // For primary tabs, update the nav
         $$('.tab-link').forEach(l => {
             const isActive = l.dataset.tab === name;
             l.classList.toggle('active', isActive);
@@ -295,11 +334,29 @@
         }
     }
 
+    function loadSubTab(parent, subtab) {
+        // Switch sub-tab within a parent tab
+        const parentEl = document.getElementById('tab-' + parent);
+        if (!parentEl) return;
+        parentEl.querySelectorAll('.sub-tab').forEach(b => {
+            b.classList.toggle('active', b.dataset.subtab === subtab);
+        });
+        parentEl.querySelectorAll('.sub-panel').forEach(p => {
+            p.classList.toggle('active', p.id === 'subtab-' + subtab);
+        });
+        // Load content if not already loaded
+        if (!tabLoaded[subtab] && subTabLoaders[subtab]) {
+            tabLoaded[subtab] = true;
+            subTabLoaders[subtab]();
+        }
+    }
+
     function refreshTab(name) {
         tabLoaded[name] = false;
-        if ($('.tab-link.active')?.dataset.tab === name) {
+        const loader = tabLoaders[name] || subTabLoaders[name];
+        if (loader && ($('.tab-link.active')?.dataset.tab === name || document.querySelector('.sub-tab.active[data-subtab="' + name + '"]'))) {
             tabLoaded[name] = true;
-            tabLoaders[name]();
+            loader();
         }
     }
 
@@ -312,6 +369,10 @@
         const summaryEl = $('#holdings-summary');
         const tableEl = $('#holdings-table');
         if (!tableEl) { console.error('holdings-table element not found'); return; }
+        // Show skeleton while loading (only on first load)
+        if (!allHoldings.length && tableEl.querySelector('.spinner')) {
+            tableEl.innerHTML = renderSkeleton(6);
+        }
         try {
             const [summary, holdings, health] = await Promise.all([
                 fetchJSON(API.summary).catch(() => null),
@@ -331,7 +392,7 @@
 
                     const statusDotClass = (health?.status === 'ok') ? 'green' : 'yellow';
                     const statusLabel = (health?.status === 'ok') ? 'Operational' : (health?.status || '...');
-                    const llmLabel = health?.llm_available ? 'AI-enhanced' : 'Rule-based';
+                    const llmLabel = health?.llm_available ? 'AI-enhanced' : 'Core mode';
                     const llmDot = health?.llm_available ? 'green' : 'yellow';
                     const srcActive = health?.sources_active ?? '?';
                     const lastColl = health?.last_collection ? timeAgo(health.last_collection) : 'never';
@@ -352,7 +413,7 @@
                         </div>
                         <div class="overview-status">
                             <span class="overview-chip"><span class="dot ${statusDotClass}"></span>${statusLabel}</span>
-                            <span class="overview-chip"><span class="dot ${llmDot}"></span>${llmLabel}</span>
+                            <span class="overview-chip" title="${health?.llm_available ? 'AI provider active — all features available' : 'Portfolio tracking, alerts, and news collection active. Add an AI key in Settings for classification, analysis, and chat.'}"><span class="dot ${llmDot}"></span>${llmLabel}</span>
                             <span class="overview-chip">${srcActive} sources</span>
                             <span class="overview-chip">Collected ${lastColl === 'never' ? 'soon (~30 min cycle)' : lastColl}</span>
                             <button class="overview-chip overview-chip-btn" onclick="triggerCollection()" title="Run collection now">&#8635; Collect</button>
@@ -361,8 +422,9 @@
                 } else if (health) {
                     const statusDotClass = (health.status === 'ok') ? 'green' : 'yellow';
                     const statusLabel = (health.status === 'ok') ? 'Operational' : (health.status || '...');
-                    const llmLabel = health.llm_available ? 'AI-enhanced' : 'Rule-based';
+                    const llmLabel = health.llm_available ? 'AI-enhanced' : 'Core mode';
                     const llmDot = health.llm_available ? 'green' : 'yellow';
+                    const llmTip = health.llm_available ? 'AI provider active — all features available' : 'Portfolio tracking, alerts, and news collection active. Add an AI provider key in Settings for classification, analysis, and chat.';
                     summaryEl.innerHTML = `<div class="overview-band">
                         <div class="overview-stat">
                             <div class="label">Portfolio Value</div>
@@ -370,7 +432,7 @@
                         </div>
                         <div class="overview-status">
                             <span class="overview-chip"><span class="dot ${statusDotClass}"></span>${statusLabel}</span>
-                            <span class="overview-chip"><span class="dot ${llmDot}"></span>${llmLabel}</span>
+                            <span class="overview-chip" title="${llmTip}"><span class="dot ${llmDot}"></span>${llmLabel}</span>
                             <span class="overview-chip">${health.sources_active ?? '?'} sources</span>
                         </div>
                     </div>`;
@@ -393,6 +455,10 @@
 
         const check = '&#10003;';  // ✓
         const circle = '&#9675;';  // ○
+
+        // Capabilities summary — show what's available right now
+        const coreFeatures = 'Portfolio tracking, alerts, news collection, CSV and structured PDF import, holdings management, trade recording, and exposure analysis.';
+        const aiFeatures = 'Event classification, portfolio analysis notes, intelligence digests, natural language chat, and image/scanned PDF extraction.';
 
         return `<div class="welcome-card">
             <div class="welcome-header">
@@ -419,8 +485,8 @@
                 <div class="welcome-step ${llmOk ? 'done' : ''}">
                     <span class="step-icon">${llmOk ? check : circle}</span>
                     <div>
-                        <div class="step-label">Configure API key <span class="text-xs text-muted">(optional)</span></div>
-                        <div class="step-hint">${llmOk ? 'AI-enhanced analysis active' : 'Add an Anthropic key in Settings for richer analysis'}</div>
+                        <div class="step-label">Configure AI provider <span class="text-xs text-muted">(optional)</span></div>
+                        <div class="step-hint">${llmOk ? 'AI-enhanced analysis active' : 'Adds event classification, analysis notes, digests, and chat. Core features work without AI.'}</div>
                     </div>
                 </div>
                 <div class="welcome-step ${collected ? 'done' : ''}">
@@ -431,8 +497,23 @@
                     </div>
                 </div>
             </div>
+            <div class="welcome-capabilities">
+                <div class="capabilities-summary">
+                    <div class="capabilities-group">
+                        <div class="capabilities-label"><span class="dot green"></span>Available now</div>
+                        <div class="capabilities-text">${coreFeatures}</div>
+                    </div>
+                    ${!llmOk ? `<div class="capabilities-group">
+                        <div class="capabilities-label"><span class="dot yellow"></span>With AI provider</div>
+                        <div class="capabilities-text">${aiFeatures}</div>
+                    </div>` : `<div class="capabilities-group">
+                        <div class="capabilities-label"><span class="dot green"></span>AI features</div>
+                        <div class="capabilities-text">${aiFeatures}</div>
+                    </div>`}
+                </div>
+            </div>
             <div class="welcome-actions">
-                <button class="btn btn-primary" onclick="uploadPortfolio()">Upload CSV</button>
+                <button class="btn btn-primary" onclick="uploadPortfolio()">Upload Portfolio</button>
                 <button class="btn btn-outline" onclick="document.querySelector('[data-tab=settings]').click()">Open Settings</button>
             </div>
         </div>`;
@@ -741,6 +822,9 @@
 
     async function loadEvents() {
         const el = $('#events-table');
+        if (!allEvents.length && el.querySelector('.spinner')) {
+            el.innerHTML = renderSkeleton(4);
+        }
         try {
             const data = await fetchJSON(API.events);
             const list = ensureArray(data, 'items', 'events');
@@ -754,7 +838,7 @@
     function renderEventsTable(list) {
         const el = $('#events-table');
         if (!list.length) {
-            el.innerHTML = renderEmpty('&#128240;', 'No events collected yet.', {
+            el.innerHTML = renderEmpty('events', 'No events collected yet.', {
                 hint: 'Events are fetched automatically every 30 minutes from your configured news sources, or you can trigger collection manually.',
                 actions: [{ label: 'Run Collection Now', onclick: "runAction('collection')", primary: true }]
             });
@@ -809,7 +893,7 @@
             }
 
             if (!list.length) {
-                el.innerHTML = renderEmpty('&#128221;', 'No analysis notes yet.', {
+                el.innerHTML = renderEmpty('analysis', 'No analysis notes yet.', {
                     hint: 'Analysis is generated when news events mention your holdings. Steps: 1) Upload a portfolio, 2) Wait for event collection (~30 min), 3) Events matching your tickers are analysed automatically.',
                     actions: [{ label: 'Run Analysis', onclick: "runAction('analysis')", primary: true }]
                 });
@@ -871,7 +955,7 @@
         try {
             const data = await fetchJSON(API.digestLatest);
             if (!data) {
-                el.innerHTML = renderEmpty('&#128220;', 'No digests generated yet.', {
+                el.innerHTML = renderEmpty('digest', 'No digests generated yet.', {
                     hint: 'Digests summarise events, alerts, and analysis for your portfolio. They are generated daily at 07:00 local time, or you can create one now.',
                     actions: [{ label: 'Generate Digest', onclick: 'generateDigest()', primary: true }]
                 });
@@ -905,7 +989,7 @@
             const data = await fetchJSON(API.alertsActive);
             const list = ensureArray(data, 'items', 'alerts');
             if (!list.length) {
-                el.innerHTML = renderEmpty('&#9989;', 'No active alerts.', {
+                el.innerHTML = renderEmpty('check', 'No active alerts.', {
                     hint: 'Alerts are generated when concentration risks exceed thresholds or when holdings lack recent news coverage.'
                 });
                 return;
@@ -975,6 +1059,8 @@
             ]);
 
             if (health) {
+                // Update Telegram status from the same health response (avoids duplicate fetch)
+                updateTelegramStatus(health);
                 const st = (health.status || 'unknown').toLowerCase();
                 const stLabel = st === 'ok' || st === 'healthy' ? 'Operational' : st.charAt(0).toUpperCase() + st.slice(1);
                 healthEl.innerHTML = `<div class="card mb-3">
@@ -988,7 +1074,8 @@
                         <div class="health-item"><div class="label">Sources</div><div class="value">${health.sources_active ?? '?'} / ${health.sources_total ?? '?'} active</div></div>
                         <div class="health-item"><div class="label">Uptime</div><div class="value">${formatUptime(health.uptime_seconds)}</div></div>
                         <div class="health-item"><div class="label">Last Collection</div><div class="value">${timeAgo(health.last_collection) || '\u2014'}</div></div>
-                        <div class="health-item"><div class="label">Analysis Mode</div><div class="value">${health.llm_available ? `${statusDot('ok')} AI-enhanced` : `${statusDot('idle')} Rule-based`}</div></div>
+                        <div class="health-item"><div class="label">Analysis Mode</div><div class="value">${health.llm_available ? `${statusDot('ok')} AI-enhanced` : `${statusDot('idle')} Core mode`}</div></div>
+                        ${!health.llm_available ? `<div class="health-item" style="grid-column:1/-1;"><div class="label">Core Mode</div><div class="value text-xs text-muted" style="font-family:var(--font-sans);">Portfolio tracking, alerts, news collection, and CSV/PDF import are fully active. Add an AI provider key above to enable event classification, analysis notes, digests, and chat.</div></div>` : ''}
                         <div class="health-item"><div class="label">Version</div><div class="value text-mono">${esc(health.version || '\u2014')}</div></div>
                     </div>
                 </div>`;
@@ -1030,6 +1117,37 @@
         }
     }
 
+    // ---------------------------------------------------------------
+    // Telegram status (reads from /health endpoint)
+    // ---------------------------------------------------------------
+    function updateTelegramStatus(health) {
+        const dot = document.getElementById('telegram-dot');
+        const label = document.getElementById('telegram-label');
+        const help = document.getElementById('telegram-help');
+        if (!dot || !label || !health) return;
+
+        const enabled = !!health.telegram_enabled;
+        const configured = !!health.telegram_configured;
+
+        if (enabled && configured) {
+            dot.className = 'status-dot status-ok';
+            label.textContent = 'Active';
+            if (help) help.style.display = 'none';
+        } else if (enabled && !configured) {
+            dot.className = 'status-dot status-degraded';
+            label.textContent = 'Enabled but not configured';
+            if (help) {
+                help.style.display = '';
+                help.innerHTML = 'Bot token detected but chat ID is missing. Add your Telegram chat ID to <code>~/.axion.env</code> and restart Axion.';
+            }
+        } else {
+            dot.className = 'status-dot status-stopped';
+            label.textContent = 'Disabled';
+            // Keep the original HTML setup instructions visible (don't overwrite)
+            if (help) help.style.display = '';
+        }
+    }
+
     // (Sidebar removed — dead code cleaned up)
 
     // ================================================================
@@ -1047,12 +1165,32 @@
         const file = input.files[0];
         const info = $('#file-info');
         const btn = $('#upload-btn');
+        const aiNotice = $('#upload-ai-notice');
         if (file) {
             info.textContent = `Selected: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+            const ext = file.name.split('.').pop().toLowerCase();
+            const isImage = ['png', 'jpg', 'jpeg'].includes(ext);
+            const isPdf = ext === 'pdf';
+            if (aiNotice) {
+                if (isImage) {
+                    aiNotice.style.display = '';
+                    aiNotice.style.background = 'var(--warning-bg)';
+                    aiNotice.style.color = 'var(--warning)';
+                    aiNotice.textContent = 'Image extraction requires an AI provider. Configure one in Settings if you haven\u2019t already.';
+                } else if (isPdf) {
+                    aiNotice.style.display = '';
+                    aiNotice.style.background = 'var(--surface)';
+                    aiNotice.style.color = 'var(--muted)';
+                    aiNotice.textContent = 'Structured PDFs with tables are parsed directly. Scanned PDFs will use AI vision if available.';
+                } else {
+                    aiNotice.style.display = 'none';
+                }
+            }
             btn.disabled = false;
         } else {
             info.textContent = '';
             btn.disabled = true;
+            if (aiNotice) aiNotice.style.display = 'none';
         }
     };
 
@@ -1061,23 +1199,253 @@
         const file = fileInput.files[0];
         if (!file) return;
 
-        await withLoading($('#upload-btn'), 'Uploading...', async () => {
+        await withLoading($('#upload-btn'), 'Extracting...', async () => {
             try {
                 const fd = new FormData();
                 fd.append('file', file);
-                const res = await fetch(API.upload, { method: 'POST', body: fd });
-                if (!res.ok) throw new Error('Server error: ' + res.status);
+                const res = await fetch(API.extract, { method: 'POST', body: fd });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    throw new Error(err.detail || 'Server error: ' + res.status);
+                }
                 const data = await res.json();
 
                 $('#upload-modal').close();
-                const imported = data.holdings_imported ?? data.imported_count ?? data.added ?? 0;
-                const updated = data.holdings_updated ?? data.updated_count ?? data.updated ?? 0;
+
+                if (data.status === 'ai_required') {
+                    showToast(data.message, 'warning');
+                    return;
+                }
+                if (data.status === 'empty' || !data.rows || data.rows.length === 0) {
+                    showToast(data.message || 'No data found in file.', 'warning');
+                    return;
+                }
+
+                // Open review modal with extracted data
+                openReviewModal(data);
+            } catch (e) {
+                showToast('Extraction failed: ' + e.message, 'error');
+            }
+        });
+    };
+
+    // Store extracted rows for the review modal
+    let _reviewRows = [];
+
+    window.openReviewModal = function openReviewModal(data) {
+        _reviewRows = data.rows;
+        const tbody = $('#review-tbody');
+        const msg = $('#review-message');
+        const summary = $('#review-summary');
+        const title = $('#review-modal-title');
+
+        title.textContent = 'Review: ' + esc(data.filename);
+        // Show extraction method if available
+        const method = data.extraction_method || data.method || '';
+        const methodLabel = method ? ` (via ${method})` : '';
+        msg.textContent = (data.message || '') + methodLabel;
+
+        tbody.innerHTML = '';
+        data.rows.forEach((row, i) => {
+            const tr = document.createElement('tr');
+            tr.dataset.index = i;
+            tr.innerHTML = `
+                <td><input type="checkbox" class="review-check" data-index="${i}" checked></td>
+                <td><input type="text" class="review-field" data-field="ticker" value="${esc(row.ticker || '')}"></td>
+                <td><input type="text" class="review-field" data-field="name" value="${esc(row.name || '')}"></td>
+                <td><input type="number" class="review-field" data-field="quantity" step="any" value="${row.quantity ?? ''}"></td>
+                <td><input type="number" class="review-field" data-field="current_price" step="any" value="${row.current_price ?? ''}"></td>
+                <td><input type="number" class="review-field" data-field="avg_cost_basis" step="any" value="${row.avg_cost_basis ?? ''}"></td>
+                <td><input type="number" class="review-field" data-field="market_value" step="any" value="${row.market_value ?? ''}"></td>
+                <td><input type="text" class="review-field" data-field="currency" value="${esc(row.currency || 'USD')}" style="width:55px;"></td>
+            `;
+            tbody.appendChild(tr);
+        });
+
+        // Toggle row styling when checkbox changes
+        tbody.querySelectorAll('.review-check').forEach(cb => {
+            cb.addEventListener('change', () => {
+                const tr = cb.closest('tr');
+                tr.classList.toggle('row-excluded', !cb.checked);
+                updateReviewSummary();
+            });
+        });
+
+        updateReviewSummary();
+        $('#review-modal').showModal();
+    }
+
+    function updateReviewSummary() {
+        const checks = $$('#review-tbody .review-check');
+        const selected = Array.from(checks).filter(c => c.checked).length;
+        const total = checks.length;
+        const summary = $('#review-summary');
+        if (summary) summary.textContent = `${selected} of ${total} rows selected for import`;
+    }
+
+    window.selectAllReviewRows = function () {
+        const checks = $$('#review-tbody .review-check');
+        const allChecked = Array.from(checks).every(c => c.checked);
+        checks.forEach(c => {
+            c.checked = !allChecked;
+            c.closest('tr').classList.toggle('row-excluded', allChecked);
+        });
+        updateReviewSummary();
+    };
+
+    // --- Review-modal field validation (mirrors server-side rules) ---
+    function validateReviewRows() {
+        let errors = 0;
+        // Clear all previous highlights
+        $$('#review-tbody .field-invalid').forEach(el => el.classList.remove('field-invalid'));
+
+        $$('#review-tbody tr').forEach(tr => {
+            const cb = tr.querySelector('.review-check');
+            if (!cb || !cb.checked) return; // skip unchecked rows
+
+            const field = (name) => tr.querySelector(`.review-field[data-field="${name}"]`);
+            const markBad = (input) => { if (input) { input.classList.add('field-invalid'); errors++; } };
+
+            // Ticker: required, 1-10 chars, alphanumeric + dot
+            const tickerInput = field('ticker');
+            const ticker = (tickerInput.value || '').trim().toUpperCase();
+            if (!ticker || ticker.length > 10 || !/^[A-Z0-9.]+$/.test(ticker)) {
+                markBad(tickerInput);
+            }
+
+            // Quantity: required, > 0
+            const qtyInput = field('quantity');
+            const qty = parseFloat(qtyInput.value);
+            if (isNaN(qty) || qty <= 0) {
+                markBad(qtyInput);
+            }
+
+            // Price: optional, but if present must be >= 0
+            const priceInput = field('current_price');
+            if (priceInput && priceInput.value !== '') {
+                const p = parseFloat(priceInput.value);
+                if (isNaN(p) || p < 0) markBad(priceInput);
+            }
+
+            // Cost basis: optional, >= 0
+            const costInput = field('avg_cost_basis');
+            if (costInput && costInput.value !== '') {
+                const c = parseFloat(costInput.value);
+                if (isNaN(c) || c < 0) markBad(costInput);
+            }
+
+            // Market value: optional, >= 0
+            const mvInput = field('market_value');
+            if (mvInput && mvInput.value !== '') {
+                const mv = parseFloat(mvInput.value);
+                if (isNaN(mv) || mv < 0) markBad(mvInput);
+            }
+
+            // Currency: trim, uppercase, default USD, must be 3 uppercase letters
+            const curInput = field('currency');
+            if (curInput) {
+                let cur = (curInput.value || '').trim().toUpperCase();
+                if (!cur) cur = 'USD';
+                curInput.value = cur; // normalize in-place so user sees it
+                if (!/^[A-Z]{3}$/.test(cur)) {
+                    markBad(curInput);
+                }
+            }
+        });
+
+        return errors;
+    }
+
+    // Live revalidation: clear error highlight on edit
+    (function () {
+        const tbody = $('#review-tbody');
+        if (tbody) {
+            tbody.addEventListener('input', function (e) {
+                if (e.target.classList.contains('field-invalid')) {
+                    e.target.classList.remove('field-invalid');
+                }
+            });
+        }
+    })();
+
+    window.confirmReviewedImport = async function () {
+        // --- Frontend validation gate ---
+        const errorCount = validateReviewRows();
+        if (errorCount > 0) {
+            showToast(errorCount + ' field(s) have validation errors \u2014 fix the highlighted fields.', 'warning');
+            return;
+        }
+
+        const btn = $('#review-confirm-btn');
+        const rows = [];
+
+        $$('#review-tbody tr').forEach(tr => {
+            const cb = tr.querySelector('.review-check');
+            if (!cb || !cb.checked) return;
+
+            const get = (field) => {
+                const input = tr.querySelector(`.review-field[data-field="${field}"]`);
+                return input ? input.value : null;
+            };
+            const getNum = (field) => {
+                const v = get(field);
+                return v !== null && v !== '' ? parseFloat(v) : null;
+            };
+
+            const ticker = (get('ticker') || '').trim().toUpperCase();
+            if (!ticker) return;
+
+            rows.push({
+                ticker: ticker,
+                name: get('name') || null,
+                quantity: getNum('quantity'),
+                current_price: getNum('current_price'),
+                avg_cost_basis: getNum('avg_cost_basis'),
+                market_value: getNum('market_value'),
+                currency: (get('currency') || 'USD').trim().toUpperCase(),
+            });
+        });
+
+        if (rows.length === 0) {
+            showToast('No rows selected for import.', 'warning');
+            return;
+        }
+
+        await withLoading(btn, 'Importing...', async () => {
+            try {
+                const res = await fetch(API.importReviewed, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ rows: rows }),
+                });
+                if (!res.ok) {
+                    const err = await res.json().catch(() => ({}));
+                    // Surface server validation errors clearly
+                    const detail = err.detail;
+                    if (typeof detail === 'string') {
+                        // Duplicate-ticker or batch-level error — readable message
+                        throw new Error(detail);
+                    } else if (Array.isArray(detail)) {
+                        // Pydantic per-field 422 errors — summarize usefully
+                        const msgs = detail.map(e => {
+                            const loc = (e.loc || []).slice(1).join(' \u2192 ');
+                            return loc ? loc + ': ' + e.msg : e.msg;
+                        });
+                        throw new Error('Validation errors:\n' + msgs.join('\n'));
+                    }
+                    throw new Error('Import failed (HTTP ' + res.status + ')');
+                }
+                const data = await res.json();
+                $('#review-modal').close();
+
+                const imported = data.holdings_imported ?? 0;
+                const updated = data.holdings_updated ?? 0;
                 const errors = data.errors || [];
-                showToast(`Portfolio uploaded: ${imported} imported, ${updated} updated, ${errors.length} errors.`);
+                showToast(`Import complete: ${imported} new, ${updated} updated, ${errors.length} errors.`);
                 refreshTab('holdings');
                 refreshTab('exposures');
             } catch (e) {
-                showToast('Upload failed: ' + e.message, 'error');
+                showToast('Import failed: ' + e.message, 'error');
             }
         });
     };
@@ -1095,16 +1463,13 @@
     };
 
     window.runAction = async function (agentId) {
-        const resultEl = $('#action-result');
-        resultEl.innerHTML = '<span class="text-sm text-muted">Running...</span>';
         try {
             const res = await fetch(API.agentRun(agentId), { method: 'POST' });
             if (!res.ok) throw new Error('HTTP ' + res.status);
-            const data = await res.json();
-            resultEl.innerHTML = `<span class="text-sm text-success">Started: ${esc(data.run_id || data.status || 'ok')}</span>`;
+            await res.json();
             showToast(`${agentId} agent triggered`);
         } catch (e) {
-            resultEl.innerHTML = `<span class="text-sm text-danger">${esc(e.message)}</span>`;
+            showToast(`Failed to run ${agentId}: ${e.message}`, 'error');
         }
     };
 
@@ -1178,7 +1543,7 @@
 
                 // Refresh everything
                 Object.keys(tabLoaded).forEach(k => tabLoaded[k] = false);
-                switchTab('holdings');
+                switchTab('portfolio');
                 // (sidebar removed)
             } catch (e) {
                 showToast('Reset failed: ' + e.message, 'error');
@@ -1221,11 +1586,18 @@
     async function _updateCmdMode() {
         try {
             const h = await fetchJSON(API.health).catch(() => null);
-            const modeEl = document.getElementById('cmd-mode');
-            if (modeEl && h) {
-                const mode = h.llm_available ? 'AI-enhanced' : 'Rule-based';
-                const dot = h.llm_available ? 'green' : 'yellow';
-                modeEl.innerHTML = `<span class="cmd-meta-chip"><span class="dot ${dot}"></span>${mode}</span>`;
+            const badgeEl = document.getElementById('cmd-mode-badge');
+            if (h) {
+                const mode = h.llm_available ? 'AI-enhanced' : 'Core mode';
+                const tip = h.llm_available ? '' : ' — portfolio queries use core lookups. Add an AI key in Settings for natural language analysis.';
+                if (badgeEl) {
+                    badgeEl.style.display = '';
+                    badgeEl.title = `${mode}${tip}`;
+                    const badgeDot = badgeEl.querySelector('.dot');
+                    const badgeText = badgeEl.querySelector('.cmd-mode-label-text');
+                    if (badgeDot) badgeDot.style.background = h.llm_available ? 'var(--success)' : 'var(--warning)';
+                    if (badgeText) badgeText.textContent = mode;
+                }
             }
         } catch {}
     }
@@ -1310,7 +1682,8 @@
         const metaParts = [];
         if (data.mode) {
             const dot = data.mode === 'ai-enhanced' ? 'green' : 'yellow';
-            metaParts.push(`<span class="cmd-meta-chip"><span class="dot ${dot}"></span>${esc(data.mode)}</span>`);
+            const modeLabel = data.mode === 'rule-based' ? 'Core mode' : data.mode;
+            metaParts.push(`<span class="cmd-meta-chip"><span class="dot ${dot}"></span>${esc(modeLabel)}</span>`);
         }
         if (data.provider) {
             metaParts.push(`<span class="cmd-meta-chip">${esc(data.provider)}</span>`);
@@ -1370,11 +1743,8 @@
     const SETTINGS_KEY = 'axion_settings';
     const DEFAULT_SETTINGS = {
         refreshInterval: 60000,
-        pageSize: 50,
-        displayCurrency: 'USD',
-        soundAlerts: false,
         desktopNotif: false,
-        defaultTab: 'holdings',
+        defaultTab: 'portfolio',
     };
 
     function getSettings() {
@@ -1384,18 +1754,35 @@
         } catch { return { ...DEFAULT_SETTINGS }; }
     }
 
+    let _autoRefreshTimer = null;
+
     function applySettings(s) {
-        // Update refresh interval
-        // (sidebar auto-refresh removed — overview band handles live updates)
+        // Auto-refresh: periodically reload the active tab's data
+        if (_autoRefreshTimer) { clearInterval(_autoRefreshTimer); _autoRefreshTimer = null; }
+        const interval = parseInt(s.refreshInterval) || 0;
+        if (interval > 0) {
+            _autoRefreshTimer = setInterval(() => {
+                const activeTab = document.querySelector('.tab-link.active');
+                if (!activeTab) return;
+                const tabName = activeTab.dataset.tab;
+                // Refresh the active primary tab (and active sub-tab if applicable)
+                if (tabName === 'portfolio') {
+                    const activeSub = document.querySelector('#tab-portfolio .sub-tab.active');
+                    if (activeSub) refreshTab(activeSub.dataset.subtab);
+                } else if (tabName === 'intelligence') {
+                    const activeSub = document.querySelector('#tab-intelligence .sub-tab.active');
+                    if (activeSub) refreshTab(activeSub.dataset.subtab);
+                } else if (tabLoaders[tabName]) {
+                    refreshTab(tabName);
+                }
+            }, interval);
+        }
     }
 
     function loadSettings() {
         const s = getSettings();
         const el = (id) => document.getElementById(id);
         if (el('setting-refresh')) el('setting-refresh').value = String(s.refreshInterval);
-        if (el('setting-page-size')) el('setting-page-size').value = String(s.pageSize);
-        if (el('setting-currency')) el('setting-currency').value = s.displayCurrency;
-        if (el('setting-sound')) el('setting-sound').checked = s.soundAlerts;
         if (el('setting-desktop-notif')) el('setting-desktop-notif').checked = s.desktopNotif;
         if (el('setting-default-tab')) el('setting-default-tab').value = s.defaultTab;
     }
@@ -1403,11 +1790,8 @@
     window.saveSettings = function () {
         const s = {
             refreshInterval: parseInt(document.getElementById('setting-refresh')?.value) || 60000,
-            pageSize: parseInt(document.getElementById('setting-page-size')?.value) || 50,
-            displayCurrency: document.getElementById('setting-currency')?.value || 'USD',
-            soundAlerts: document.getElementById('setting-sound')?.checked || false,
             desktopNotif: document.getElementById('setting-desktop-notif')?.checked || false,
-            defaultTab: document.getElementById('setting-default-tab')?.value || 'holdings',
+            defaultTab: document.getElementById('setting-default-tab')?.value || 'portfolio',
         };
         localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));
         applySettings(s);
@@ -1447,6 +1831,69 @@
     // API Key Configuration
     // ================================================================
 
+    // ================================================================
+    // AI Provider Selection — Primary + Fallback model
+    // ================================================================
+    const _KEY_PLACEHOLDERS = { anthropic: 'sk-ant-...', openai: 'sk-...', google: 'AIza...' };
+
+    function _showRestartBanner() {
+        const banner = document.getElementById('ai-restart-banner');
+        if (banner) banner.style.display = '';
+    }
+
+    function updateProviderUI() {
+        const primarySel = document.getElementById('setting-primary-provider');
+        const backupSel = document.getElementById('setting-backup-provider');
+        const primaryKeyCard = document.getElementById('provider-primary-key-card');
+        const backupKeyCard = document.getElementById('provider-backup-key-card');
+        const fallbackSection = document.getElementById('fallback-section');
+        const primaryKeyInput = document.getElementById('setting-primary-key');
+        const backupKeyInput = document.getElementById('setting-backup-key');
+        if (!primarySel) return;
+
+        const primary = primarySel.value;
+
+        // Show/hide primary key card
+        if (primaryKeyCard) primaryKeyCard.style.display = primary ? '' : 'none';
+
+        // Show/hide fallback section (only when primary is set)
+        if (fallbackSection) fallbackSection.style.display = primary ? '' : 'none';
+
+        // Filter fallback options: exclude current primary
+        if (backupSel) {
+            const currentBackup = backupSel.value;
+            const allOptions = [
+                { value: '', label: 'None' },
+                { value: 'anthropic', label: 'Anthropic (Claude)' },
+                { value: 'openai', label: 'OpenAI (GPT)' },
+                { value: 'google', label: 'Google (Gemini)' },
+            ];
+            backupSel.innerHTML = '';
+            allOptions.forEach(opt => {
+                if (opt.value && opt.value === primary) return; // exclude primary
+                const el = document.createElement('option');
+                el.value = opt.value;
+                el.textContent = opt.label;
+                backupSel.appendChild(el);
+            });
+            // Restore previous selection if still valid
+            if ([...backupSel.options].some(o => o.value === currentBackup)) {
+                backupSel.value = currentBackup;
+            } else {
+                backupSel.value = '';
+            }
+        }
+
+        const backup = backupSel ? backupSel.value : '';
+
+        // Show/hide backup key card
+        if (backupKeyCard) backupKeyCard.style.display = backup ? '' : 'none';
+
+        // Update key placeholders
+        if (primaryKeyInput) primaryKeyInput.placeholder = _KEY_PLACEHOLDERS[primary] || 'API key...';
+        if (backupKeyInput) backupKeyInput.placeholder = _KEY_PLACEHOLDERS[backup] || 'API key...';
+    }
+
     async function loadApiKeyStatus() {
         try {
             const res = await fetch('/api/v1/settings/api-key');
@@ -1455,55 +1902,127 @@
             const dot = document.getElementById('api-key-dot');
             const mode = document.getElementById('api-key-mode');
             const hint = document.getElementById('api-key-hint');
-            const input = document.getElementById('setting-api-key');
             const actions = document.getElementById('api-key-actions');
+            const primaryStatus = document.getElementById('primary-key-status');
+            const backupStatus = document.getElementById('backup-key-status');
+            const primarySel = document.getElementById('setting-primary-provider');
+            const backupSel = document.getElementById('setting-backup-provider');
             if (!dot || !mode) return;
 
-            if (data.configured) {
+            // Set dropdowns to reflect server state
+            if (primarySel) primarySel.value = data.primary_provider || '';
+            updateProviderUI(); // rebuild fallback options before setting backup
+            if (backupSel && data.backup_provider) backupSel.value = data.backup_provider;
+            updateProviderUI(); // refresh visibility
+
+            // Status display
+            const hasPrimary = !!data.primary_provider;
+            const hasKey = data.configured;
+
+            if (hasPrimary && hasKey && data.llm_available) {
                 dot.className = 'status-dot status-connected';
-                mode.textContent = 'AI-enhanced mode' + (data.llm_available ? '' : ' (restart required)');
-                hint.textContent = 'Anthropic API key is configured. Classification, macro screening, impact analysis, and digest generation use Claude for richer results.';
-                if (input) { input.placeholder = data.masked_key || 'sk-ant-****'; input.value = ''; }
+                const label = data.primary_provider + (data.backup_provider ? ' + ' + data.backup_provider + ' fallback' : '');
+                mode.textContent = label + ' — active';
+                hint.textContent = 'AI provider ready. Classification, analysis, and digest generation use AI for richer results.';
                 if (actions) actions.style.display = '';
+            } else if (hasPrimary && hasKey && !data.llm_available) {
+                dot.className = 'status-dot status-degraded';
+                mode.textContent = data.primary_provider + ' — configured (restart required)';
+                hint.textContent = 'API key saved. Restart Axion to activate AI features.';
+                if (actions) actions.style.display = '';
+            } else if (hasPrimary && !hasKey) {
+                dot.className = 'status-dot status-stopped';
+                mode.textContent = data.primary_provider + ' selected — no key';
+                hint.textContent = 'Add your ' + data.primary_provider + ' API key below to enable AI features.';
+                if (actions) actions.style.display = 'none';
             } else {
                 dot.className = 'status-dot status-stopped';
-                mode.textContent = 'Rule-based mode';
-                hint.textContent = 'No API key configured. Analysis uses built-in rules and keyword matching. Add an Anthropic API key below to enable AI-enhanced analysis.';
-                if (input) { input.placeholder = 'sk-ant-...'; input.value = ''; }
+                mode.textContent = 'AI disabled';
+                hint.textContent = 'Select a provider above and add an API key to enable AI-enhanced analysis.';
                 if (actions) actions.style.display = 'none';
+            }
+
+            // Per-provider key status
+            if (primaryStatus) {
+                const prov = (data.providers || []).find(p => p.provider === data.primary_provider);
+                if (prov && prov.configured) {
+                    primaryStatus.innerHTML = '<span class="text-xs text-success">Key: ' + (prov.masked_key || 'Configured') + '</span>';
+                } else if (data.primary_provider) {
+                    primaryStatus.innerHTML = '<span class="text-xs text-muted">No key configured</span>';
+                } else {
+                    primaryStatus.innerHTML = '';
+                }
+            }
+            if (backupStatus) {
+                if (data.backup_provider) {
+                    const prov = (data.providers || []).find(p => p.provider === data.backup_provider);
+                    if (prov && prov.configured) {
+                        backupStatus.innerHTML = '<span class="text-xs text-success">Key: ' + (prov.masked_key || 'Configured') + '</span>';
+                    } else {
+                        backupStatus.innerHTML = '<span class="text-xs text-muted">No key configured for ' + data.backup_provider + '</span>';
+                    }
+                } else {
+                    backupStatus.innerHTML = '';
+                }
+            }
+            // Update capabilities reference dot color
+            const aiFeaturesRow = document.getElementById('ai-features-row');
+            if (aiFeaturesRow) {
+                const aiDot = aiFeaturesRow.querySelector('.dot');
+                const aiLabel = aiFeaturesRow.querySelector('.capabilities-ref-label .text-xs');
+                if (data.llm_available) {
+                    if (aiDot) aiDot.className = 'dot green';
+                    if (aiLabel) aiLabel.textContent = '(active)';
+                } else {
+                    if (aiDot) aiDot.className = 'dot yellow';
+                    if (aiLabel) aiLabel.textContent = '(requires provider key)';
+                }
+            }
+
+            // Hide restart banner if LLM is already active and key is configured
+            if (data.llm_available && data.configured) {
+                const banner = document.getElementById('ai-restart-banner');
+                if (banner) banner.style.display = 'none';
             }
         } catch (e) {
             console.warn('Failed to load API key status:', e);
         }
     }
 
-    window.saveApiKey = async function () {
-        const input = document.getElementById('setting-api-key');
-        const btn = document.getElementById('save-api-key-btn');
-        const key = (input?.value || '').trim();
-        if (!key) { showToast('Please enter an API key.', 'warning'); return; }
-        if (!key.startsWith('sk-ant-')) { showToast("Key must start with 'sk-ant-'.", 'warning'); return; }
+    // Save provider selection (primary + fallback)
+    window.saveProviderSelection = async function () {
+        const primarySel = document.getElementById('setting-primary-provider');
+        const backupSel = document.getElementById('setting-backup-provider');
+        const statusEl = document.getElementById('provider-save-status');
+        const primary = primarySel ? primarySel.value : '';
+        const fallback = backupSel ? backupSel.value : '';
+
+        if (fallback && fallback === primary) {
+            showToast('Fallback cannot be the same as primary.', 'warning');
+            return;
+        }
 
         try {
-            await withLoading(btn, 'Saving...', async () => {
-                const res = await fetch('/api/v1/settings/api-key', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ api_key: key }),
-                });
-                const data = await res.json();
-                if (!res.ok) { showToast(data.detail || 'Save failed.', 'error'); return; }
-                showToast(data.message, 'success');
-                input.value = '';
-                await loadApiKeyStatus();
+            const res = await fetch('/api/v1/settings/provider', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ primary, fallback }),
             });
+            const data = await res.json();
+            if (!res.ok) { showToast(data.detail || 'Save failed.', 'error'); return; }
+            showToast(data.message, 'success');
+            _showRestartBanner();
+            if (statusEl) {
+                statusEl.textContent = 'Saved. Restart to apply.';
+                setTimeout(() => { statusEl.textContent = ''; }, 5000);
+            }
         } catch (e) {
-            showToast('Failed to save key: ' + e.message, 'error');
+            showToast('Failed to save provider: ' + e.message, 'error');
         }
     };
 
     window.removeApiKey = async function () {
-        if (!confirm('Remove the API key and switch to rule-based mode?')) return;
+        if (!confirm('Remove all API keys and disable AI?')) return;
         try {
             const res = await fetch('/api/v1/settings/api-key', { method: 'DELETE' });
             const data = await res.json();
@@ -1515,10 +2034,53 @@
         }
     };
 
-    // Patch the tab loader so API key status loads with the Settings tab
+    // Patch the tab loader so Settings loads API key status + health
     tabLoaders.settings = function () {
         loadSettings();
         loadApiKeyStatus();
+        loadHealth();  // also updates Telegram status from same response
+    };
+
+    // Update the placeholder based on selected provider
+    function updateKeyPlaceholder(role) {
+        const providerSelect = document.getElementById('setting-' + role + '-provider');
+        const keyInput = document.getElementById('setting-' + role + '-key');
+        if (!providerSelect || !keyInput) return;
+        keyInput.placeholder = _KEY_PLACEHOLDERS[providerSelect.value] || 'API key...';
+    }
+
+    // Save provider key (multi-provider)
+    window.saveProviderKey = async function (role) {
+        const providerSelect = document.getElementById('setting-' + role + '-provider');
+        const keyInput = document.getElementById('setting-' + role + '-key');
+        const provider = providerSelect?.value;
+        const key = (keyInput?.value || '').trim();
+        if (!provider) { showToast('Select a provider first.', 'warning'); return; }
+        if (!key) { showToast('Please enter an API key.', 'warning'); return; }
+
+        // Basic format validation per provider
+        const prefixes = { anthropic: 'sk-ant-', openai: 'sk-', google: 'AIza' };
+        const prefix = prefixes[provider];
+        if (prefix && !key.startsWith(prefix)) {
+            showToast(`${provider} keys typically start with '${prefix}'.`, 'warning');
+            return;
+        }
+
+        try {
+            const res = await fetch('/api/v1/settings/api-key', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ api_key: key, provider: provider, role: role }),
+            });
+            const data = await res.json();
+            if (!res.ok) { showToast(data.detail || 'Save failed.', 'error'); return; }
+            showToast(data.message, 'success');
+            keyInput.value = '';
+            _showRestartBanner();
+            await loadApiKeyStatus();
+        } catch (e) {
+            showToast('Failed to save key: ' + e.message, 'error');
+        }
     };
 
     // ================================================================
@@ -1545,7 +2107,7 @@
         const pnl = mv - cost;
         const pnlPct = cost ? (pnl / cost) : 0;
 
-        $('#detail-title').textContent = h.ticker;
+        $('#detail-title').textContent = `${h.ticker}${h.name ? ' — ' + h.name : ''}`;
 
         // Fetch related data in parallel
         const [events, notes, alerts] = await Promise.all([
@@ -1559,23 +2121,35 @@
         const alertList = ensureArray(alerts, 'items', 'alerts');
 
         body.innerHTML = `
+            <div class="detail-value-card">
+                <div class="detail-value-stat">
+                    <span class="label">Market Value</span>
+                    <span class="value value-lg">${formatCurrency(mv)}</span>
+                </div>
+                <div class="detail-value-divider"></div>
+                <div class="detail-value-stat">
+                    <span class="label">P&L</span>
+                    <span class="value ${pnlClass(pnl)}">${formatCurrency(pnl)}</span>
+                </div>
+                <div class="detail-value-stat">
+                    <span class="label">P&L %</span>
+                    <span class="value ${pnlClass(pnlPct)}">${formatPct(pnlPct)}</span>
+                </div>
+            </div>
+
             <div class="detail-section">
                 <h4>Position</h4>
-                <div class="detail-row"><span class="label">Ticker</span><span class="value">${esc(h.ticker)}</span></div>
-                <div class="detail-row"><span class="label">Name</span><span class="value" style="font-family:inherit">${esc(h.name || h.company_name || '\u2014')}</span></div>
                 <div class="detail-row"><span class="label">Sector</span><span class="value" style="font-family:inherit">${esc(h.sector || '\u2014')}</span></div>
                 <div class="detail-row"><span class="label">Geography</span><span class="value" style="font-family:inherit">${esc(h.geography || '\u2014')}</span></div>
                 <div class="detail-row"><span class="label">Shares</span><span class="value">${formatNum(h.quantity, 0)}</span></div>
                 <div class="detail-row"><span class="label">Avg Cost</span><span class="value">${formatNum(h.avg_cost_basis)}</span></div>
                 <div class="detail-row"><span class="label">Current Price</span><span class="value">${formatNum(h.current_price)}</span></div>
-                <div class="detail-row"><span class="label">Market Value</span><span class="value">${formatCurrency(mv)}</span></div>
                 <div class="detail-row"><span class="label">Weight</span><span class="value">${h.weight_pct != null ? h.weight_pct.toFixed(1) + '%' : '\u2014'}</span></div>
-                <div class="detail-row"><span class="label">P&L</span><span class="value ${pnlClass(pnl)}">${formatCurrency(pnl)}</span></div>
-                <div class="detail-row"><span class="label">P&L %</span><span class="value ${pnlClass(pnlPct)}">${formatPct(pnlPct)}</span></div>
+                <div class="detail-row"><span class="label">Currency</span><span class="value" style="font-family:inherit">${esc(h.currency || 'USD')}</span></div>
             </div>
 
             <div class="detail-section">
-                <h4>Risk Alerts (${alertList.length})</h4>
+                <h4>Risk Alerts${alertList.length ? ' (' + alertList.length + ')' : ''}</h4>
                 ${alertList.length ? alertList.map(a => `
                     <div style="padding:0.3rem 0;border-bottom:1px solid var(--border);font-size:0.82rem;">
                         ${severityBadge(a.severity)} <span style="margin-left:0.3rem">${esc(a.title)}</span>
@@ -1583,7 +2157,7 @@
             </div>
 
             <div class="detail-section">
-                <h4>Recent Events (${eventList.length})</h4>
+                <h4>Recent Events${eventList.length ? ' (' + eventList.length + ')' : ''}</h4>
                 ${eventList.length ? `<table class="detail-mini-table">
                     <tbody>${eventList.slice(0, 8).map(e => `<tr>
                         <td>${e.event_type ? `<span class="badge badge-muted">${esc(titleCase(e.event_type))}</span>` : ''}</td>
@@ -1699,6 +2273,17 @@
             link.addEventListener('click', () => switchTab(link.dataset.tab));
         });
 
+        // Sub-tab navigation
+        $$('.sub-tab').forEach(btn => {
+            btn.addEventListener('click', () => loadSubTab(btn.dataset.parent, btn.dataset.subtab));
+        });
+
+        // AI provider selection — update UI when dropdowns change
+        const primaryProvSel = document.getElementById('setting-primary-provider');
+        const backupProvSel = document.getElementById('setting-backup-provider');
+        if (primaryProvSel) primaryProvSel.addEventListener('change', updateProviderUI);
+        if (backupProvSel) backupProvSel.addEventListener('change', updateProviderUI);
+
         // Holdings search
         const search = $('#holdings-search');
         if (search) {
@@ -1746,12 +2331,12 @@
             if (!th) return;
             const col = th.dataset.sort;
             if (!col) return;
-            const panel = th.closest('.tab-panel');
-            if (!panel) return;
-            const panelId = panel.id;
-            if (panelId === 'tab-events') {
+            // Check sub-panel first, then parent tab-panel
+            const subPanel = th.closest('.sub-panel');
+            const panelId = subPanel ? subPanel.id : (th.closest('.tab-panel')?.id || '');
+            if (panelId === 'subtab-events') {
                 sortTable('events-table', allEvents, renderEventsTable, col);
-            } else if (panelId === 'tab-holdings') {
+            } else if (panelId === 'subtab-holdings') {
                 sortTable('holdings-table', allHoldings, renderHoldingsTable, col);
             }
         });
@@ -1792,7 +2377,7 @@
 
         // Apply saved settings
         const savedSettings = getSettings();
-        const defaultTab = savedSettings.defaultTab || 'holdings';
+        const defaultTab = savedSettings.defaultTab || 'portfolio';
 
         // Load default tab
         switchTab(defaultTab);
@@ -1804,8 +2389,8 @@
         async function updateTabBadges() {
             try {
                 const [alerts, events] = await Promise.all([
-                    fetchJSON(API.alertsActive + '?limit=1000').catch(() => []),
-                    fetchJSON(API.events + '?limit=1000').catch(() => []),
+                    fetchJSON(API.alertsActive + '?limit=200').catch(() => []),
+                    fetchJSON(API.events + '?limit=500').catch(() => []),
                 ]);
                 const alertList = ensureArray(alerts, 'items', 'alerts');
                 const eventList = ensureArray(events, 'items', 'events');

@@ -149,7 +149,7 @@ async def chat_query(
 
         answer = await call_llm_text(query_with_actions, system=system)
 
-        if answer:
+        if answer and not answer.startswith("[Axion]"):
             return ChatResponse(
                 answer=answer,
                 mode="ai-enhanced",
@@ -159,7 +159,11 @@ async def chat_query(
                 actions_taken=actions,
             )
         else:
-            warnings.append("AI provider returned an empty response.")
+            # LLM returned an error or empty — fall through to rule-based
+            if answer and answer.startswith("[Axion]"):
+                warnings.append("AI provider temporarily unavailable — showing portfolio summary instead.")
+            else:
+                warnings.append("AI provider returned an empty response.")
 
     # Rule-based fallback: build a helpful structured response
     answer_parts = []

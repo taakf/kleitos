@@ -2389,8 +2389,8 @@
         async function updateTabBadges() {
             try {
                 const [alerts, events] = await Promise.all([
-                    fetchJSON(API.alertsActive + '?limit=1000').catch(() => []),
-                    fetchJSON(API.events + '?limit=1000').catch(() => []),
+                    fetchJSON(API.alertsActive + '?limit=200').catch(() => []),
+                    fetchJSON(API.events + '?limit=500').catch(() => []),
                 ]);
                 const alertList = ensureArray(alerts, 'items', 'alerts');
                 const eventList = ensureArray(events, 'items', 'events');
