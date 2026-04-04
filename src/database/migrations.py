@@ -1,14 +1,23 @@
 """
-Simple migration system for Axion.
+Schema migration system for Axion.
 
-Uses SQLAlchemy ``metadata.create_all`` to ensure all tables exist.
-Logs which tables were created vs. already present.  Designed to be
-called at application startup.
+Manages database schema evolution through numbered migration steps.
+Each step is a function that receives a synchronous connection and
+performs DDL operations.  The current schema version is tracked in
+the ``_schema_version`` table.
+
+Design principles:
+  - Safe to call on every startup (idempotent).
+  - Existing installs are baselined automatically.
+  - Fresh installs get the full schema via ``create_all`` + version stamp.
+  - Future migrations (e.g. multi-portfolio) are registered as numbered steps.
+  - The app refuses to start if the DB is from a newer version than the code.
 """
 
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from sqlalchemy import inspect, text
 
@@ -17,11 +26,30 @@ from src.database.models import Base
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Current schema version — increment this when adding a new migration step.
+# ---------------------------------------------------------------------------
+CURRENT_SCHEMA_VERSION = 1
 
-async def _get_existing_tables(conn) -> set[str]:  # noqa: ANN001
+# ---------------------------------------------------------------------------
+# Migration registry — ordered list of (version, description, function).
+# Each function receives a synchronous SQLAlchemy connection.
+#
+# Convention:
+#   - Version 1 is the baseline (tables created by create_all).
+#   - Version 2+ are incremental migrations added as the schema evolves.
+# ---------------------------------------------------------------------------
+_MIGRATIONS: list[tuple[int, str, callable]] = [
+    # (1, "baseline", None)  — version 1 is implicit (create_all)
+    # Future example:
+    # (2, "add portfolio table and portfolio_id columns", _migrate_v2),
+]
+
+
+async def _get_existing_tables(conn) -> set[str]:
     """Return the set of table names that already exist in the database."""
 
-    def _inspect_tables(sync_conn):  # noqa: ANN001, ANN202
+    def _inspect_tables(sync_conn):
         inspector = inspect(sync_conn)
         return set(inspector.get_table_names())
 
@@ -31,14 +59,14 @@ async def _get_existing_tables(conn) -> set[str]:  # noqa: ANN001
 async def _ensure_columns(conn) -> int:
     """Add any columns defined in the ORM but missing from the live schema.
 
-    SQLAlchemy's ``create_all`` only creates *tables* -- it does **not**
+    SQLAlchemy's ``create_all`` only creates *tables* — it does **not**
     alter existing ones.  This helper bridges that gap for simple
     ``ALTER TABLE ADD COLUMN`` operations.
 
     Returns the number of columns added.
     """
 
-    def _sync_ensure_columns(sync_conn) -> int:  # noqa: ANN001
+    def _sync_ensure_columns(sync_conn) -> int:
         inspector = inspect(sync_conn)
         added = 0
 
@@ -58,6 +86,8 @@ async def _ensure_columns(conn) -> int:
                 default = ""
                 if col.default is not None and col.default.is_scalar:
                     default = f" DEFAULT {col.default.arg!r}"
+                elif col.server_default is not None:
+                    default = f" DEFAULT {col.server_default.arg.text}"
 
                 ddl = (
                     f"ALTER TABLE {table_name} "
@@ -72,61 +102,119 @@ async def _ensure_columns(conn) -> int:
     return await conn.run_sync(_sync_ensure_columns)
 
 
+def _get_db_version(sync_conn) -> int | None:
+    """Read the current schema version from _schema_version table.
+
+    Returns None if the table doesn't exist yet.
+    """
+    inspector = inspect(sync_conn)
+    if "_schema_version" not in inspector.get_table_names():
+        return None
+    result = sync_conn.execute(text("SELECT version FROM _schema_version WHERE id = 1"))
+    row = result.fetchone()
+    return row[0] if row else None
+
+
+def _set_db_version(sync_conn, version: int, description: str) -> None:
+    """Write the schema version to the _schema_version table."""
+    now = datetime.now(timezone.utc).isoformat()
+    # Upsert: try UPDATE first, then INSERT if no rows affected
+    result = sync_conn.execute(
+        text("UPDATE _schema_version SET version = :v, applied_at = :at, description = :desc WHERE id = 1"),
+        {"v": version, "at": now, "desc": description},
+    )
+    if result.rowcount == 0:
+        sync_conn.execute(
+            text("INSERT INTO _schema_version (id, version, applied_at, description) VALUES (1, :v, :at, :desc)"),
+            {"v": version, "at": now, "desc": description},
+        )
+
+
 async def run_migrations() -> None:
     """
-    Ensure every ORM-defined table exists in the database and all
-    model-defined columns are present.
+    Ensure the database schema is up to date.
 
-    Steps:
-      1. ``create_all`` -- creates any missing tables.
-      2. ``_ensure_columns`` -- adds any missing columns to existing tables.
+    Strategy:
+      1. If the DB is brand new (no tables), run ``create_all`` and stamp
+         with the current version.
+      2. If the DB has tables but no version table, this is an existing
+         install from before versioning — baseline it at version 1.
+      3. If the DB version matches the code, do nothing (fast path).
+      4. If the DB version is higher than the code, refuse to start
+         (prevents running old code against a newer schema).
+      5. If the DB version is lower, apply incremental migrations.
 
-    Safe to call on every startup.
+    Always runs ``_ensure_columns`` to handle simple additive schema
+    changes that don't need a full migration step.
     """
     engine = get_engine()
 
     async with engine.begin() as conn:
-        before = await _get_existing_tables(conn)
+        existing_tables = await _get_existing_tables(conn)
 
+        # --- Fresh install: no tables at all ---
+        if not existing_tables:
+            logger.info("Fresh database — creating all tables")
+            await conn.run_sync(Base.metadata.create_all)
+            await conn.run_sync(
+                lambda sc: _set_db_version(sc, CURRENT_SCHEMA_VERSION, "initial schema")
+            )
+            logger.info("Database created at schema version %d", CURRENT_SCHEMA_VERSION)
+            return
+
+        # --- Ensure all tables exist (handles models added since last run) ---
         await conn.run_sync(Base.metadata.create_all)
 
-        after = await _get_existing_tables(conn)
-
-        # --- Column-level migrations -----------------------------------------
+        # --- Ensure all columns exist (handles columns added to existing tables) ---
         cols_added = await _ensure_columns(conn)
         if cols_added:
-            logger.info("Column migration complete: %d column(s) added", cols_added)
+            logger.info("Added %d new column(s) to existing tables", cols_added)
 
-    expected = set(Base.metadata.tables.keys())
-    created = after - before
-    already_existed = before & expected
+        # --- Check/set schema version ---
+        db_version = await conn.run_sync(_get_db_version)
 
-    if created:
-        logger.info(
-            "Created %d table(s): %s",
-            len(created),
-            ", ".join(sorted(created)),
-        )
-    if already_existed:
-        logger.info(
-            "Verified %d existing table(s): %s",
-            len(already_existed),
-            ", ".join(sorted(already_existed)),
-        )
+        if db_version is None:
+            # Existing install from before versioning — baseline at v1
+            logger.info("Existing database without version tracking — baselining at v1")
+            await conn.run_sync(
+                lambda sc: _set_db_version(sc, 1, "baseline from pre-versioned install")
+            )
+            db_version = 1
 
-    missing = expected - after
-    if missing:
-        logger.error(
-            "MIGRATION FAILURE — %d expected table(s) missing after create_all: %s",
-            len(missing),
-            ", ".join(sorted(missing)),
-        )
-        raise RuntimeError(
-            f"Failed to create tables: {', '.join(sorted(missing))}"
-        )
+        # --- Version compatibility check ---
+        if db_version > CURRENT_SCHEMA_VERSION:
+            raise RuntimeError(
+                f"Database schema version ({db_version}) is newer than this "
+                f"application supports ({CURRENT_SCHEMA_VERSION}). "
+                f"Please upgrade Axion or restore from a compatible backup."
+            )
 
-    # Log WAL mode confirmation
+        if db_version == CURRENT_SCHEMA_VERSION:
+            logger.info("Schema version %d — up to date", db_version)
+        else:
+            # Apply incremental migrations
+            for version, description, migrate_fn in _MIGRATIONS:
+                if version <= db_version:
+                    continue  # already applied
+                if version > CURRENT_SCHEMA_VERSION:
+                    break  # shouldn't happen, but be safe
+
+                logger.info("Applying migration v%d: %s", version, description)
+                if migrate_fn is not None:
+                    await conn.run_sync(migrate_fn)
+                await conn.run_sync(
+                    lambda sc, v=version, d=description: _set_db_version(sc, v, d)
+                )
+                logger.info("Migration v%d complete", version)
+
+    # Final verification
     async with engine.connect() as conn:
         result = await conn.execute(text("PRAGMA journal_mode"))
         mode = result.scalar()
-        logger.info("Database ready — journal_mode=%s, tables=%d", mode, len(after))
+        final_tables = await _get_existing_tables(conn)
+        logger.info(
+            "Database ready — schema=v%d, journal=%s, tables=%d",
+            CURRENT_SCHEMA_VERSION,
+            mode,
+            len(final_tables),
+        )

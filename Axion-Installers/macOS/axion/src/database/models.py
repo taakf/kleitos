@@ -403,3 +403,22 @@ class SystemHealth(Base):
 # NOTE: PriceHistory and PortfolioSnapshot models were removed in v1.0
 # as they were unused placeholder tables.  They may be reintroduced in a
 # future release when price-data integration and daily snapshots are built.
+
+
+# ---------------------------------------------------------------------------
+# Schema versioning
+# ---------------------------------------------------------------------------
+
+class SchemaVersion(Base):
+    """Tracks database schema version for migration compatibility.
+
+    A single row stores the current schema version.  The application
+    checks this on startup and refuses to run if the DB is from a
+    newer incompatible version.
+    """
+    __tablename__ = "_schema_version"
+
+    id: Mapped[int] = mapped_column(primary_key=True, default=1)
+    version: Mapped[int] = mapped_column(nullable=False, default=1)
+    applied_at: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)

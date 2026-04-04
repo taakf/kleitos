@@ -395,6 +395,11 @@
                     const hCount = summary?.holding_count ?? list.length;
                     const sCount = summary?.sector_count || new Set(list.map(h => h.sector).filter(Boolean)).size;
 
+                    const lastColl = health?.last_collection ? timeAgo(health.last_collection) : null;
+                    const freshnessHtml = lastColl
+                        ? `<span class="overview-freshness" title="Last news collection">Updated ${lastColl}</span>`
+                        : `<span class="overview-freshness overview-freshness-stale" title="No news collected yet">No data collected yet</span>`;
+
                     summaryEl.innerHTML = `<div class="overview-band">
                         <div class="overview-stat">
                             <div class="label">Main Portfolio</div>
@@ -409,6 +414,7 @@
                             <div class="label">Sectors</div>
                             <div class="value value-sm">${sCount}</div>
                         </div>
+                        <div class="overview-freshness-wrap">${freshnessHtml}</div>
                     </div>`;
                 } else if (health) {
                     summaryEl.innerHTML = `<div class="overview-band">

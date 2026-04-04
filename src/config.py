@@ -31,7 +31,11 @@ CONFIG_DIR = PROJECT_ROOT / "config"
 DEFAULT_SETTINGS_PATH = CONFIG_DIR / "settings.yaml"
 DEFAULT_ENV_PATH = Path.home() / ".axion.env"
 LEGACY_ENV_PATH = Path.home() / ".kleitos.env"
-DEFAULT_DATA_DIR = Path.home() / "kleitos-data"  # kept for backward compat
+# Data directory: prefer ~/axion-data if it exists or is a fresh install;
+# fall back to ~/kleitos-data for backward compatibility with existing installs.
+_AXION_DATA = Path.home() / "axion-data"
+_KLEITOS_DATA = Path.home() / "kleitos-data"
+DEFAULT_DATA_DIR = _KLEITOS_DATA if _KLEITOS_DATA.exists() and not _AXION_DATA.exists() else _AXION_DATA
 
 
 def _resolve_path(raw: str | Path) -> Path:
@@ -347,7 +351,12 @@ def _build_settings(
 
     raw = _load_yaml(settings_path)
 
-    # Overlay select env vars onto the raw dict
+    # --- Environment variable overrides ---
+    # AXION_* takes precedence; KLEITOS_* is the backward-compat fallback.
+    def _env(axion_name: str, kleitos_name: str) -> str:
+        """Return the first non-empty env var value, preferring AXION_*."""
+        return os.environ.get(axion_name, "") or os.environ.get(kleitos_name, "")
+
     env_overrides: dict[str, Any] = {}
     if api_key := os.environ.get("ANTHROPIC_API_KEY", ""):
         env_overrides["anthropic_api_key"] = SecretStr(api_key)
@@ -355,44 +364,46 @@ def _build_settings(
         env_overrides["openai_api_key"] = SecretStr(openai_key)
     if google_key := os.environ.get("GOOGLE_API_KEY", ""):
         env_overrides["google_api_key"] = SecretStr(google_key)
-    if data_dir := os.environ.get("KLEITOS_DATA_DIR", ""):
+    if data_dir := _env("AXION_DATA_DIR", "KLEITOS_DATA_DIR"):
         env_overrides["data_dir"] = data_dir
-    if db_path := os.environ.get("KLEITOS_DB_PATH", ""):
+    if db_path := _env("AXION_DB_PATH", "KLEITOS_DB_PATH"):
         raw.setdefault("database", {})["path"] = db_path
-    if log_level := os.environ.get("KLEITOS_LOG_LEVEL", ""):
+    if log_level := _env("AXION_LOG_LEVEL", "KLEITOS_LOG_LEVEL"):
         raw.setdefault("logging", {})["level"] = log_level
-    if llm_provider := os.environ.get("KLEITOS_LLM_PROVIDER", ""):
+    if llm_provider := _env("AXION_LLM_PROVIDER", "KLEITOS_LLM_PROVIDER"):
         raw.setdefault("llm", {})["provider"] = llm_provider
-    if llm_model := os.environ.get("KLEITOS_LLM_MODEL", ""):
+    if llm_model := _env("AXION_LLM_MODEL", "KLEITOS_LLM_MODEL"):
         raw.setdefault("llm", {})["model"] = llm_model
-    if llm_backup := os.environ.get("KLEITOS_LLM_BACKUP_PROVIDER", ""):
+    if llm_backup := _env("AXION_LLM_BACKUP_PROVIDER", "KLEITOS_LLM_BACKUP_PROVIDER"):
         raw.setdefault("llm", {})["backup_provider"] = llm_backup
-    if env_name := os.environ.get("KLEITOS_ENVIRONMENT", ""):
+    if env_name := _env("AXION_ENVIRONMENT", "KLEITOS_ENVIRONMENT"):
         raw.setdefault("system", {})["environment"] = env_name
-    if kleitos_api_key := os.environ.get("KLEITOS_API_KEY", ""):
-        raw.setdefault("api", {})["api_key"] = kleitos_api_key
-    if cors_origins := os.environ.get("KLEITOS_CORS_ORIGINS", ""):
+    if api_auth_key := _env("AXION_API_KEY", "KLEITOS_API_KEY"):
+        raw.setdefault("api", {})["api_key"] = api_auth_key
+    if cors_origins := _env("AXION_CORS_ORIGINS", "KLEITOS_CORS_ORIGINS"):
         raw.setdefault("api", {})["cors_origins"] = [o.strip() for o in cors_origins.split(",")]
+    if port := _env("AXION_PORT", "KLEITOS_PORT"):
+        raw.setdefault("api", {})["port"] = int(port)
 
-    # Telegram settings from env vars
-    if tg_token := os.environ.get("KLEITOS_TELEGRAM_TOKEN", ""):
+    # Telegram (AXION_* preferred, KLEITOS_* fallback)
+    if tg_token := _env("AXION_TELEGRAM_TOKEN", "KLEITOS_TELEGRAM_TOKEN"):
         raw.setdefault("telegram", {})["token"] = tg_token
         raw["telegram"]["enabled"] = True
-    if tg_chats := os.environ.get("KLEITOS_TELEGRAM_CHAT_ID", ""):
+    if tg_chats := _env("AXION_TELEGRAM_CHAT_ID", "KLEITOS_TELEGRAM_CHAT_ID"):
         chat_ids = [int(c.strip()) for c in tg_chats.split(",") if c.strip().lstrip("-").isdigit()]
         raw.setdefault("telegram", {})["chat_ids"] = chat_ids
 
-    # Email settings from env vars
-    if smtp_user := os.environ.get("KLEITOS_SMTP_USER", ""):
+    # Email (AXION_* preferred, KLEITOS_* fallback)
+    if smtp_user := _env("AXION_SMTP_USER", "KLEITOS_SMTP_USER"):
         raw.setdefault("email", {})["smtp_user"] = smtp_user
         raw["email"]["enabled"] = True
-    if smtp_pass := os.environ.get("KLEITOS_SMTP_PASSWORD", ""):
+    if smtp_pass := _env("AXION_SMTP_PASSWORD", "KLEITOS_SMTP_PASSWORD"):
         raw.setdefault("email", {})["smtp_password"] = smtp_pass
-    if smtp_host := os.environ.get("KLEITOS_SMTP_HOST", ""):
+    if smtp_host := _env("AXION_SMTP_HOST", "KLEITOS_SMTP_HOST"):
         raw.setdefault("email", {})["smtp_host"] = smtp_host
-    if email_to := os.environ.get("KLEITOS_EMAIL_TO", ""):
+    if email_to := _env("AXION_EMAIL_TO", "KLEITOS_EMAIL_TO"):
         raw.setdefault("email", {})["to_addresses"] = [e.strip() for e in email_to.split(",")]
-    if email_from := os.environ.get("KLEITOS_EMAIL_FROM", ""):
+    if email_from := _env("AXION_EMAIL_FROM", "KLEITOS_EMAIL_FROM"):
         raw.setdefault("email", {})["from_address"] = email_from
 
     merged = {**raw, **env_overrides}
