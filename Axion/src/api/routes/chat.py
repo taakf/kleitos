@@ -81,9 +81,11 @@ async def _try_action_trigger(query_lower: str, session: AsyncSession) -> list[s
         if any(phrase in query_lower for phrase in phrases):
             agent_name, endpoint = _SAFE_ACTIONS[action_key]
             try:
+                from src.config import get_settings
+                _port = get_settings().api.port
                 async with httpx.AsyncClient(timeout=10) as client:
                     resp = await client.post(
-                            f"http://127.0.0.1:7777{endpoint}",
+                            f"http://127.0.0.1:{_port}{endpoint}",
                             json={},
                         )
                     if resp.status_code < 300:

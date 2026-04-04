@@ -708,6 +708,16 @@ async def extract_portfolio(file: UploadFile = File(...)) -> ExtractResult:
         rows = extract_pdf(contents)
         # If pdfplumber found no tables, try AI vision fallback (scanned PDF)
         if not rows:
+            from src.llm.client import is_llm_available
+            if not is_llm_available():
+                return ExtractResult(
+                    status="ai_required",
+                    source_type=source_type,
+                    filename=filename,
+                    rows=[],
+                    row_count=0,
+                    message="This PDF appears to be scanned. Configure an AI provider in Settings to extract data from scanned documents.",
+                )
             rows = await extract_pdf_vision(contents, filename)
             if rows:
                 source_type = "pdf_vision"

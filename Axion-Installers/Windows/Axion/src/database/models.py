@@ -399,38 +399,7 @@ class SystemHealth(Base):
     )
 
 
-class PriceHistory(Base):
-    __tablename__ = "price_history"
 
-    id: Mapped[str] = mapped_column(Text, primary_key=True)
-    ticker: Mapped[str] = mapped_column(Text, nullable=False)
-    date: Mapped[str] = mapped_column(Text, nullable=False)
-    open: Mapped[float | None] = mapped_column()
-    high: Mapped[float | None] = mapped_column()
-    low: Mapped[float | None] = mapped_column()
-    close: Mapped[float | None] = mapped_column()
-    volume: Mapped[int | None] = mapped_column()
-    source: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[str] = mapped_column(Text, nullable=False)
-
-    __table_args__ = (
-        Index("ix_price_history_ticker_date", "ticker", "date", unique=True),
-        Index("ix_price_history_date", "date"),
-    )
-
-
-class PortfolioSnapshot(Base):
-    __tablename__ = "portfolio_snapshots"
-
-    id: Mapped[str] = mapped_column(Text, primary_key=True)
-    snapshot_date: Mapped[str] = mapped_column(Text, nullable=False)
-    total_market_value: Mapped[float] = mapped_column(nullable=False)
-    total_cost_basis: Mapped[float] = mapped_column(nullable=False)
-    total_pnl: Mapped[float] = mapped_column(nullable=False)
-    holding_count: Mapped[int] = mapped_column(nullable=False)
-    holdings_json: Mapped[str] = mapped_column(Text, nullable=False)  # JSON snapshot
-    created_at: Mapped[str] = mapped_column(Text, nullable=False)
-
-    __table_args__ = (
-        Index("ix_portfolio_snapshots_date", "snapshot_date", unique=True),
-    )
+# NOTE: PriceHistory and PortfolioSnapshot models were removed in v1.0
+# as they were unused placeholder tables.  They may be reintroduced in a
+# future release when price-data integration and daily snapshots are built.

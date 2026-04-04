@@ -15,14 +15,14 @@ logger = logging.getLogger(__name__)
 async def get_session() -> AsyncIterator[AsyncSession]:
     """Yield an async database session for route handlers.
 
-    The session auto-commits on clean exit and rolls back on exception,
-    giving each request a single clean transaction boundary.
+    Route handlers own their transaction boundaries by calling
+    ``await session.commit()`` explicitly.  The dependency only
+    handles rollback on unhandled exceptions and cleanup on exit.
     """
     factory = get_session_factory()
     session = factory()
     try:
         yield session
-        await session.commit()
     except Exception:
         await session.rollback()
         raise

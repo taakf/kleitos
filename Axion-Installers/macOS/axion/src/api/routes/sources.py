@@ -65,6 +65,20 @@ class SourceCreateRequest(BaseModel):
     requires_auth: bool = False
     auth_type: str | None = None
 
+    @classmethod
+    def validate_source(cls, name: str, domain: str, url: str | None) -> list[str]:
+        """Return list of validation errors, empty if valid."""
+        errors = []
+        if not name or not name.strip():
+            errors.append("Source name is required.")
+        if not domain or not domain.strip():
+            errors.append("Domain is required.")
+        elif "." not in domain:
+            errors.append("Domain must be a valid hostname (e.g. feeds.reuters.com).")
+        if url and not url.startswith(("http://", "https://")):
+            errors.append("URL must start with http:// or https://.")
+        return errors
+
 
 class SourceUpdateRequest(BaseModel):
     name: str | None = None
@@ -169,6 +183,10 @@ async def create_source(
     session: AsyncSession = Depends(get_session),
 ) -> SourceResponse:
     """Create a new data source."""
+    errors = SourceCreateRequest.validate_source(body.name, body.domain, body.url)
+    if errors:
+        raise HTTPException(status_code=422, detail="; ".join(errors))
+
     source_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
 
