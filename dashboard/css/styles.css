@@ -1374,3 +1374,20 @@ th.sortable.sort-desc::after { content: '\25BC'; opacity: 0.8; color: var(--prim
 
 /* Quick-add item styling */
 .quickadd-item:last-child { border-bottom: none; }
+
+/* Action overflow menu */
+.action-menu { position: relative; }
+.action-menu summary { list-style: none; cursor: pointer; }
+.action-menu summary::-webkit-details-marker { display: none; }
+.action-menu-items {
+    position: absolute; right: 0; top: calc(100% + 4px); z-index: 20;
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: var(--radius); box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+    min-width: 160px; padding: 4px 0;
+}
+.action-menu-items button {
+    display: block; width: 100%; text-align: left;
+    padding: 0.5rem 0.85rem; font-size: 0.82rem;
+    background: none; border: none; color: var(--foreground); cursor: pointer;
+}
+.action-menu-items button:hover { background: hsla(220,10%,50%,0.1); }

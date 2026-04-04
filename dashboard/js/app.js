@@ -311,7 +311,6 @@
         alerts:    loadAlerts,
         audit:     loadAudit,
         command:   loadCommand,
-        sources:   loadSources,
         settings:  loadSettings,
     };
 
@@ -396,13 +395,6 @@
                     const hCount = summary?.holding_count ?? list.length;
                     const sCount = summary?.sector_count || new Set(list.map(h => h.sector).filter(Boolean)).size;
 
-                    const statusDotClass = (health?.status === 'ok') ? 'green' : 'yellow';
-                    const statusLabel = (health?.status === 'ok') ? 'Operational' : (health?.status || '...');
-                    const llmLabel = health?.llm_available ? 'AI-enhanced' : 'Core mode';
-                    const llmDot = health?.llm_available ? 'green' : 'yellow';
-                    const srcActive = health?.sources_active ?? '?';
-                    const lastColl = health?.last_collection ? timeAgo(health.last_collection) : 'never';
-
                     summaryEl.innerHTML = `<div class="overview-band">
                         <div class="overview-stat">
                             <div class="label">Portfolio Value</div>
@@ -417,29 +409,12 @@
                             <div class="label">Sectors</div>
                             <div class="value value-sm">${sCount}</div>
                         </div>
-                        <div class="overview-status">
-                            <span class="overview-chip"><span class="dot ${statusDotClass}"></span>${statusLabel}</span>
-                            <span class="overview-chip" title="${health?.llm_available ? 'AI provider active — all features available' : 'Portfolio tracking, alerts, and news collection active. Add an AI key in Settings for classification, analysis, and chat.'}"><span class="dot ${llmDot}"></span>${llmLabel}</span>
-                            <span class="overview-chip">${srcActive} sources</span>
-                            <span class="overview-chip">Collected ${lastColl === 'never' ? 'soon (~30 min cycle)' : lastColl}</span>
-                            <button class="overview-chip overview-chip-btn" onclick="triggerCollection()" title="Run collection now">&#8635; Collect</button>
-                        </div>
                     </div>`;
                 } else if (health) {
-                    const statusDotClass = (health.status === 'ok') ? 'green' : 'yellow';
-                    const statusLabel = (health.status === 'ok') ? 'Operational' : (health.status || '...');
-                    const llmLabel = health.llm_available ? 'AI-enhanced' : 'Core mode';
-                    const llmDot = health.llm_available ? 'green' : 'yellow';
-                    const llmTip = health.llm_available ? 'AI provider active — all features available' : 'Portfolio tracking, alerts, and news collection active. Add an AI provider key in Settings for classification, analysis, and chat.';
                     summaryEl.innerHTML = `<div class="overview-band">
                         <div class="overview-stat">
                             <div class="label">Portfolio Value</div>
                             <div class="value">\u2014</div>
-                        </div>
-                        <div class="overview-status">
-                            <span class="overview-chip"><span class="dot ${statusDotClass}"></span>${statusLabel}</span>
-                            <span class="overview-chip" title="${llmTip}"><span class="dot ${llmDot}"></span>${llmLabel}</span>
-                            <span class="overview-chip">${health.sources_active ?? '?'} sources</span>
                         </div>
                     </div>`;
                 } else {
@@ -910,8 +885,8 @@
         const el = $('#events-table');
         if (!list.length) {
             el.innerHTML = renderEmpty('events', 'No events collected yet.', {
-                hint: 'Events are fetched automatically every 30 minutes from your configured news sources, or you can trigger collection manually.',
-                actions: [{ label: 'Run Collection Now', onclick: "runAction('collection')", primary: true }]
+                hint: 'Events appear here as sources collect news.',
+                actions: [{ label: 'Run Collection', onclick: "runAction('collection')", primary: true }]
             });
             return;
         }
@@ -965,7 +940,7 @@
 
             if (!list.length) {
                 el.innerHTML = renderEmpty('analysis', 'No analysis notes yet.', {
-                    hint: 'Analysis is generated when news events mention your holdings. Steps: 1) Upload a portfolio, 2) Wait for event collection (~30 min), 3) Events matching your tickers are analysed automatically.',
+                    hint: 'Analysis is generated automatically from collected events.',
                     actions: [{ label: 'Run Analysis', onclick: "runAction('analysis')", primary: true }]
                 });
                 return;
@@ -1027,7 +1002,7 @@
             const data = await fetchJSON(API.digestLatest);
             if (!data) {
                 el.innerHTML = renderEmpty('digest', 'No digests generated yet.', {
-                    hint: 'Digests summarise events, alerts, and analysis for your portfolio. They are generated daily at 07:00 local time, or you can create one now.',
+                    hint: 'Digests summarize your portfolio activity.',
                     actions: [{ label: 'Generate Digest', onclick: 'generateDigest()', primary: true }]
                 });
                 return;
@@ -1061,7 +1036,7 @@
             const list = ensureArray(data, 'items', 'alerts');
             if (!list.length) {
                 el.innerHTML = renderEmpty('check', 'No active alerts.', {
-                    hint: 'Alerts are generated when concentration risks exceed thresholds or when holdings lack recent news coverage.'
+                    hint: 'Alerts appear when risks are detected in your portfolio.'
                 });
                 return;
             }
@@ -2141,8 +2116,8 @@
         if (!filtered.length) {
             $('#sources-table').innerHTML = `
                 <div class="empty-state">
-                    <h3>No news sources configured</h3>
-                    <p class="text-sm text-muted">Add RSS feeds or APIs to start collecting financial news and events.</p>
+                    <h3>No sources configured</h3>
+                    <p class="text-sm text-muted">Add feeds to collect financial news.</p>
                     <div style="margin-top:1rem;display:flex;gap:0.5rem;justify-content:center;">
                         <button class="btn btn-primary" onclick="openAddSource()">+ Add Source</button>
                         <button class="btn btn-outline" onclick="openQuickAddSources()">Quick Add</button>
@@ -2169,8 +2144,6 @@
                 <td><a href="${esc(s.url || '#')}" target="_blank" rel="noopener" class="ticker-link">${esc(s.name)}</a></td>
                 <td class="text-muted text-xs" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(s.url || '')}">${truncUrl(s.url)}</td>
                 <td>${typeBadge(s.source_type)}</td>
-                <td class="text-center">${s.priority}</td>
-                <td>${statusDot(s.last_status)}</td>
                 <td>
                     <label class="toggle-label" style="margin:0;gap:0.25rem;">
                         <input type="checkbox" class="toggle-input" ${s.enabled ? 'checked' : ''} onchange="toggleSource('${esc(s.id)}', this.checked)">
@@ -2187,7 +2160,7 @@
         $('#sources-table').innerHTML = `
             <table class="data-table">
                 <thead><tr>
-                    <th>Name</th><th>URL</th><th>Type</th><th>Priority</th><th>Status</th><th>Enabled</th><th>Last Fetched</th><th></th>
+                    <th>Name</th><th>URL</th><th>Type</th><th>Enabled</th><th>Last Fetched</th><th></th>
                 </tr></thead>
                 <tbody>${rows}</tbody>
             </table>`;
@@ -2232,15 +2205,13 @@
 
     // Open Add Source modal
     window.openAddSource = function() {
-        $('#source-modal-title').textContent = 'Add News Source';
+        $('#source-modal-title').textContent = 'Add Source';
         $('#source-save-btn').textContent = 'Add Source';
         $('#source-save-btn').onclick = saveSource;
         $('#src-id').value = '';
         $('#src-name').value = '';
         $('#src-url').value = '';
         $('#src-type').value = 'rss';
-        $('#src-priority').value = '3';
-        $('#src-trust').value = 'standard';
         $('#src-domain-preview').textContent = '';
         $('#source-modal').showModal();
     };
@@ -2256,8 +2227,6 @@
         $('#src-name').value = src.name;
         $('#src-url').value = src.url || '';
         $('#src-type').value = src.source_type;
-        $('#src-priority').value = String(src.priority);
-        $('#src-trust').value = src.trust_level;
         autoExtractDomain();
         $('#source-modal').showModal();
     };
@@ -2268,8 +2237,8 @@
         const name = $('#src-name').value.trim();
         const url = $('#src-url').value.trim();
         const source_type = $('#src-type').value;
-        const priority = parseInt($('#src-priority').value);
-        const trust_level = $('#src-trust').value;
+        const priority = 3;
+        const trust_level = 'standard';
 
         if (!name || !url) { showToast('Name and URL are required', 'error'); return; }
         const domain = autoExtractDomain();
@@ -2358,11 +2327,12 @@
         });
     };
 
-    // Patch the tab loader so Settings loads API key status + health
+    // Patch the tab loader so Settings loads API key status + health + sources
     tabLoaders.settings = function () {
         loadSettings();
         loadApiKeyStatus();
-        loadHealth();  // also updates Telegram status from same response
+        loadHealth();
+        loadSources();
     };
 
     // Update the placeholder based on selected provider
