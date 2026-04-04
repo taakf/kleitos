@@ -1,6 +1,7 @@
 
   Axion — Portfolio Intelligence
   by 4Labs
+  v1.0
 
   ==========================================
   GETTING STARTED
@@ -8,38 +9,50 @@
 
   WINDOWS
   -------
-  Double-click Axion.bat
-  Everything sets up automatically on first launch.
-  The dashboard opens in your browser at http://localhost:7777
+  Option 1: Double-click Axion.bat
+    Everything sets up automatically on first launch.
+    Requires Python 3.11+ (python.org/downloads).
+
+  Option 2: Full install (recommended)
+    Open PowerShell and run:
+    powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1
+    Creates desktop shortcut, start menu entry, and auto-start.
 
   MACOS
   -----
-  Open Terminal and run:
+  Option 1: Double-click Axion.app
+    May need to right-click > Open on first launch (Gatekeeper).
+
+  Option 2: Terminal install
     chmod +x scripts/install-mac.sh && ./scripts/install-mac.sh
-  Or double-click Axion.app (if present).
-
-  DOCKER
-  ------
-  docker compose up --build
-  Open http://localhost:7777 in your browser.
 
   ==========================================
-  FIRST STEPS
+  FIRST STEPS IN THE DASHBOARD
   ==========================================
 
-  1. Upload the included sample_portfolio.csv (or your own)
-  2. Go to Settings to add an Anthropic API key (optional)
-  3. Wait 30 minutes for the first news collection
-  4. Check the dashboard for events, alerts, and analysis
-
-  For detailed instructions: see OPERATOR_CHECKLIST.md
-  For full documentation: see README.md
+  1. Create or upload a portfolio (CSV, PDF, or manual entry)
+  2. Go to Settings > News Sources to configure feeds
+  3. Optionally add an AI provider key in Settings
+  4. Wait 30 minutes for the first news collection, or
+     trigger it manually from the Assistant tab
 
   ==========================================
-  SUPPORT
+  MULTI-PORTFOLIO
   ==========================================
 
-  Known limitations: KNOWN_LIMITATIONS.md
-  Troubleshooting:   docs/TROUBLESHOOTING.md
-  Release notes:     RELEASE_NOTES_V1.md
+  Use the portfolio selector in the top navigation bar to:
+  - Switch between portfolios
+  - Create new portfolios with the + button
+  - Each portfolio has its own holdings, alerts, and digests
+
+  ==========================================
+  KEY INFORMATION
+  ==========================================
+
+  Dashboard  : http://localhost:7777
+  Data       : ~/axion-data (or ~/kleitos-data for existing installs)
+  Config     : ~/.axion.env (or ~/.kleitos.env)
+
+  Known limitations : KNOWN_LIMITATIONS.md
+  Troubleshooting   : docs/TROUBLESHOOTING.md
 

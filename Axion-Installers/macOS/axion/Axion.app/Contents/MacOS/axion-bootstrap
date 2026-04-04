@@ -8,9 +8,9 @@
 # Runtime architecture:
 #   ~/kleitos-data/           — stable runtime home (always in user home dir)
 #   ~/kleitos-data/app/       — copy of source code (src/, dashboard/, scripts/)
-#   ~/kleitos-data/.venv/     — Python virtual environment
+#   ${VENV_DIR}/     — Python virtual environment
 #   ~/kleitos-data/db/        — SQLite database
-#   ~/kleitos-data/logs/      — log files
+#   ${LOG_DIR}/      — log files
 #   Contents/Resources/       — bundled requirements.txt (always readable)
 # ============================================================================
 
@@ -119,6 +119,9 @@ log "  Data dir: ${DATA_DIR}"
 log "  Runtime dir: ${RUNTIME_DIR}"
 log "  Venv dir: ${VENV_DIR}"
 log "  Repo dir: ${REPO_DIR:-NOT FOUND}"
+
+# Immediate user feedback — show a notification before any heavy work
+notify "Starting Axion..."
 
 # ============================================================================
 # CHECK IF ALREADY RUNNING — just open dashboard
@@ -256,7 +259,7 @@ if [[ "$NEEDS_SETUP" == "true" ]]; then
         if [[ -z "$BREW_CMD" ]]; then
             log "Installing Homebrew..."
             if ! /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" </dev/null >> "${LOG_DIR}/homebrew-install.log" 2>&1; then
-                die "Homebrew installation failed.\n\nCheck ~/kleitos-data/logs/homebrew-install.log"
+                die "Homebrew installation failed.\n\nCheck ${LOG_DIR}/homebrew-install.log"
             fi
             if [[ -x /opt/homebrew/bin/brew ]]; then
                 BREW_CMD="/opt/homebrew/bin/brew"
@@ -273,7 +276,7 @@ if [[ "$NEEDS_SETUP" == "true" ]]; then
 
         log "Using Homebrew at: $BREW_CMD"
         if ! "$BREW_CMD" install python@3.12 >> "${LOG_DIR}/brew-python-install.log" 2>&1; then
-            die "Failed to install Python 3.12 via Homebrew.\n\nCheck ~/kleitos-data/logs/brew-python-install.log"
+            die "Failed to install Python 3.12 via Homebrew.\n\nCheck ${LOG_DIR}/brew-python-install.log"
         fi
         SYS_PYTHON="$("$BREW_CMD" --prefix python@3.12)/bin/python3.12"
 
@@ -288,7 +291,7 @@ if [[ "$NEEDS_SETUP" == "true" ]]; then
 
     log "Using $("$SYS_PYTHON" --version)"
 
-    # --- Create venv in ~/kleitos-data/.venv ---
+    # --- Create venv in ${VENV_DIR} ---
     log "Creating virtual environment at ${VENV_DIR}..."
     progress "Creating virtual environment..."
     if ! "$SYS_PYTHON" -m venv "${VENV_DIR}" 2>> "${LOG_FILE}"; then
@@ -314,7 +317,7 @@ if [[ "$NEEDS_SETUP" == "true" ]]; then
         log "ERROR: pip install -r requirements.txt failed"
         log "ERROR: Requirements file used: ${REQUIREMENTS_FILE}"
         log "ERROR: See ${LOG_DIR}/pip-install.log for details"
-        die "Failed to install dependencies.\n\nCheck ~/kleitos-data/logs/pip-install.log"
+        die "Failed to install dependencies.\n\nCheck ${LOG_DIR}/pip-install.log"
     fi
 
     log "pip install completed"
@@ -323,7 +326,7 @@ if [[ "$NEEDS_SETUP" == "true" ]]; then
     log "Verifying core packages..."
     if ! "${PYTHON}" -c "import fastapi, uvicorn, sqlalchemy, aiosqlite, apscheduler" 2>> "${LOG_FILE}"; then
         log "ERROR: Core package import verification failed"
-        die "Package verification failed.\n\nTry deleting ~/kleitos-data/.venv and launching again."
+        die "Package verification failed.\n\nTry deleting ${VENV_DIR} and launching again."
     fi
 
     log "Dependencies installed and verified successfully"
@@ -428,7 +431,7 @@ while true; do
     if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
         log "ERROR: Server process died"
         log "ERROR: Check ${LOG_DIR}/kleitos-stderr.log for details"
-        alert "The server failed to start.\n\nCheck logs at:\n~/kleitos-data/logs/" "critical"
+        alert "The server failed to start.\n\nCheck logs at:\n${LOG_DIR}/" "critical"
         exit 1
     fi
 
@@ -441,7 +444,7 @@ while true; do
     waited=$((waited + 1))
     if [[ $waited -ge $MAX_WAIT ]]; then
         log "ERROR: Startup timed out after ${MAX_WAIT}s"
-        alert "Startup timed out.\n\nCheck logs at:\n~/kleitos-data/logs/" "critical"
+        alert "Startup timed out.\n\nCheck logs at:\n${LOG_DIR}/" "critical"
         exit 1
     fi
 done
