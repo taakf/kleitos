@@ -1,62 +1,76 @@
 # Axion — Installation Guide
 
+## Quick Start
+
+### macOS
+Double-click **Axion.app**. First launch may require right-click → Open (Gatekeeper approval). Setup takes 2-5 minutes and the dashboard opens automatically.
+
+### Windows
+Double-click **Axion.bat**. Requires Python 3.11+ ([python.org/downloads](https://www.python.org/downloads/) — check "Add to PATH"). First launch takes 2-5 minutes.
+
+### Dashboard
+Open `http://localhost:7777` in any browser.
+
 ## Requirements
 
-- **macOS 12+** (Monterey or later)
-- **Mac Mini** with 8 GB RAM minimum
-- That's it. No Docker. No databases. No servers to configure.
+- **macOS 12+** (Apple Silicon) or **Windows 10/11** with Python 3.11+
+- 8 GB RAM minimum
+- No Docker, databases, or servers to configure
 
-## Install (One Command)
+## What Happens on First Launch
 
-Open Terminal, navigate to the Axion folder, and run:
-
-```bash
-chmod +x scripts/install-mac.sh && ./scripts/install-mac.sh
-```
-
-The installer handles everything:
-- Installs Python 3.12 (via Homebrew, if needed)
-- Creates a virtual environment with all dependencies
-- Installs **Axion.app** to `/Applications`
-- Sets up auto-start on boot
-- Starts Axion and opens the dashboard
-
-**After install, you never need Terminal again.**
+1. Python virtual environment is created
+2. All dependencies are installed automatically
+3. The database is initialized
+4. News collection starts on a 30-minute cycle
+5. The dashboard opens in your browser or native window
 
 ## Daily Use
 
-### Open the Dashboard
-- **Spotlight** (Cmd + Space) → type **Axion** → press Enter
-- Or open `http://localhost:7777` in any browser
-
-### What Runs Automatically
-Axion runs 24/7 in the background:
+### Axion runs 24/7 in the background
 
 | Task | Frequency |
 |------|-----------|
 | News collection | Every 30 min |
 | Event analysis | Every 30 min |
-| Security classification | Every 6 hours |
-| Coverage QA | Every 4 hours |
-| Risk assessment | Every 1 hour |
+| Risk assessment | Every hour |
 | Daily digest | 7:00 AM |
 | Database backup | 2:00 AM |
 
-### After a Restart or Power Outage
-Axion starts automatically — no action needed.
+### After a restart
+Axion starts automatically if auto-start was configured during install.
 
-### Add an Anthropic API Key (Optional)
-For AI-powered analysis instead of rule-based:
-1. Open the `.env` file in the Axion folder
-2. Uncomment and fill in: `ANTHROPIC_API_KEY=sk-ant-your-key`
-3. Restart: open Terminal, run `launchctl kickstart -k gui/$(id -u)/com.axion.app`
+### Add an AI Provider (Optional)
+In the dashboard, go to **Settings → AI Provider**, select Anthropic/OpenAI/Google, and enter your API key. All core features work without AI.
 
-Without the key, everything works using built-in rule-based analysis.
+## Multi-Portfolio
+
+Use the portfolio selector in the top navigation bar to create and switch between portfolios. Each portfolio has its own holdings, alerts, and digests.
 
 ## Uninstall
 
+### macOS
 ```bash
-chmod +x scripts/uninstall-mac.sh && ./scripts/uninstall-mac.sh
+./scripts/uninstall-mac.sh
 ```
 
-Your data is preserved at `~/kleitos-data/` — delete it manually to fully clean up.
+### Windows
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\uninstall-windows.ps1
+```
+
+Your data is preserved at `~/axion-data/` (or `~/kleitos-data/`) — delete manually to fully clean up.
+
+## Advanced Installation (Operators)
+
+### macOS Terminal Install
+```bash
+chmod +x scripts/install-mac.sh && ./scripts/install-mac.sh
+```
+Installs to /Applications, sets up auto-start on boot.
+
+### Windows Full Install
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1
+```
+Creates desktop/Start Menu shortcuts, auto-start on login, Add/Remove Programs entry.

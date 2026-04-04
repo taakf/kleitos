@@ -15,8 +15,8 @@ title Axion - Portfolio Intelligence
 setlocal enabledelayedexpansion
 
 set APP_NAME=Axion
-if not defined KLEITOS_PORT set "KLEITOS_PORT=7777"
-set PORT=%KLEITOS_PORT%
+:: Port: AXION_PORT preferred, KLEITOS_PORT as fallback
+if defined AXION_PORT (set PORT=%AXION_PORT%) else if defined KLEITOS_PORT (set PORT=%KLEITOS_PORT%) else (set PORT=7777)
 set HEALTH_URL=http://localhost:%PORT%/api/v1/health
 set MAX_WAIT=45
 
@@ -25,7 +25,9 @@ set "PROJECT_DIR=%~dp0"
 if "%PROJECT_DIR:~-1%"=="\" set "PROJECT_DIR=%PROJECT_DIR:~0,-1%"
 
 set "VENV_DIR=%PROJECT_DIR%\.venv"
-set "DATA_DIR=%USERPROFILE%\kleitos-data"
+:: Data dir: prefer axion-data, fall back to kleitos-data for existing installs
+if exist "%USERPROFILE%\kleitos-data" if not exist "%USERPROFILE%\axion-data" (set "DATA_DIR=%USERPROFILE%\kleitos-data") else (set "DATA_DIR=%USERPROFILE%\axion-data")
+if not defined DATA_DIR set "DATA_DIR=%USERPROFILE%\axion-data"
 set "LOG_DIR=%DATA_DIR%\logs"
 set "PYTHON=%VENV_DIR%\Scripts\python.exe"
 set "PYTHONW=%VENV_DIR%\Scripts\pythonw.exe"
@@ -197,6 +199,8 @@ if exist "%PYTHONW%" (
 echo   Starting Axion on http://localhost:%PORT% ...
 echo.
 
+set "AXION_DATA_DIR=%DATA_DIR%"
+set "AXION_DB_PATH=%DATA_DIR%\db\kleitos.db"
 set "KLEITOS_DATA_DIR=%DATA_DIR%"
 set "KLEITOS_DB_PATH=%DATA_DIR%\db\kleitos.db"
 set "PATH=%VENV_DIR%\Scripts;%PATH%"
@@ -206,7 +210,7 @@ netstat -ano 2>NUL | findstr ":%PORT% " | findstr "LISTENING" >NUL 2>&1
 if %errorlevel%==0 (
     echo.
     echo   Port %PORT% is already in use by another application.
-    echo   Either close the other application or set KLEITOS_PORT
+    echo   Either close the other application or set AXION_PORT
     echo   to a different port number and try again.
     echo.
     echo [%date% %time%] Port %PORT% in use >> "%LOG_FILE%"
@@ -216,7 +220,7 @@ if %errorlevel%==0 (
 
 echo [%date% %time%] Starting Axion (direct) >> "%LOG_FILE%"
 
-start /B "" "%PYTHON%" -m uvicorn src.main:app --host 0.0.0.0 --port %PORT% >> "%LOG_DIR%\kleitos-stdout.log" 2>> "%LOG_DIR%\kleitos-stderr.log"
+start /B "" "%PYTHON%" -m uvicorn src.main:app --host 0.0.0.0 --port %PORT% >> "%LOG_DIR%\axion-stdout.log" 2>> "%LOG_DIR%\axion-stderr.log"
 
 timeout /t 2 /nobreak >NUL
 

@@ -4,55 +4,58 @@
   v1.0
 
   ==========================================
-  GETTING STARTED
+  QUICK START
   ==========================================
 
   WINDOWS
-  -------
-  Option 1: Double-click Axion.bat
-    Everything sets up automatically on first launch.
-    Requires Python 3.11+ (python.org/downloads).
-
-  Option 2: Full install (recommended)
-    Open PowerShell and run:
-    powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1
-    Creates desktop shortcut, start menu entry, and auto-start.
+    Double-click Axion.bat
+    First launch takes 2-5 minutes to set up.
+    The dashboard opens automatically at http://localhost:7777
 
   MACOS
-  -----
-  Option 1: Double-click Axion.app
-    May need to right-click > Open on first launch (Gatekeeper).
-
-  Option 2: Terminal install
-    chmod +x scripts/install-mac.sh && ./scripts/install-mac.sh
+    Double-click Axion.app
+    First launch may require: right-click > Open (Gatekeeper).
+    Setup takes 2-5 minutes. The dashboard opens automatically.
 
   ==========================================
-  FIRST STEPS IN THE DASHBOARD
+  WHAT TO DO NEXT
   ==========================================
 
-  1. Create or upload a portfolio (CSV, PDF, or manual entry)
-  2. Go to Settings > News Sources to configure feeds
-  3. Optionally add an AI provider key in Settings
-  4. Wait 30 minutes for the first news collection, or
-     trigger it manually from the Assistant tab
+  1. Use the portfolio selector (top bar) to create portfolios
+  2. Upload holdings via CSV, PDF, or add them manually
+  3. Go to Settings to configure news sources and AI
+  4. The first news collection runs within 30 minutes
 
   ==========================================
   MULTI-PORTFOLIO
   ==========================================
 
-  Use the portfolio selector in the top navigation bar to:
-  - Switch between portfolios
-  - Create new portfolios with the + button
-  - Each portfolio has its own holdings, alerts, and digests
+  Axion supports multiple portfolios. Use the dropdown
+  in the top navigation bar to switch between them or
+  click + to create a new one.
 
   ==========================================
-  KEY INFORMATION
+  NEED HELP?
   ==========================================
 
-  Dashboard  : http://localhost:7777
-  Data       : ~/axion-data (or ~/kleitos-data for existing installs)
-  Config     : ~/.axion.env (or ~/.kleitos.env)
+  Dashboard     : http://localhost:7777
+  Data          : ~/axion-data (or ~/kleitos-data)
+  Logs          : ~/axion-data/logs/
+  Configuration : ~/.axion.env
 
+  Troubleshooting  : docs/TROUBLESHOOTING.md
   Known limitations : KNOWN_LIMITATIONS.md
-  Troubleshooting   : docs/TROUBLESHOOTING.md
+
+  ==========================================
+  FOR OPERATORS / DEVELOPERS
+  ==========================================
+
+  Windows full install (shortcuts, auto-start, Add/Remove Programs):
+    powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1
+
+  macOS terminal install (copies to /Applications, auto-start):
+    chmod +x scripts/install-mac.sh && ./scripts/install-mac.sh
+
+  Docker (internal/staging only):
+    docker compose up --build
 
