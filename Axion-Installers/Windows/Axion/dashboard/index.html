@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/dashboard/css/styles.css?v=30">
+    <link rel="stylesheet" href="/dashboard/css/styles.css?v=31">
 </head>
 <body>
     <!-- Navigation -->
@@ -30,6 +30,7 @@
                 <button class="tab-link" data-tab="intelligence" role="tab" aria-selected="false">Intelligence <span id="badge-events" class="tab-badge" hidden></span></button>
                 <button class="tab-link" data-tab="alerts" role="tab" aria-selected="false">Alerts <span id="badge-alerts" class="tab-badge" hidden></span></button>
                 <button class="tab-link" data-tab="command" role="tab" aria-selected="false">Command</button>
+                <button class="tab-link" data-tab="sources" role="tab" aria-selected="false">Sources</button>
                 <button class="tab-link" data-tab="settings" role="tab" aria-selected="false">Settings</button>
             </div>
         </div>
@@ -46,6 +47,7 @@
                     <div class="sub-tabs" role="tablist" aria-label="Portfolio sections">
                         <button class="sub-tab active" data-subtab="holdings" data-parent="portfolio">Holdings</button>
                         <button class="sub-tab" data-subtab="exposures" data-parent="portfolio">Exposures</button>
+                        <button class="sub-tab" data-subtab="trades" data-parent="portfolio">Trades</button>
                     </div>
 
                     <!-- Holdings sub-tab -->
@@ -78,6 +80,20 @@
                             <div class="card"><div class="spinner">Loading...</div></div>
                         </div>
                     </div>
+
+                    <!-- Trades sub-tab -->
+                    <div id="subtab-trades" class="sub-panel">
+                        <div class="tab-header">
+                            <h2>Trade History</h2>
+                            <div class="tab-actions">
+                                <input type="search" id="trades-search" class="input search-input" placeholder="Search trades...">
+                                <button class="btn btn-outline" onclick="openRecordTrade()">+ Record Trade</button>
+                            </div>
+                        </div>
+                        <div class="card">
+                            <div id="trades-table"><div class="spinner">Loading trades...</div></div>
+                        </div>
+                    </div>
                 </div>
 
                 <!-- Intelligence Tab (parent) -->
@@ -94,6 +110,8 @@
                             <h2>Events</h2>
                             <div class="tab-actions">
                                 <input type="search" id="events-search" class="input search-input" placeholder="Search events...">
+                                <button class="btn btn-ghost" onclick="exportCSV('events','csv')" title="Export CSV">CSV</button>
+                                <button class="btn btn-ghost" onclick="exportCSV('events','xlsx')" title="Export Excel">XLSX</button>
                             </div>
                         </div>
                         <div class="card">
@@ -120,7 +138,10 @@
                     <div id="subtab-digest" class="sub-panel">
                         <div class="tab-header">
                             <h2>Intelligence Digest</h2>
-                            <button class="btn btn-outline" onclick="generateDigest()">Generate Fresh Digest</button>
+                            <div class="tab-actions">
+                                <button class="btn btn-ghost" onclick="exportCSV('digest','pdf')" title="Export PDF">PDF</button>
+                                <button class="btn btn-outline" onclick="generateDigest()">Generate Fresh Digest</button>
+                            </div>
                         </div>
                         <div id="digest-content"><div class="spinner">Loading latest digest...</div></div>
                     </div>
@@ -130,6 +151,10 @@
                 <div id="tab-alerts" class="tab-panel" role="tabpanel">
                     <div class="tab-header">
                         <h2>Alerts</h2>
+                        <div class="tab-actions">
+                            <button class="btn btn-ghost" onclick="exportCSV('alerts','csv')" title="Export CSV">CSV</button>
+                            <button class="btn btn-ghost" onclick="exportCSV('alerts','xlsx')" title="Export Excel">XLSX</button>
+                        </div>
                     </div>
                     <div id="alerts-content"><div class="spinner">Loading alerts...</div></div>
                 </div>
@@ -186,6 +211,21 @@
                                 <span class="cmd-mode-inline" id="cmd-mode-badge" style="display:none;"><span class="dot"></span><span class="cmd-mode-label-text"></span></span>
                             </div>
                         </div>
+                    </div>
+                </div>
+
+                <!-- Sources Tab -->
+                <div id="tab-sources" class="tab-panel" role="tabpanel">
+                    <div class="tab-header">
+                        <h2>News Sources</h2>
+                        <div class="tab-actions">
+                            <input type="search" id="sources-search" class="input search-input" placeholder="Search sources...">
+                            <button class="btn btn-primary" onclick="openAddSource()">+ Add Source</button>
+                            <button class="btn btn-outline" onclick="openQuickAddSources()">Quick Add</button>
+                        </div>
+                    </div>
+                    <div class="card">
+                        <div id="sources-table"><div class="spinner">Loading sources...</div></div>
                     </div>
                 </div>
 
@@ -341,6 +381,7 @@
                                     <option value="intelligence">Intelligence</option>
                                     <option value="alerts">Alerts</option>
                                     <option value="command">Command</option>
+                                    <option value="sources">Sources</option>
                                 </select>
                             </div>
                             <div class="settings-group">
@@ -655,6 +696,92 @@
         </div>
     </dialog>
 
-    <script src="/dashboard/js/app.js?v=30"></script>
+    <!-- Add/Edit Source Modal -->
+    <dialog id="source-modal" aria-label="Add Source">
+        <div class="modal-header">
+            <h3 id="source-modal-title">Add News Source</h3>
+            <button class="btn btn-ghost" data-close-modal>&times;</button>
+        </div>
+        <form id="source-form" class="modal-form" onsubmit="return false;">
+            <input type="hidden" id="src-id">
+            <div class="form-group" style="width:100%">
+                <label for="src-name">Source Name *</label>
+                <input type="text" id="src-name" class="input" placeholder="e.g. Reuters Markets RSS" required>
+            </div>
+            <div class="form-group" style="width:100%">
+                <label for="src-url">Feed URL *</label>
+                <input type="url" id="src-url" class="input" placeholder="https://feeds.reuters.com/reuters/businessNews" required>
+                <span class="text-xs text-muted" id="src-domain-preview"></span>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="src-type">Source Type</label>
+                    <select id="src-type" class="select-input">
+                        <option value="rss">RSS Feed</option>
+                        <option value="api">API</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="src-priority">Priority</label>
+                    <select id="src-priority" class="select-input">
+                        <option value="1">1 — Highest</option>
+                        <option value="2">2 — High</option>
+                        <option value="3" selected>3 — Normal</option>
+                        <option value="4">4 — Low</option>
+                        <option value="5">5 — Lowest</option>
+                    </select>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="src-trust">Trust Level</label>
+                    <select id="src-trust" class="select-input">
+                        <option value="premium">Premium</option>
+                        <option value="standard" selected>Standard</option>
+                        <option value="low">Low</option>
+                    </select>
+                </div>
+                <div class="form-group"></div>
+            </div>
+        </form>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button class="btn btn-primary" id="source-save-btn" onclick="saveSource()">Add Source</button>
+        </div>
+    </dialog>
+
+    <!-- Delete Source Modal -->
+    <dialog id="delete-source-modal" aria-label="Delete Source">
+        <div class="modal-header">
+            <h3>Remove Source</h3>
+            <button class="btn btn-ghost" data-close-modal>&times;</button>
+        </div>
+        <div class="modal-body">
+            <p>Are you sure you want to remove <strong id="delete-source-name"></strong>?</p>
+            <p class="text-sm text-muted mt-2">Events already collected from this source will be preserved.</p>
+        </div>
+        <input type="hidden" id="delete-source-id">
+        <div class="modal-footer">
+            <button class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button class="btn btn-danger" id="delete-source-btn" onclick="confirmDeleteSource()">Remove</button>
+        </div>
+    </dialog>
+
+    <!-- Quick Add Sources Modal -->
+    <dialog id="quickadd-modal" aria-label="Quick Add Sources" class="review-modal">
+        <div class="modal-header">
+            <h3>Quick Add — Financial News Feeds</h3>
+            <button class="btn btn-ghost" data-close-modal>&times;</button>
+        </div>
+        <div class="modal-body">
+            <p class="text-sm text-muted" style="margin-bottom:0.75rem;">Select sources to add instantly. Already-added sources are marked.</p>
+            <div id="quickadd-list"></div>
+        </div>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" data-close-modal>Done</button>
+        </div>
+    </dialog>
+
+    <script src="/dashboard/js/app.js?v=31"></script>
 </body>
 </html>

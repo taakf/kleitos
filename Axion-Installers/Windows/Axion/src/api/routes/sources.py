@@ -24,6 +24,7 @@ class SourceResponse(BaseModel):
     name: str
     source_type: str
     domain: str
+    url: str | None = None
     enabled: bool
     priority: int
     trust_level: str
@@ -55,6 +56,7 @@ class SourceToggleResponse(BaseModel):
 class SourceCreateRequest(BaseModel):
     name: str
     domain: str
+    url: str | None = None
     source_type: str
     parser_id: str
     priority: int = 5
@@ -67,6 +69,7 @@ class SourceCreateRequest(BaseModel):
 class SourceUpdateRequest(BaseModel):
     name: str | None = None
     domain: str | None = None
+    url: str | None = None
     source_type: str | None = None
     parser_id: str | None = None
     priority: int | None = None
@@ -94,6 +97,7 @@ async def list_sources(
             name=s.name,
             source_type=s.source_type,
             domain=s.domain,
+            url=s.url,
             enabled=bool(s.enabled),
             priority=s.priority,
             trust_level=s.trust_level,
@@ -172,6 +176,7 @@ async def create_source(
         id=source_id,
         name=body.name,
         domain=body.domain,
+        url=body.url,
         source_type=body.source_type,
         parser_id=body.parser_id,
         priority=body.priority,
@@ -191,6 +196,7 @@ async def create_source(
         name=source.name,
         source_type=source.source_type,
         domain=source.domain,
+        url=source.url,
         enabled=True,
         priority=source.priority,
         trust_level=source.trust_level,
@@ -215,6 +221,8 @@ async def update_source(
         source.name = body.name
     if body.domain is not None:
         source.domain = body.domain
+    if body.url is not None:
+        source.url = body.url
     if body.source_type is not None:
         source.source_type = body.source_type
     if body.parser_id is not None:
@@ -237,6 +245,7 @@ async def update_source(
         name=source.name,
         source_type=source.source_type,
         domain=source.domain,
+        url=source.url,
         enabled=bool(source.enabled),
         priority=source.priority,
         trust_level=source.trust_level,

@@ -25,6 +25,10 @@
         agentRuns:    '/api/v1/agents/runs',
         agentRun:     (id) => `/api/v1/agents/${id}/run`,
         sources:      '/api/v1/sources',
+        sourceById:   (id) => `/api/v1/sources/${id}`,
+        sourceEnable: (id) => `/api/v1/sources/${id}/enable`,
+        sourceDisable:(id) => `/api/v1/sources/${id}/disable`,
+        sourceHealth: (id) => `/api/v1/sources/${id}/health`,
         upload:       '/api/v1/portfolio/upload',
         extract:      '/api/v1/portfolio/extract',
         importReviewed: '/api/v1/portfolio/import-reviewed',
@@ -307,6 +311,7 @@
         alerts:    loadAlerts,
         audit:     loadAudit,
         command:   loadCommand,
+        sources:   loadSources,
         settings:  loadSettings,
     };
 
@@ -314,6 +319,7 @@
     const subTabLoaders = {
         holdings:  loadHoldings,
         exposures: loadExposures,
+        trades:    loadTrades,
         events:    loadEvents,
         analysis:  loadAnalysisNotes,
         digest:    loadDigest,
@@ -814,6 +820,71 @@
             container.innerHTML = renderError('exposures: ' + e.message);
         }
     }
+
+    // ================================================================
+    // Trade History Sub-Tab
+    // ================================================================
+    let allTrades = [];
+
+    async function loadTrades() {
+        const el = $('#trades-table');
+        try {
+            const data = await fetchJSON(API.trades);
+            const list = ensureArray(data, 'items', 'trades');
+            allTrades = list;
+            renderTradesTable(list);
+        } catch (e) {
+            el.innerHTML = renderError('trades: ' + e.message);
+        }
+    }
+
+    function renderTradesTable(list) {
+        const el = $('#trades-table');
+        const q = ($('#trades-search') || {}).value || '';
+        const filtered = q ? list.filter(t =>
+            (t.ticker || '').toLowerCase().includes(q.toLowerCase()) ||
+            (t.trade_type || '').toLowerCase().includes(q.toLowerCase()) ||
+            (t.notes || '').toLowerCase().includes(q.toLowerCase())
+        ) : list;
+
+        if (!filtered.length) {
+            el.innerHTML = renderEmpty('trades', 'No trades recorded yet.', {
+                hint: 'Record buy, sell, or dividend trades to track your portfolio activity.',
+                actions: [{ label: 'Record Trade', onclick: 'openRecordTrade()', primary: true }]
+            });
+            return;
+        }
+
+        const typeBadge = (t) => {
+            const colors = { buy: 'var(--success)', sell: 'var(--danger)', dividend: '#a78bfa' };
+            return `<span class="badge" style="background:${colors[t] || 'var(--muted-fg)'};color:#fff;font-size:0.65rem;">${esc((t || '').toUpperCase())}</span>`;
+        };
+
+        const rows = filtered.map(t => {
+            const total = ((t.quantity || 0) * (t.price || 0)).toFixed(2);
+            return `<tr>
+                <td>${t.trade_date ? new Date(t.trade_date).toLocaleDateString() : '—'}</td>
+                <td><strong>${esc(t.ticker)}</strong></td>
+                <td>${typeBadge(t.trade_type)}</td>
+                <td class="text-right">${Number(t.quantity).toLocaleString()}</td>
+                <td class="text-right">${formatCurrency(t.price)}</td>
+                <td class="text-right">${formatCurrency(parseFloat(total))}</td>
+                <td class="text-xs text-muted">${esc(t.notes || '—')}</td>
+            </tr>`;
+        }).join('');
+
+        el.innerHTML = `<div class="table-wrap"><table class="data-table">
+            <thead><tr>
+                <th>Date</th><th>Ticker</th><th>Type</th><th class="text-right">Quantity</th><th class="text-right">Price</th><th class="text-right">Total</th><th>Notes</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+        </table></div>`;
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const trSearch = document.getElementById('trades-search');
+        if (trSearch) trSearch.addEventListener('input', () => renderTradesTable(allTrades));
+    });
 
     // ================================================================
     // Events Tab
@@ -2032,6 +2103,259 @@
         } catch (e) {
             showToast('Failed to remove key: ' + e.message, 'error');
         }
+    };
+
+    // ================================================================
+    // Sources Management
+    // ================================================================
+    let allSources = [];
+
+    const SOURCE_PRESETS = [
+        { name: 'Federal Reserve Press Releases', url: 'https://www.federalreserve.gov/feeds/press_all.xml', domain: 'www.federalreserve.gov', source_type: 'rss', parser_id: 'rss_generic', priority: 1, trust_level: 'premium' },
+        { name: 'ECB Press Releases', url: 'https://www.ecb.europa.eu/rss/press.html', domain: 'www.ecb.europa.eu', source_type: 'rss', parser_id: 'rss_generic', priority: 1, trust_level: 'premium' },
+        { name: 'Google News Business', url: 'https://news.google.com/rss/topics/CAAqJggKIiBDQkFTRWdvSUwyMHZNRGx6TVdZU0FtVnVHZ0pWVXlnQVAB', domain: 'news.google.com', source_type: 'rss', parser_id: 'rss_generic', priority: 3, trust_level: 'standard' },
+        { name: 'WSJ Markets', url: 'https://feeds.a.dj.com/rss/RSSMarketsMain.xml', domain: 'feeds.a.dj.com', source_type: 'rss', parser_id: 'rss_generic', priority: 2, trust_level: 'premium' },
+        { name: 'MarketWatch Top Stories', url: 'https://feeds.marketwatch.com/marketwatch/topstories', domain: 'feeds.marketwatch.com', source_type: 'rss', parser_id: 'rss_generic', priority: 3, trust_level: 'standard' },
+        { name: 'Seeking Alpha Market News', url: 'https://seekingalpha.com/market_currents.xml', domain: 'seekingalpha.com', source_type: 'rss', parser_id: 'rss_generic', priority: 3, trust_level: 'standard' },
+        { name: 'Investing.com News', url: 'https://www.investing.com/rss/news.rss', domain: 'www.investing.com', source_type: 'rss', parser_id: 'rss_generic', priority: 4, trust_level: 'standard' },
+    ];
+
+    async function loadSources() {
+        try {
+            const data = await fetchJSON(API.sources);
+            allSources = data;
+            renderSourcesTable(data);
+        } catch (e) {
+            $('#sources-table').innerHTML = `<div class="empty-state"><p>Failed to load sources.</p></div>`;
+        }
+    }
+
+    function renderSourcesTable(sources) {
+        const q = ($('#sources-search') || {}).value || '';
+        const filtered = q ? sources.filter(s =>
+            s.name.toLowerCase().includes(q.toLowerCase()) ||
+            (s.url || '').toLowerCase().includes(q.toLowerCase()) ||
+            s.domain.toLowerCase().includes(q.toLowerCase())
+        ) : sources;
+
+        if (!filtered.length) {
+            $('#sources-table').innerHTML = `
+                <div class="empty-state">
+                    <h3>No news sources configured</h3>
+                    <p class="text-sm text-muted">Add RSS feeds or APIs to start collecting financial news and events.</p>
+                    <div style="margin-top:1rem;display:flex;gap:0.5rem;justify-content:center;">
+                        <button class="btn btn-primary" onclick="openAddSource()">+ Add Source</button>
+                        <button class="btn btn-outline" onclick="openQuickAddSources()">Quick Add</button>
+                    </div>
+                </div>`;
+            return;
+        }
+
+        const typeBadge = (t) => {
+            const colors = { rss: 'var(--accent)', api: '#a78bfa', scrape: '#f59e0b' };
+            return `<span class="badge" style="background:${colors[t] || 'var(--muted-fg)'};color:#fff;font-size:0.65rem;">${esc(t.toUpperCase())}</span>`;
+        };
+        const statusDot = (s) => {
+            const c = s === 'ok' ? 'var(--success)' : s === 'error' ? 'var(--danger)' : 'var(--muted-fg)';
+            return `<span class="dot" style="background:${c};"></span> ${esc(s || 'idle')}`;
+        };
+        const truncUrl = (u) => {
+            if (!u) return '<span class="text-muted">—</span>';
+            try { return esc(new URL(u).hostname + new URL(u).pathname.substring(0, 30)); } catch { return esc(u.substring(0, 40)); }
+        };
+
+        const rows = filtered.map(s => `
+            <tr>
+                <td><a href="${esc(s.url || '#')}" target="_blank" rel="noopener" class="ticker-link">${esc(s.name)}</a></td>
+                <td class="text-muted text-xs" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(s.url || '')}">${truncUrl(s.url)}</td>
+                <td>${typeBadge(s.source_type)}</td>
+                <td class="text-center">${s.priority}</td>
+                <td>${statusDot(s.last_status)}</td>
+                <td>
+                    <label class="toggle-label" style="margin:0;gap:0.25rem;">
+                        <input type="checkbox" class="toggle-input" ${s.enabled ? 'checked' : ''} onchange="toggleSource('${esc(s.id)}', this.checked)">
+                    </label>
+                </td>
+                <td class="text-xs text-muted">${s.last_fetched_at ? timeAgo(s.last_fetched_at) : 'Never'}</td>
+                <td>
+                    <button class="btn-icon" onclick="openEditSource('${esc(s.id)}')" title="Edit">&#9998;</button>
+                    <button class="btn-icon btn-icon-danger" onclick="openDeleteSource('${esc(s.id)}', '${esc(s.name)}')" title="Remove">&#10005;</button>
+                </td>
+            </tr>
+        `).join('');
+
+        $('#sources-table').innerHTML = `
+            <table class="data-table">
+                <thead><tr>
+                    <th>Name</th><th>URL</th><th>Type</th><th>Priority</th><th>Status</th><th>Enabled</th><th>Last Fetched</th><th></th>
+                </tr></thead>
+                <tbody>${rows}</tbody>
+            </table>`;
+    }
+
+    // Wire search
+    document.addEventListener('DOMContentLoaded', () => {
+        const srcSearch = document.getElementById('sources-search');
+        if (srcSearch) srcSearch.addEventListener('input', () => renderSourcesTable(allSources));
+    });
+
+    // Toggle enable/disable
+    window.toggleSource = async function(id, enable) {
+        try {
+            const url = enable ? API.sourceEnable(id) : API.sourceDisable(id);
+            await postJSON(url, {});
+            showToast(enable ? 'Source enabled' : 'Source disabled');
+            tabLoaded.settings = false; // invalidate settings source health
+        } catch (e) {
+            showToast('Failed: ' + e.message, 'error');
+            loadSources(); // revert toggle visually
+        }
+    };
+
+    // Auto-extract domain from URL
+    function autoExtractDomain() {
+        const urlVal = $('#src-url').value;
+        try {
+            const hostname = new URL(urlVal).hostname;
+            $('#src-domain-preview').textContent = 'Domain: ' + hostname;
+            return hostname;
+        } catch {
+            $('#src-domain-preview').textContent = '';
+            return '';
+        }
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        const srcUrl = document.getElementById('src-url');
+        if (srcUrl) srcUrl.addEventListener('input', autoExtractDomain);
+    });
+
+    // Open Add Source modal
+    window.openAddSource = function() {
+        $('#source-modal-title').textContent = 'Add News Source';
+        $('#source-save-btn').textContent = 'Add Source';
+        $('#source-save-btn').onclick = saveSource;
+        $('#src-id').value = '';
+        $('#src-name').value = '';
+        $('#src-url').value = '';
+        $('#src-type').value = 'rss';
+        $('#src-priority').value = '3';
+        $('#src-trust').value = 'standard';
+        $('#src-domain-preview').textContent = '';
+        $('#source-modal').showModal();
+    };
+
+    // Open Edit Source modal
+    window.openEditSource = function(id) {
+        const src = allSources.find(s => s.id === id);
+        if (!src) return;
+        $('#source-modal-title').textContent = 'Edit Source';
+        $('#source-save-btn').textContent = 'Save Changes';
+        $('#source-save-btn').onclick = saveSource;
+        $('#src-id').value = src.id;
+        $('#src-name').value = src.name;
+        $('#src-url').value = src.url || '';
+        $('#src-type').value = src.source_type;
+        $('#src-priority').value = String(src.priority);
+        $('#src-trust').value = src.trust_level;
+        autoExtractDomain();
+        $('#source-modal').showModal();
+    };
+
+    // Save (create or update)
+    window.saveSource = async function() {
+        const id = $('#src-id').value;
+        const name = $('#src-name').value.trim();
+        const url = $('#src-url').value.trim();
+        const source_type = $('#src-type').value;
+        const priority = parseInt($('#src-priority').value);
+        const trust_level = $('#src-trust').value;
+
+        if (!name || !url) { showToast('Name and URL are required', 'error'); return; }
+        const domain = autoExtractDomain();
+        if (!domain) { showToast('Enter a valid URL', 'error'); return; }
+
+        const parser_id = source_type === 'rss' ? 'rss_generic' : 'newsapi';
+        const body = { name, url, domain, source_type, parser_id, priority, trust_level };
+
+        await withLoading($('#source-save-btn'), 'Saving...', async () => {
+            try {
+                if (id) {
+                    await putJSON(API.sourceById(id), body);
+                    showToast('Source updated');
+                } else {
+                    await postJSON(API.sources, body);
+                    showToast('Source added');
+                }
+                $('#source-modal').close();
+                tabLoaded.settings = false;
+                await loadSources();
+            } catch (e) {
+                showToast('Failed: ' + e.message, 'error');
+            }
+        });
+    };
+
+    // Delete source
+    window.openDeleteSource = function(id, name) {
+        $('#delete-source-id').value = id;
+        $('#delete-source-name').textContent = name;
+        $('#delete-source-modal').showModal();
+    };
+
+    window.confirmDeleteSource = async function() {
+        const id = $('#delete-source-id').value;
+        if (!id) return;
+        await withLoading($('#delete-source-btn'), 'Removing...', async () => {
+            try {
+                await deleteJSON(API.sourceById(id));
+                $('#delete-source-modal').close();
+                showToast('Source removed');
+                tabLoaded.settings = false;
+                await loadSources();
+            } catch (e) {
+                showToast('Failed: ' + e.message, 'error');
+            }
+        });
+    };
+
+    // Quick Add presets
+    window.openQuickAddSources = function() {
+        const existingDomains = new Set(allSources.map(s => s.domain));
+        const html = SOURCE_PRESETS.map(p => {
+            const added = existingDomains.has(p.domain);
+            return `
+                <div class="quickadd-item" style="display:flex;align-items:center;justify-content:space-between;padding:0.6rem 0;border-bottom:1px solid var(--border);">
+                    <div>
+                        <strong class="text-sm">${esc(p.name)}</strong>
+                        <div class="text-xs text-muted">${esc(p.domain)}</div>
+                    </div>
+                    ${added
+                        ? '<span class="text-xs" style="color:var(--success);">&#10003; Added</span>'
+                        : `<button class="btn btn-outline btn-sm" onclick="quickAddSource(this, ${SOURCE_PRESETS.indexOf(p)})">Add</button>`
+                    }
+                </div>`;
+        }).join('');
+        $('#quickadd-list').innerHTML = html;
+        $('#quickadd-modal').showModal();
+    };
+
+    window.quickAddSource = async function(btn, index) {
+        const preset = SOURCE_PRESETS[index];
+        await withLoading(btn, 'Adding...', async () => {
+            try {
+                await postJSON(API.sources, preset);
+                btn.outerHTML = '<span class="text-xs" style="color:var(--success);">&#10003; Added</span>';
+                showToast(preset.name + ' added');
+                tabLoaded.settings = false;
+                tabLoaded.sources = false;
+                // Refresh sources in background
+                const data = await fetchJSON(API.sources);
+                allSources = data;
+            } catch (e) {
+                showToast('Failed: ' + e.message, 'error');
+            }
+        });
     };
 
     // Patch the tab loader so Settings loads API key status + health

@@ -1352,3 +1352,25 @@ th.sortable.sort-desc::after { content: '\25BC'; opacity: 0.8; color: var(--prim
     font-size: 0.78rem;
     color: var(--info);
 }
+
+/* Detail panel close button visibility */
+.detail-header .btn-ghost {
+    font-size: 1.4rem;
+    width: 2rem;
+    height: 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    border: 1px solid var(--border);
+    color: var(--muted-fg);
+    flex-shrink: 0;
+}
+.detail-header .btn-ghost:hover {
+    color: var(--danger);
+    border-color: var(--danger);
+    background: hsla(0, 70%, 55%, 0.08);
+}
+
+/* Quick-add item styling */
+.quickadd-item:last-child { border-bottom: none; }
