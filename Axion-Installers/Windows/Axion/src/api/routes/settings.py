@@ -310,6 +310,48 @@ async def write_quit_signal():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/test-provider")
+async def test_provider():
+    """Test whether the configured AI provider is reachable and responding.
+
+    Sends a minimal request to verify the API key and provider are working.
+    Does not generate expensive content — just a quick ping.
+    """
+    from src.llm.client import is_llm_available
+
+    if not is_llm_available():
+        from src.config import get_settings
+        provider = getattr(get_settings().llm, 'provider', 'none')
+        if provider and provider != 'none':
+            return {
+                "status": "unreachable",
+                "provider": provider,
+                "message": f"{provider.title()} is configured but not responding. Check your API key and credits.",
+            }
+        return {
+            "status": "disabled",
+            "provider": None,
+            "message": "No AI provider configured. Select one in Settings.",
+        }
+
+    # Try a minimal API call
+    try:
+        from src.llm.client import call_llm
+        result = await call_llm("Respond with exactly: OK", max_tokens=5)
+        return {
+            "status": "active",
+            "provider": getattr(get_settings().llm, 'provider', 'unknown'),
+            "message": "AI provider is working.",
+            "test_response": str(result)[:50],
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "provider": getattr(get_settings().llm, 'provider', 'unknown'),
+            "message": f"Provider responded with error: {str(e)[:100]}",
+        }
+
+
 @router.delete("/api-key", response_model=ApiKeySaveResponse)
 async def remove_api_key(provider: str | None = None):
     """Remove AI provider API key(s) from the user config file (~/.axion.env).

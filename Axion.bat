@@ -25,9 +25,9 @@ set "PROJECT_DIR=%~dp0"
 if "%PROJECT_DIR:~-1%"=="\" set "PROJECT_DIR=%PROJECT_DIR:~0,-1%"
 
 set "VENV_DIR=%PROJECT_DIR%\.venv"
-:: Data dir: prefer axion-data, fall back to kleitos-data for existing installs
-if exist "%USERPROFILE%\kleitos-data" if not exist "%USERPROFILE%\axion-data" (set "DATA_DIR=%USERPROFILE%\kleitos-data") else (set "DATA_DIR=%USERPROFILE%\axion-data")
-if not defined DATA_DIR set "DATA_DIR=%USERPROFILE%\axion-data"
+:: Data dir: prefer kleitos-data if it exists (backward compat), else axion-data
+set "DATA_DIR=%USERPROFILE%\axion-data"
+if exist "%USERPROFILE%\kleitos-data" set "DATA_DIR=%USERPROFILE%\kleitos-data"
 set "LOG_DIR=%DATA_DIR%\logs"
 set "PYTHON=%VENV_DIR%\Scripts\python.exe"
 set "PYTHONW=%VENV_DIR%\Scripts\pythonw.exe"
@@ -220,7 +220,7 @@ if %errorlevel%==0 (
 
 echo [%date% %time%] Starting Axion (direct) >> "%LOG_FILE%"
 
-start /B "" "%PYTHON%" -m uvicorn src.main:app --host 0.0.0.0 --port %PORT% >> "%LOG_DIR%\axion-stdout.log" 2>> "%LOG_DIR%\axion-stderr.log"
+start /B "" "%PYTHON%" -m uvicorn src.main:app --host 127.0.0.1 --port %PORT% >> "%LOG_DIR%\axion-stdout.log" 2>> "%LOG_DIR%\axion-stderr.log"
 
 timeout /t 2 /nobreak >NUL
 
@@ -276,7 +276,7 @@ start "" "http://localhost:%PORT%"
 :: ============================================================================
 if not exist "%USERPROFILE%\Desktop\Axion.lnk" (
     powershell -NoProfile -Command ^
-        "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('%USERPROFILE%\Desktop\Axion.lnk'); $s.TargetPath = '%PROJECT_DIR%\Axion.bat'; $s.WorkingDirectory = '%PROJECT_DIR%'; $s.Description = 'Axion Portfolio Intelligence by 4Labs'; $ico = '%PROJECT_DIR%\assets\axion.ico'; if (Test-Path $ico) { $s.IconLocation = $ico } else { $s.IconLocation = '%%SystemRoot%%\System32\shell32.dll,21' }; $s.Save()" 2>NUL
+        "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('%USERPROFILE%\Desktop\Axion.lnk'); $s.TargetPath = '%PROJECT_DIR%\Axion.bat'; $s.WorkingDirectory = '%PROJECT_DIR%'; $s.Description = 'Axion Portfolio Intelligence by 4Labs'; $ico = '%PROJECT_DIR%\assets\kleitos.ico'; if (Test-Path $ico) { $s.IconLocation = $ico } else { $s.IconLocation = '%%SystemRoot%%\System32\shell32.dll,21' }; $s.Save()" 2>NUL
 )
 
 :: ============================================================================
@@ -285,7 +285,7 @@ if not exist "%USERPROFILE%\Desktop\Axion.lnk" (
 set "START_MENU=%APPDATA%\Microsoft\Windows\Start Menu\Programs"
 if not exist "%START_MENU%\Axion.lnk" (
     powershell -NoProfile -Command ^
-        "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('%START_MENU%\Axion.lnk'); $s.TargetPath = '%PROJECT_DIR%\Axion.bat'; $s.WorkingDirectory = '%PROJECT_DIR%'; $s.Description = 'Axion Portfolio Intelligence by 4Labs'; $ico = '%PROJECT_DIR%\assets\axion.ico'; if (Test-Path $ico) { $s.IconLocation = $ico } else { $s.IconLocation = '%%SystemRoot%%\System32\shell32.dll,21' }; $s.Save()" 2>NUL
+        "$ws = New-Object -ComObject WScript.Shell; $s = $ws.CreateShortcut('%START_MENU%\Axion.lnk'); $s.TargetPath = '%PROJECT_DIR%\Axion.bat'; $s.WorkingDirectory = '%PROJECT_DIR%'; $s.Description = 'Axion Portfolio Intelligence by 4Labs'; $ico = '%PROJECT_DIR%\assets\kleitos.ico'; if (Test-Path $ico) { $s.IconLocation = $ico } else { $s.IconLocation = '%%SystemRoot%%\System32\shell32.dll,21' }; $s.Save()" 2>NUL
 )
 
 :: ============================================================================

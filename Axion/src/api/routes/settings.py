@@ -81,15 +81,33 @@ def _write_env_key(var_name: str, value: str) -> None:
 # Models
 # ---------------------------------------------------------------------------
 
+class ProviderStatus(BaseModel):
+    provider: str
+    configured: bool
+    masked_key: str | None = None
+    source: str | None = None  # "env_var", "env_file", "not_set"
+
+
 class ApiKeyStatus(BaseModel):
     configured: bool
     masked_key: str | None = None
     source: str | None = None  # "env_var", "env_file", "not_set"
     llm_available: bool = False
+    # Multi-provider fields
+    primary_provider: str = ""
+    backup_provider: str = ""
+    providers: list[ProviderStatus] = []
 
 
 class ApiKeySaveRequest(BaseModel):
     api_key: str
+    provider: str          # "anthropic", "openai", "google" — required
+    role: str = "primary"  # "primary", "backup"
+
+
+class ProviderSelectRequest(BaseModel):
+    primary: str = ""    # "anthropic", "openai", "google", or "" (disabled)
+    fallback: str = ""   # "anthropic", "openai", "google", or "" (none)
 
 
 class ApiKeySaveResponse(BaseModel):
@@ -104,64 +122,170 @@ class ApiKeySaveResponse(BaseModel):
 
 @router.get("/api-key", response_model=ApiKeyStatus)
 async def get_api_key_status():
-    """Return whether an Anthropic API key is configured (masked)."""
+    """Return status of all configured AI provider keys."""
     from src.llm.client import is_llm_available
 
     settings = get_settings()
-    raw_key = settings.anthropic_api_key.get_secret_value()
 
-    if raw_key:
-        # Determine source
-        env_val = os.environ.get("ANTHROPIC_API_KEY", "")
-        source = "env_var" if env_val else "env_file"
-        return ApiKeyStatus(
-            configured=True,
-            masked_key=_mask_key(raw_key),
-            source=source,
-            llm_available=is_llm_available(),
-        )
+    # Build per-provider status
+    _key_attrs = {
+        "anthropic": ("anthropic_api_key", "ANTHROPIC_API_KEY"),
+        "openai": ("openai_api_key", "OPENAI_API_KEY"),
+        "google": ("google_api_key", "GOOGLE_API_KEY"),
+    }
+    providers: list[ProviderStatus] = []
+    for prov_name, (attr, env_var) in _key_attrs.items():
+        raw = getattr(settings, attr).get_secret_value()
+        if raw:
+            source = "env_var" if os.environ.get(env_var, "") else "env_file"
+            providers.append(ProviderStatus(
+                provider=prov_name,
+                configured=True,
+                masked_key=_mask_key(raw),
+                source=source,
+            ))
+        else:
+            providers.append(ProviderStatus(
+                provider=prov_name,
+                configured=False,
+                masked_key=None,
+                source="not_set",
+            ))
+
+    # Primary provider key for backward-compatible fields
+    # "none" sentinel means AI is explicitly disabled by the user
+    primary_name = settings.llm.provider
+    ai_disabled = primary_name.lower() == "none"
+    display_primary = "" if ai_disabled else primary_name
+
+    primary_attr, primary_env = _key_attrs.get(primary_name, ("anthropic_api_key", "ANTHROPIC_API_KEY"))
+    primary_key = getattr(settings, primary_attr).get_secret_value() if not ai_disabled else ""
+
+    any_configured = any(p.configured for p in providers)
+
     return ApiKeyStatus(
-        configured=False,
-        masked_key=None,
-        source="not_set",
-        llm_available=False,
+        configured=any_configured and not ai_disabled,
+        masked_key=_mask_key(primary_key) if primary_key else None,
+        source="env_var" if os.environ.get(primary_env, "") else ("env_file" if primary_key else "not_set"),
+        llm_available=is_llm_available(),
+        primary_provider=display_primary,
+        backup_provider="" if ai_disabled else (settings.llm.backup_provider or ""),
+        providers=providers,
     )
+
+
+_PROVIDER_ENV_VARS = {
+    "anthropic": "ANTHROPIC_API_KEY",
+    "openai": "OPENAI_API_KEY",
+    "google": "GOOGLE_API_KEY",
+}
+
+_PROVIDER_PREFIXES = {
+    "anthropic": "sk-ant-",
+    "openai": "sk-",
+    "google": "AIza",
+}
 
 
 @router.post("/api-key", response_model=ApiKeySaveResponse)
 async def save_api_key(req: ApiKeySaveRequest):
-    """Save an Anthropic API key to the user config file (~/.axion.env).
+    """Save an AI provider API key to the user config file (~/.axion.env).
 
-    The key is validated for basic format (must start with ``sk-ant-``
-    and be at least 20 characters). The application must be restarted
-    for the change to take effect.
+    Supports Anthropic, OpenAI, and Google Gemini providers.
+    The application must be restarted for the change to take effect.
     """
     key = req.api_key.strip()
+    provider = req.provider.lower()
 
-    # Basic format validation
+    if provider not in _PROVIDER_ENV_VARS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown provider '{provider}'. Supported: anthropic, openai, google.",
+        )
+
     if not key:
         raise HTTPException(status_code=400, detail="API key cannot be empty.")
-    if not key.startswith("sk-ant-"):
+
+    expected_prefix = _PROVIDER_PREFIXES.get(provider)
+    if expected_prefix and not key.startswith(expected_prefix):
         raise HTTPException(
             status_code=400,
-            detail="Invalid key format. Anthropic API keys start with 'sk-ant-'.",
-        )
-    if len(key) < 20:
-        raise HTTPException(
-            status_code=400,
-            detail="Key is too short. Please check your Anthropic API key.",
+            detail=f"Invalid key format. {provider.title()} API keys typically start with '{expected_prefix}'.",
         )
 
+    if len(key) < 10:
+        raise HTTPException(
+            status_code=400,
+            detail="Key is too short. Please check your API key.",
+        )
+
+    env_var = _PROVIDER_ENV_VARS[provider]
     try:
-        _write_env_key("ANTHROPIC_API_KEY", key)
-        logger.info("Anthropic API key saved to %s", _ENV_FILE)
+        _write_env_key(env_var, key)
+        logger.info("%s API key saved to %s", provider.title(), _ENV_FILE)
         return ApiKeySaveResponse(
             status="saved",
-            message="API key saved. Restart Axion to activate AI-enhanced analysis.",
+            message=f"{provider.title()} API key saved. Restart Axion to activate.",
             restart_required=True,
         )
     except Exception as e:
-        logger.error("Failed to save API key: %s", e)
+        logger.error("Failed to save %s API key: %s", provider, e)
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to write config file: {e}",
+        )
+
+
+_VALID_PROVIDERS = {"anthropic", "openai", "google"}
+
+
+@router.post("/provider", response_model=ApiKeySaveResponse)
+async def save_provider_selection(req: ProviderSelectRequest):
+    """Save AI provider selection to the user config file (~/.axion.env).
+
+    Sets KLEITOS_LLM_PROVIDER and KLEITOS_LLM_BACKUP_PROVIDER.
+    The application must be restarted for the change to take effect.
+    """
+    primary = req.primary.lower().strip()
+    fallback = req.fallback.lower().strip()
+
+    if primary and primary not in _VALID_PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown primary provider '{primary}'. Supported: anthropic, openai, google.",
+        )
+    if fallback and fallback not in _VALID_PROVIDERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown fallback provider '{fallback}'. Supported: anthropic, openai, google.",
+        )
+    if fallback and fallback == primary:
+        raise HTTPException(
+            status_code=400,
+            detail="Fallback provider cannot be the same as primary.",
+        )
+    if fallback and not primary:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot set a fallback without a primary provider.",
+        )
+
+    try:
+        # Write "none" sentinel when AI is disabled so that the value survives
+        # config loading (empty strings are ignored by the walrus-operator guard).
+        _write_env_key("KLEITOS_LLM_PROVIDER", primary or "none")
+        _write_env_key("KLEITOS_LLM_BACKUP_PROVIDER", fallback)
+        logger.info(
+            "Provider selection saved: primary=%s, fallback=%s → %s",
+            primary or "(disabled)", fallback or "(none)", _ENV_FILE,
+        )
+        return ApiKeySaveResponse(
+            status="saved",
+            message=f"Provider selection saved. Restart Axion to activate.",
+            restart_required=True,
+        )
+    except Exception as e:
+        logger.error("Failed to save provider selection: %s", e)
         raise HTTPException(
             status_code=500,
             detail=f"Failed to write config file: {e}",
@@ -174,7 +298,8 @@ async def write_quit_signal():
 
     This tells the Axion app shell to shut down gracefully.
     """
-    data_dir = Path.home() / "kleitos-data"
+    from src.config import DEFAULT_DATA_DIR
+    data_dir = DEFAULT_DATA_DIR
     signal_file = data_dir / ".quit-app"
     try:
         signal_file.write_text("quit", encoding="utf-8")
@@ -185,27 +310,80 @@ async def write_quit_signal():
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.delete("/api-key", response_model=ApiKeySaveResponse)
-async def remove_api_key():
-    """Remove the Anthropic API key from the user config file (~/.axion.env)."""
-    try:
-        _write_env_key("ANTHROPIC_API_KEY", "")
-        # Actually comment it out instead of leaving empty
-        lines = _read_env_lines()
-        new_lines = []
-        for line in lines:
-            if line.strip().startswith("ANTHROPIC_API_KEY=") and line.strip() == "ANTHROPIC_API_KEY=":
-                new_lines.append("# ANTHROPIC_API_KEY=\n")
-            else:
-                new_lines.append(line)
-        _ENV_FILE.write_text("".join(new_lines), encoding="utf-8")
+@router.post("/test-provider")
+async def test_provider():
+    """Test whether the configured AI provider is reachable and responding.
 
-        logger.info("Anthropic API key removed from %s", _ENV_FILE)
+    Sends a minimal request to verify the API key and provider are working.
+    Does not generate expensive content — just a quick ping.
+    """
+    from src.llm.client import is_llm_available
+
+    if not is_llm_available():
+        from src.config import get_settings
+        provider = getattr(get_settings().llm, 'provider', 'none')
+        if provider and provider != 'none':
+            return {
+                "status": "unreachable",
+                "provider": provider,
+                "message": f"{provider.title()} is configured but not responding. Check your API key and credits.",
+            }
+        return {
+            "status": "disabled",
+            "provider": None,
+            "message": "No AI provider configured. Select one in Settings.",
+        }
+
+    # Try a minimal API call
+    try:
+        from src.llm.client import call_llm
+        result = await call_llm("Respond with exactly: OK", max_tokens=5)
+        return {
+            "status": "active",
+            "provider": getattr(get_settings().llm, 'provider', 'unknown'),
+            "message": "AI provider is working.",
+            "test_response": str(result)[:50],
+        }
+    except Exception as e:
+        return {
+            "status": "error",
+            "provider": getattr(get_settings().llm, 'provider', 'unknown'),
+            "message": f"Provider responded with error: {str(e)[:100]}",
+        }
+
+
+@router.delete("/api-key", response_model=ApiKeySaveResponse)
+async def remove_api_key(provider: str | None = None):
+    """Remove AI provider API key(s) from the user config file (~/.axion.env).
+
+    If ``provider`` is specified, removes only that provider's key.
+    If omitted, removes all provider keys.
+    """
+    targets = [provider] if provider else list(_PROVIDER_ENV_VARS.keys())
+
+    try:
+        for prov in targets:
+            env_var = _PROVIDER_ENV_VARS.get(prov)
+            if not env_var:
+                continue
+            _write_env_key(env_var, "")
+            # Comment out the empty key line
+            lines = _read_env_lines()
+            new_lines = []
+            for line in lines:
+                if line.strip() == f"{env_var}=":
+                    new_lines.append(f"# {env_var}=\n")
+                else:
+                    new_lines.append(line)
+            _ENV_FILE.write_text("".join(new_lines), encoding="utf-8")
+            logger.info("%s API key removed from %s", prov.title(), _ENV_FILE)
+
+        removed = ", ".join(t.title() for t in targets)
         return ApiKeySaveResponse(
             status="saved",
-            message="API key removed. Restart Axion to switch to rule-based mode.",
+            message=f"{removed} key(s) removed. Restart Axion to apply.",
             restart_required=True,
         )
     except Exception as e:
-        logger.error("Failed to remove API key: %s", e)
+        logger.error("Failed to remove API key(s): %s", e)
         raise HTTPException(status_code=500, detail=f"Failed to update .env file: {e}")
