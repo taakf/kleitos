@@ -44,7 +44,8 @@ class DigestResponse(BaseModel):
 
 class DigestGenerateRequest(BaseModel):
     digest_type: str = "ad-hoc"
-    scope: str = "portfolio"  # portfolio, ticker
+    scope: str = "portfolio"
+    portfolio_id: str = "default"
 
 
 class DigestGenerateResponse(BaseModel):
@@ -158,12 +159,12 @@ async def latest_digest(
     return _digest_to_response(row)
 
 
-async def _generate_digest_in_background(digest_type: str) -> None:
-    """Background task that runs the DigestGenerator."""
+async def _generate_digest_in_background(digest_type: str, portfolio_id: str = "default") -> None:
+    """Background task that runs the DigestGenerator for a specific portfolio."""
     from src.reporting.digests import DigestGenerator
 
     try:
-        generator = DigestGenerator()
+        generator = DigestGenerator(portfolio_id=portfolio_id)
         if digest_type == "daily":
             await generator.generate_daily_digest()
         elif digest_type == "ad-hoc":
@@ -187,7 +188,7 @@ async def generate_digest(
     Returns 202 Accepted - digest generation runs asynchronously.
     """
     run_id = str(uuid.uuid4())
-    background_tasks.add_task(_generate_digest_in_background, request.digest_type)
+    background_tasks.add_task(_generate_digest_in_background, request.digest_type, request.portfolio_id)
     return DigestGenerateResponse(
         run_id=run_id,
         status="accepted",

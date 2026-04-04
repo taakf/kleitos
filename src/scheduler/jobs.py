@@ -248,15 +248,24 @@ class AxionScheduler:
             logger.error("Scheduled job: Risk assessment failed — %s", exc, exc_info=True)
 
     async def _run_daily_digest(self) -> None:
-        """Generate and deliver daily digest, then push to Telegram."""
-        logger.info("Scheduled job: Generating daily digest")
+        """Generate and deliver daily digest per portfolio, then push to Telegram/email."""
+        logger.info("Scheduled job: Generating daily digests")
         try:
             from src.agents.analysis import AnalysisAgent
-            agent = AnalysisAgent()
-            result = await agent.generate_digest(period="daily")
-            logger.info("Scheduled job: Daily digest generated — %s", result)
+            from src.database.connection import get_db
+            from src.database.models import Portfolio
+            from sqlalchemy import select
 
-            # Push digest to Telegram if available
+            async with get_db() as session:
+                portfolios = (await session.execute(select(Portfolio))).scalars().all()
+                portfolio_ids = [p.id for p in portfolios] if portfolios else ["default"]
+
+            for pid in portfolio_ids:
+                agent = AnalysisAgent()
+                result = await agent.run(digest=True, period="daily", portfolio_id=pid)
+                logger.info("Scheduled job: Daily digest for '%s' — %s", pid, result)
+
+            # Push digest to Telegram if available (sends latest digest)
             try:
                 from src.integrations.telegram.notifications import deliver_digest
                 if isinstance(result, dict):

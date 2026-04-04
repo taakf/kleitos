@@ -185,8 +185,11 @@ class AnalysisAgent(BaseAgent):
         "agent_runs",
     ]
 
+    _portfolio_id: str = "default"
+
     async def run(self, **kwargs: Any) -> dict[str, Any]:
         """Entry point -- dispatches to analyse or digest."""
+        self._portfolio_id = kwargs.get("portfolio_id", "default")
         if kwargs.get("digest"):
             period: str = kwargs.get("period", "daily")
             return await self.generate_digest(period=period)
@@ -517,7 +520,7 @@ class AnalysisAgent(BaseAgent):
             raise
 
     async def _fetch_recent_notes(self, period: str) -> list[dict[str, Any]]:
-        """Fetch analysis notes within the given period window."""
+        """Fetch analysis notes within the given period window, scoped to portfolio."""
         self._check_permission("analysis_notes", "read")
 
         days_map = {"daily": 1, "weekly": 7, "monthly": 30}
@@ -527,7 +530,11 @@ class AnalysisAgent(BaseAgent):
         async with self._get_db() as session:
             stmt = (
                 select(AnalysisNote)
-                .where(AnalysisNote.created_at >= cutoff)
+                .join(Holding, AnalysisNote.holding_id == Holding.id)
+                .where(
+                    AnalysisNote.created_at >= cutoff,
+                    Holding.portfolio_id == self._portfolio_id,
+                )
                 .order_by(AnalysisNote.created_at.desc())
             )
             rows = (await session.execute(stmt)).scalars().all()
@@ -597,6 +604,7 @@ class AnalysisAgent(BaseAgent):
 
         digest = Digest(
             id=digest_id,
+            portfolio_id=self._portfolio_id,
             digest_type=period,
             period_start=(datetime.now(timezone.utc) - timedelta(days={"daily": 1, "weekly": 7, "monthly": 30}.get(period, 1))).isoformat(),
             period_end=now,

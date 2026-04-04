@@ -8,22 +8,30 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func, select
 
 from src.database.connection import get_db
-from src.database.models import Alert, AnalysisNote, Digest, Event, EventLink, Holding
+from src.database.models import Alert, AnalysisNote, Digest, Event, Holding
 
 logger = logging.getLogger(__name__)
 
 
 class DigestGenerator:
-    """Generates structured daily/weekly digests of portfolio intelligence."""
+    """Generates structured daily/weekly digests of portfolio intelligence.
+
+    Each digest is scoped to a specific portfolio.  Events are global
+    (shared across portfolios), but alerts, analysis notes, and
+    holdings are filtered by ``portfolio_id``.
+    """
+
+    def __init__(self, portfolio_id: str = "default"):
+        self.portfolio_id = portfolio_id
 
     async def generate_daily_digest(self) -> dict:
-        """Generate a daily digest combining events, analysis, and alerts."""
+        """Generate a daily digest for the configured portfolio."""
         now = datetime.now(timezone.utc)
         digest_id = str(uuid.uuid4())
         cutoff_24h = (now - timedelta(days=1)).isoformat()
 
         async with get_db() as session:
-            # Material events from last 24 hours
+            # Material events from last 24 hours (GLOBAL — events are shared)
             events_stmt = (
                 select(Event)
                 .where(Event.fetched_at >= cutoff_24h, Event.materiality.in_(["important", "critical"]))
@@ -32,7 +40,7 @@ class DigestGenerator:
             )
             events = (await session.execute(events_stmt)).scalars().all()
 
-            # Watch items
+            # Watch items (GLOBAL)
             watch_stmt = (
                 select(Event)
                 .where(Event.fetched_at >= cutoff_24h, Event.materiality == "watch")
@@ -41,26 +49,34 @@ class DigestGenerator:
             )
             watch_items = (await session.execute(watch_stmt)).scalars().all()
 
-            # Active alerts
+            # Active alerts (PORTFOLIO-SCOPED)
             alerts_stmt = (
                 select(Alert)
-                .where(Alert.acknowledged == 0)
+                .where(Alert.acknowledged == 0, Alert.portfolio_id == self.portfolio_id)
                 .order_by(Alert.created_at.desc())
                 .limit(10)
             )
             alerts = (await session.execute(alerts_stmt)).scalars().all()
 
-            # Analysis notes
+            # Analysis notes (PORTFOLIO-SCOPED via holding)
             notes_stmt = (
                 select(AnalysisNote)
-                .where(AnalysisNote.created_at >= cutoff_24h)
+                .join(Holding, AnalysisNote.holding_id == Holding.id)
+                .where(
+                    AnalysisNote.created_at >= cutoff_24h,
+                    Holding.portfolio_id == self.portfolio_id,
+                )
                 .order_by(AnalysisNote.created_at.desc())
                 .limit(10)
             )
             analysis = (await session.execute(notes_stmt)).scalars().all()
 
-            # Holdings count
-            count_stmt = select(func.count()).select_from(Holding).where(Holding.status == "active")
+            # Holdings count (PORTFOLIO-SCOPED)
+            count_stmt = (
+                select(func.count())
+                .select_from(Holding)
+                .where(Holding.status == "active", Holding.portfolio_id == self.portfolio_id)
+            )
             holdings_count = (await session.execute(count_stmt)).scalar() or 0
 
             # Build content
@@ -91,9 +107,10 @@ class DigestGenerator:
                 },
             }
 
-            # Store digest
+            # Store digest (PORTFOLIO-SCOPED)
             new_digest = Digest(
                 id=digest_id,
+                portfolio_id=self.portfolio_id,
                 digest_type="daily",
                 period_start=now.replace(hour=0, minute=0, second=0).isoformat(),
                 period_end=now.isoformat(),
@@ -106,15 +123,20 @@ class DigestGenerator:
             session.add(new_digest)
             await session.commit()
 
-        logger.info("Generated daily digest %s: %d material, %d watch, %d alerts",
-                     digest_id, len(events), len(watch_items), len(alerts))
+        logger.info("Generated daily digest %s for portfolio '%s': %d material, %d watch, %d alerts",
+                     digest_id, self.portfolio_id, len(events), len(watch_items), len(alerts))
 
         return {"id": digest_id, "type": "daily", "period_end": now.isoformat(), "content": content}
 
     async def get_latest_digest(self) -> dict | None:
-        """Get the most recent digest."""
+        """Get the most recent digest for this portfolio."""
         async with get_db() as session:
-            stmt = select(Digest).order_by(Digest.created_at.desc()).limit(1)
+            stmt = (
+                select(Digest)
+                .where(Digest.portfolio_id == self.portfolio_id)
+                .order_by(Digest.created_at.desc())
+                .limit(1)
+            )
             row = (await session.execute(stmt)).scalars().first()
 
         if not row:
@@ -133,10 +155,11 @@ class DigestGenerator:
         return result
 
     async def get_digests(self, limit: int = 10) -> list[dict]:
-        """Get recent digests."""
+        """Get recent digests for this portfolio."""
         async with get_db() as session:
             stmt = (
                 select(Digest)
+                .where(Digest.portfolio_id == self.portfolio_id)
                 .order_by(Digest.created_at.desc())
                 .limit(limit)
             )
