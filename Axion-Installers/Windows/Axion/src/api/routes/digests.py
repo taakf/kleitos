@@ -115,13 +115,14 @@ def _digest_to_response(digest: DigestModel) -> DigestResponse:
 # ---------------------------------------------------------------------------
 @router.get("", response_model=list[DigestResponse])
 async def list_digests(
+    portfolio_id: str = Query("default", description="Portfolio ID"),
     digest_type: str | None = Query(None, description="Filter by digest type"),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
 ) -> list[DigestResponse]:
     """List digests with optional type filter."""
-    stmt = select(DigestModel)
+    stmt = select(DigestModel).where(DigestModel.portfolio_id == portfolio_id)
 
     if digest_type:
         stmt = stmt.where(DigestModel.digest_type == digest_type)
@@ -139,11 +140,13 @@ async def list_digests(
 
 @router.get("/latest", response_model=DigestResponse)
 async def latest_digest(
+    portfolio_id: str = Query("default", description="Portfolio ID"),
     session: AsyncSession = Depends(get_session),
 ) -> DigestResponse:
-    """Return the most recently generated digest."""
+    """Return the most recently generated digest for a portfolio."""
     stmt = (
         select(DigestModel)
+        .where(DigestModel.portfolio_id == portfolio_id)
         .order_by(DigestModel.created_at.desc())
         .limit(1)
     )

@@ -477,8 +477,12 @@
                     const sCount = summary?.sector_count || new Set(list.map(h => h.sector).filter(Boolean)).size;
 
                     const lastColl = health?.last_collection ? timeAgo(health.last_collection) : null;
+                    const srcActive = health?.sources_active ?? 0;
+                    const srcTotal = health?.sources_total ?? 0;
+                    const srcDegraded = srcTotal > 0 && srcActive < srcTotal * 0.5;
+                    const srcLabel = srcTotal > 0 ? `${srcActive}/${srcTotal} sources` : '';
                     const freshnessHtml = lastColl
-                        ? `<span class="overview-freshness" title="Last news collection">Updated ${lastColl}</span>`
+                        ? `<span class="overview-freshness" title="Last news collection">Updated ${lastColl}</span>${srcLabel ? ` <span class="overview-freshness${srcDegraded ? ' overview-freshness-stale' : ''}" title="${srcActive} of ${srcTotal} sources enabled">&middot; ${srcLabel}</span>` : ''}`
                         : `<span class="overview-freshness overview-freshness-stale" title="No news collected yet">No data collected yet</span>`;
 
                     summaryEl.innerHTML = `<div class="overview-band">
@@ -1011,8 +1015,8 @@
         const el = $('#analysis-table');
         el.innerHTML = '<div class="spinner">Loading analysis notes...</div>';
         try {
-            let url = API.analysisNotes;
-            if (ticker) url += `?ticker=${ticker}`;
+            let url = _pq(API.analysisNotes);
+            if (ticker) url += `&ticker=${ticker}`;
             const data = await fetchJSON(url);
             const list = ensureArray(data, 'items', 'notes');
 
@@ -1087,7 +1091,7 @@
     async function loadDigest() {
         const el = $('#digest-content');
         try {
-            const data = await fetchJSON(API.digestLatest);
+            const data = await fetchJSON(_pq(API.digestLatest));
             if (!data) {
                 el.innerHTML = renderEmpty('digest', 'No digests generated yet.', {
                     hint: 'Digests summarize your portfolio activity.',
@@ -1120,7 +1124,7 @@
     async function loadAlerts() {
         const el = $('#alerts-content');
         try {
-            const data = await fetchJSON(API.alertsActive);
+            const data = await fetchJSON(_pq(API.alertsActive));
             const list = ensureArray(data, 'items', 'alerts');
             if (!list.length) {
                 el.innerHTML = renderEmpty('check', 'No active alerts.', {
@@ -2494,7 +2498,7 @@
         // Fetch related data in parallel
         const [events, notes, alerts] = await Promise.all([
             fetchJSON(`${API.events}?ticker=${h.ticker}&limit=10`).catch(() => []),
-            fetchJSON(`${API.analysisNotes}?ticker=${h.ticker}`).catch(() => []),
+            fetchJSON(_pq(`${API.analysisNotes}`) + `&ticker=${h.ticker}`).catch(() => []),
             fetchJSON(`${API.alertsActive}?ticker=${h.ticker}`).catch(() => []),
         ]);
 
@@ -2771,7 +2775,7 @@
         async function updateTabBadges() {
             try {
                 const [alerts, events] = await Promise.all([
-                    fetchJSON(API.alertsActive + '?limit=200').catch(() => []),
+                    fetchJSON(_pq(API.alertsActive) + '&limit=200').catch(() => []),
                     fetchJSON(API.events + '?limit=500').catch(() => []),
                 ]);
                 const alertList = ensureArray(alerts, 'items', 'alerts');

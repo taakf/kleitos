@@ -74,6 +74,7 @@ def _alert_to_response(alert: AlertModel) -> AlertResponse:
 # ---------------------------------------------------------------------------
 @router.get("", response_model=list[AlertResponse])
 async def list_alerts(
+    portfolio_id: str = Query("default", description="Portfolio ID"),
     severity: str | None = Query(None, description="Filter by severity"),
     acknowledged: bool | None = Query(None, description="Filter by acknowledged status"),
     limit: int = Query(50, ge=1, le=500),
@@ -81,7 +82,7 @@ async def list_alerts(
     session: AsyncSession = Depends(get_session),
 ) -> list[AlertResponse]:
     """List alerts with optional severity and acknowledged filters."""
-    stmt = select(AlertModel)
+    stmt = select(AlertModel).where(AlertModel.portfolio_id == portfolio_id)
 
     if severity:
         stmt = stmt.where(AlertModel.severity == severity)
@@ -101,14 +102,16 @@ async def list_alerts(
 
 @router.get("/active", response_model=list[AlertResponse])
 async def active_alerts(
+    portfolio_id: str = Query("default", description="Portfolio ID"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
 ) -> list[AlertResponse]:
-    """Return unacknowledged (active) alerts."""
+    """Return unacknowledged (active) alerts for a portfolio."""
     stmt = (
         select(AlertModel)
         .where(AlertModel.acknowledged == 0)
+        .where(AlertModel.portfolio_id == portfolio_id)
         .order_by(AlertModel.created_at.desc())
         .offset(offset)
         .limit(limit)

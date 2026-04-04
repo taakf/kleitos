@@ -29,7 +29,7 @@ def _parse_time(raw: str, default_h: int = 7, default_m: int = 0) -> tuple[int, 
         return default_h, default_m
 
 
-class KleitosScheduler:
+class AxionScheduler:
     """Manages periodic jobs for the Axion system.
 
     Jobs include:
@@ -228,13 +228,22 @@ class KleitosScheduler:
             logger.error("Scheduled job: Coverage QA failed — %s", exc, exc_info=True)
 
     async def _run_risk_assessment(self) -> None:
-        """Run risk assessment."""
+        """Run risk assessment per portfolio."""
         logger.info("Scheduled job: Starting risk assessment")
         try:
             from src.agents.risk import RiskAgent
-            agent = RiskAgent()
-            result = await agent.run()
-            logger.info("Scheduled job: Risk assessment completed — %s", result)
+            from src.database.connection import get_db
+            from src.database.models import Portfolio
+            from sqlalchemy import select
+
+            async with get_db() as session:
+                portfolios = (await session.execute(select(Portfolio))).scalars().all()
+                portfolio_ids = [p.id for p in portfolios] if portfolios else ["default"]
+
+            for pid in portfolio_ids:
+                agent = RiskAgent()
+                result = await agent.run(portfolio_id=pid)
+                logger.info("Scheduled job: Risk assessment for '%s' — %s", pid, result)
         except Exception as exc:
             logger.error("Scheduled job: Risk assessment failed — %s", exc, exc_info=True)
 
@@ -308,7 +317,7 @@ class KleitosScheduler:
             def _blocking_backup():
                 backup_dir.mkdir(parents=True, exist_ok=True)
                 timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-                backup_path = backup_dir / f"kleitos-{timestamp}.db"
+                backup_path = backup_dir / f"axion-{timestamp}.db"
                 shutil.copy2(str(db_path), str(backup_path))
 
                 # Also copy WAL + SHM if they exist (ensures backup consistency)
@@ -318,7 +327,11 @@ class KleitosScheduler:
                         shutil.copy2(str(wal_file), str(backup_path.parent / (backup_path.name + suffix)))
 
                 # Clean old backups (keep last 7)
-                backups = sorted(backup_dir.glob("kleitos-*.db"), reverse=True)
+                # Match both new (axion-*) and legacy (kleitos-*) backup filenames
+                backups = sorted(
+                    list(backup_dir.glob("axion-*.db")) + list(backup_dir.glob("kleitos-*.db")),
+                    reverse=True,
+                )
                 for old_backup in backups[7:]:
                     old_backup.unlink(missing_ok=True)
                     # Also remove companion WAL/SHM files

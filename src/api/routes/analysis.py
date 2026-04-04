@@ -127,6 +127,7 @@ def _note_to_detail(note: AnalysisNoteModel, ticker: str | None) -> AnalysisNote
 # ---------------------------------------------------------------------------
 @router.get("/notes", response_model=list[AnalysisNoteResponse])
 async def list_notes(
+    portfolio_id: str = Query("default", description="Portfolio ID"),
     ticker: str | None = Query(None, description="Filter by ticker"),
     note_type: str | None = Query(None, description="Filter by note type"),
     date_from: datetime | None = Query(None),
@@ -135,12 +136,11 @@ async def list_notes(
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_session),
 ) -> list[AnalysisNoteResponse]:
-    """List analysis notes with optional filters."""
-    # Build base statement; outerjoin Holding so we can filter by ticker
-    # and retrieve the ticker for the response.
+    """List analysis notes with optional filters, scoped to portfolio via holding."""
     stmt = (
         select(AnalysisNoteModel, Holding.ticker)
         .outerjoin(Holding, AnalysisNoteModel.holding_id == Holding.id)
+        .where(Holding.portfolio_id == portfolio_id)
     )
 
     if ticker:

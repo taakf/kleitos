@@ -228,13 +228,22 @@ class AxionScheduler:
             logger.error("Scheduled job: Coverage QA failed — %s", exc, exc_info=True)
 
     async def _run_risk_assessment(self) -> None:
-        """Run risk assessment."""
+        """Run risk assessment per portfolio."""
         logger.info("Scheduled job: Starting risk assessment")
         try:
             from src.agents.risk import RiskAgent
-            agent = RiskAgent()
-            result = await agent.run()
-            logger.info("Scheduled job: Risk assessment completed — %s", result)
+            from src.database.connection import get_db
+            from src.database.models import Portfolio
+            from sqlalchemy import select
+
+            async with get_db() as session:
+                portfolios = (await session.execute(select(Portfolio))).scalars().all()
+                portfolio_ids = [p.id for p in portfolios] if portfolios else ["default"]
+
+            for pid in portfolio_ids:
+                agent = RiskAgent()
+                result = await agent.run(portfolio_id=pid)
+                logger.info("Scheduled job: Risk assessment for '%s' — %s", pid, result)
         except Exception as exc:
             logger.error("Scheduled job: Risk assessment failed — %s", exc, exc_info=True)
 

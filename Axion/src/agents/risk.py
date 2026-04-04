@@ -46,8 +46,11 @@ class RiskAgent(BaseAgent):
     ]
     write_permissions: ClassVar[list[str]] = ["alerts", "agent_runs"]
 
+    _portfolio_id: str = "default"
+
     async def run(self, **kwargs: Any) -> dict[str, Any]:
         """Entry point -- delegates to :meth:`assess_risk`."""
+        self._portfolio_id = kwargs.get("portfolio_id", "default")
         return await self.assess_risk()
 
     async def assess_risk(self) -> dict[str, Any]:
@@ -139,7 +142,10 @@ class RiskAgent(BaseAgent):
         self._check_permission("securities", "read")
 
         async with self._get_db() as session:
-            stmt = select(Holding).where(Holding.status == "active")
+            stmt = select(Holding).where(
+                Holding.status == "active",
+                Holding.portfolio_id == self._portfolio_id,
+            )
             h_rows = (await session.execute(stmt)).scalars().all()
 
             holdings: list[dict[str, Any]] = []
@@ -564,7 +570,10 @@ class RiskAgent(BaseAgent):
 
         async with self._get_db() as session:
             # Fetch existing unacknowledged alert titles for dedup
-            existing_stmt = select(Alert.title).where(Alert.acknowledged == 0)
+            existing_stmt = select(Alert.title).where(
+                Alert.acknowledged == 0,
+                Alert.portfolio_id == self._portfolio_id,
+            )
             existing_titles = set(
                 (await session.execute(existing_stmt)).scalars().all()
             )
@@ -576,6 +585,7 @@ class RiskAgent(BaseAgent):
                 alert_id = str(uuid.uuid4())
                 session.add(Alert(
                     id=alert_id,
+                    portfolio_id=self._portfolio_id,
                     alert_type=a["alert_type"],
                     severity=a["severity"],
                     title=a["title"],
