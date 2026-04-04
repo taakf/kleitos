@@ -165,6 +165,7 @@ class ExtractResult(BaseModel):
 class ImportReviewedRequest(BaseModel):
     """Request to import human-reviewed rows into the portfolio."""
     rows: list[ExtractedRow]
+    portfolio_id: str = "default"
 
 
 class TradeType(str, Enum):
@@ -832,6 +833,7 @@ async def import_reviewed(body: ImportReviewedRequest) -> UploadResult:
             "avg_cost_basis": row.avg_cost_basis,
             "currency": row.currency,
             "isin": row.isin,
+            "portfolio_id": body.portfolio_id,
         }
         # Compute market_value if we have price
         price = row.current_price or row.avg_cost_basis
@@ -850,7 +852,7 @@ async def import_reviewed(body: ImportReviewedRequest) -> UploadResult:
             errors.append(f"{row.ticker}: {exc}")
             logger.warning("Error importing reviewed holding %s: %s", row.ticker, exc)
 
-    await ledger.recalculate_weights()
+    await ledger.recalculate_weights(portfolio_id=body.portfolio_id)
 
     return UploadResult(
         status="success" if not errors else "partial",

@@ -39,6 +39,86 @@
     };
 
     // ================================================================
+    // Active Portfolio State
+    // ================================================================
+    // Stored in localStorage, validated on load, drives all portfolio-scoped requests.
+    let _activePortfolioId = localStorage.getItem('activePortfolioId') || 'default';
+    let _portfolioList = [];
+
+    function getActivePortfolioId() { return _activePortfolioId; }
+
+    function _pq(url) {
+        // Append ?portfolio_id= to a URL for portfolio-scoped requests
+        const sep = url.includes('?') ? '&' : '?';
+        return `${url}${sep}portfolio_id=${encodeURIComponent(_activePortfolioId)}`;
+    }
+
+    async function _loadPortfolioSelector() {
+        try {
+            const list = await fetchJSON(API.portfolios);
+            _portfolioList = list;
+            const sel = document.getElementById('portfolio-select');
+            if (!sel) return;
+
+            // Validate active portfolio still exists
+            const valid = list.find(p => p.id === _activePortfolioId);
+            if (!valid && list.length > 0) {
+                const def = list.find(p => p.is_default) || list[0];
+                _activePortfolioId = def.id;
+                localStorage.setItem('activePortfolioId', _activePortfolioId);
+            }
+
+            sel.innerHTML = list.map(p =>
+                `<option value="${esc(p.id)}" ${p.id === _activePortfolioId ? 'selected' : ''}>${esc(p.name)}</option>`
+            ).join('');
+        } catch (e) {
+            // Fallback: keep current selector state
+        }
+    }
+
+    window.switchPortfolio = function(portfolioId) {
+        _activePortfolioId = portfolioId;
+        localStorage.setItem('activePortfolioId', portfolioId);
+        // Invalidate all portfolio-scoped tab caches and reload active tab
+        Object.keys(tabLoaded).forEach(k => tabLoaded[k] = false);
+        const activeTab = document.querySelector('.tab-link.active');
+        if (activeTab) {
+            switchTab(activeTab.dataset.tab);
+        }
+    };
+
+    window.openCreatePortfolio = function() {
+        $('#cp-name').value = '';
+        $('#cp-desc').value = '';
+        const ccySel = document.getElementById('cp-ccy');
+        if (ccySel) ccySel.value = 'USD';
+        $('#create-portfolio-modal').showModal();
+    };
+
+    window.submitCreatePortfolio = async function() {
+        const name = $('#cp-name').value.trim();
+        if (!name) { showToast('Portfolio name is required', 'error'); return; }
+        const desc = $('#cp-desc').value.trim() || null;
+        const ccy = document.getElementById('cp-ccy')?.value || 'USD';
+
+        await withLoading($('#create-portfolio-btn'), 'Creating...', async () => {
+            try {
+                const p = await postJSON(API.portfolios, { name, description: desc, base_currency: ccy });
+                $('#create-portfolio-modal').close();
+                showToast(`Portfolio "${p.name}" created`);
+                // Switch to the new portfolio
+                _activePortfolioId = p.id;
+                localStorage.setItem('activePortfolioId', p.id);
+                await _loadPortfolioSelector();
+                Object.keys(tabLoaded).forEach(k => tabLoaded[k] = false);
+                switchTab('portfolio');
+            } catch (e) {
+                showToast('Could not create portfolio: ' + e.message, 'error');
+            }
+        });
+    };
+
+    // ================================================================
     // Helpers
     // ================================================================
     const $ = (sel) => document.querySelector(sel);
@@ -381,8 +461,8 @@
         }
         try {
             const [summary, holdings, health] = await Promise.all([
-                fetchJSON(API.summary).catch(() => null),
-                fetchJSON(API.holdings).catch(() => []),
+                fetchJSON(_pq(API.summary)).catch(() => null),
+                fetchJSON(_pq(API.holdings)).catch(() => []),
                 fetchJSON(API.health).catch(() => null)
             ]);
             const list = ensureArray(holdings, 'items', 'holdings');
@@ -403,7 +483,7 @@
 
                     summaryEl.innerHTML = `<div class="overview-band">
                         <div class="overview-stat">
-                            <div class="label">Main Portfolio</div>
+                            <div class="label">${esc((_portfolioList.find(p => p.id === _activePortfolioId) || {}).name || 'Portfolio')}</div>
                             <div class="value">${formatCurrency(tv)}</div>
                         </div>
                         <div class="overview-divider"></div>
@@ -604,6 +684,7 @@
             ticker,
             quantity,
             currency: $('#ah-currency').value || 'USD',
+            portfolio_id: getActivePortfolioId(),
         };
         const cost = parseFloat($('#ah-cost').value);
         const price = parseFloat($('#ah-price').value);
@@ -784,7 +865,7 @@
         const dims = ['sector', 'geography', 'currency', 'theme'];
         const labels = { sector: 'Sector', geography: 'Geography', currency: 'Currency', theme: 'Theme' };
         try {
-            const results = await Promise.all(dims.map(d => fetchJSON(API.exposure(d)).catch(() => null)));
+            const results = await Promise.all(dims.map(d => fetchJSON(_pq(API.exposure(d))).catch(() => null)));
             container.innerHTML = dims.map((dim, i) => {
                 const data = results[i];
                 const buckets = data?.buckets || [];
@@ -811,7 +892,7 @@
     async function loadTrades() {
         const el = $('#trades-table');
         try {
-            const data = await fetchJSON(API.trades);
+            const data = await fetchJSON(_pq(API.trades));
             const list = ensureArray(data, 'items', 'trades');
             allTrades = list;
             renderTradesTable(list);
@@ -1469,7 +1550,7 @@
                 const res = await fetch(API.importReviewed, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ rows: rows }),
+                    body: JSON.stringify({ rows: rows, portfolio_id: getActivePortfolioId() }),
                 });
                 if (!res.ok) {
                     const err = await res.json().catch(() => ({}));
@@ -2680,8 +2761,8 @@
         const savedSettings = getSettings();
         const defaultTab = savedSettings.defaultTab || 'portfolio';
 
-        // Load default tab
-        switchTab(defaultTab);
+        // Load portfolio selector then default tab
+        _loadPortfolioSelector().then(() => switchTab(defaultTab));
 
         // Apply refresh interval from settings
         applySettings(savedSettings);

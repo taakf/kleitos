@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/dashboard/css/styles.css?v=34">
+    <link rel="stylesheet" href="/dashboard/css/styles.css?v=35">
 </head>
 <body>
     <!-- Navigation -->
@@ -24,6 +24,12 @@
                 </svg>
                 <span class="brand-wordmark">Axion</span>
                 <span class="brand-subtitle">Portfolio Intelligence</span>
+            </div>
+            <div class="portfolio-selector" id="portfolio-selector">
+                <select id="portfolio-select" class="portfolio-select" onchange="switchPortfolio(this.value)" title="Active portfolio">
+                    <option value="default">Main Portfolio</option>
+                </select>
+                <button class="portfolio-add-btn" onclick="openCreatePortfolio()" title="Create new portfolio">+</button>
             </div>
             <div class="nav-tabs" role="tablist" aria-label="Dashboard navigation">
                 <button class="tab-link active" data-tab="portfolio" role="tab" aria-selected="true">Portfolio</button>
@@ -728,6 +734,32 @@
         </div>
     </dialog>
 
-    <script src="/dashboard/js/app.js?v=34"></script>
+    <!-- Create Portfolio Modal -->
+    <dialog id="create-portfolio-modal" aria-label="Create Portfolio">
+        <div class="modal-header">
+            <h3>Create Portfolio</h3>
+            <button class="btn btn-ghost" data-close-modal>&times;</button>
+        </div>
+        <form class="modal-form" onsubmit="return false;">
+            <div class="form-group" style="width:100%">
+                <label for="cp-name">Portfolio Name *</label>
+                <input type="text" id="cp-name" class="input" placeholder="e.g. Tech Growth Fund" required>
+            </div>
+            <div class="form-group" style="width:100%">
+                <label for="cp-desc">Description <span class="text-muted">(optional)</span></label>
+                <input type="text" id="cp-desc" class="input" placeholder="e.g. Long-only technology equity">
+            </div>
+            <div class="form-group" style="width:160px">
+                <label for="cp-ccy">Base Currency</label>
+                <select id="cp-ccy" class="select-input currency-select"></select>
+            </div>
+        </form>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button class="btn btn-primary" id="create-portfolio-btn" onclick="submitCreatePortfolio()">Create Portfolio</button>
+        </div>
+    </dialog>
+
+    <script src="/dashboard/js/app.js?v=35"></script>
 </body>
 </html>

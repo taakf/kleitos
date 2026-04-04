@@ -1385,6 +1385,52 @@ th.sortable.sort-desc::after { content: '\25BC'; opacity: 0.8; color: var(--prim
     background: hsla(0, 70%, 55%, 0.08);
 }
 
+/* Portfolio selector */
+.portfolio-selector {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-left: 1rem;
+    padding-left: 1rem;
+    border-left: 1px solid var(--border);
+}
+.portfolio-select {
+    background: var(--surface);
+    color: var(--foreground);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.3rem 0.5rem;
+    font-size: 0.78rem;
+    font-family: inherit;
+    font-weight: 500;
+    cursor: pointer;
+    max-width: 180px;
+    text-overflow: ellipsis;
+}
+.portfolio-select:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+.portfolio-add-btn {
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted-fg);
+    border-radius: var(--radius);
+    width: 26px;
+    height: 26px;
+    font-size: 1rem;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.15s;
+}
+.portfolio-add-btn:hover {
+    color: var(--primary);
+    border-color: var(--primary);
+    background: var(--primary-bg);
+}
+
 /* Quick-add item styling */
 .quickadd-item:last-child { border-bottom: none; }
 
