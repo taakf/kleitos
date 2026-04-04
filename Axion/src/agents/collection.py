@@ -135,6 +135,11 @@ class CollectionAgent(BaseAgent):
                     msg = f"Error processing source {source['id']} ({source['name']}): {exc}"
                     logger.error(msg, exc_info=True)
                     errors.append(msg)
+                    # Mark source as failed
+                    try:
+                        await self._update_source_status(source["id"], "error")
+                    except Exception:
+                        pass  # Don't let status update failure mask the real error
 
             # --- Pass 2: Macro event screening (LLM) ---
             # ALL new events are sent to the LLM to find indirect impacts.
@@ -227,8 +232,8 @@ class CollectionAgent(BaseAgent):
             link_count = await self._link_event_to_holdings(event_id, enriched)
             links += link_count
 
-        # Mark source as fetched
-        await self._update_source_timestamp(source["id"])
+        # Mark source as successfully fetched
+        await self._update_source_status(source["id"], "ok")
 
         return created, dupes, links
 
@@ -509,15 +514,17 @@ class CollectionAgent(BaseAgent):
 
         return link_count
 
-    async def _update_source_timestamp(self, source_id: str) -> None:
-        """Set ``last_fetched_at`` on the source row."""
+    async def _update_source_status(
+        self, source_id: str, status: str = "ok"
+    ) -> None:
+        """Update ``last_fetched_at`` and ``last_status`` on the source row."""
         self._check_permission("sources", "write")
         now = datetime.now(timezone.utc).isoformat()
         async with self._get_db() as session:
             stmt = (
                 update(Source)
                 .where(Source.id == source_id)
-                .values(last_fetched_at=now)
+                .values(last_fetched_at=now, last_status=status)
             )
             await session.execute(stmt)
             await session.commit()

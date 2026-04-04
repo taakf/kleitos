@@ -477,12 +477,12 @@
                     const sCount = summary?.sector_count || new Set(list.map(h => h.sector).filter(Boolean)).size;
 
                     const lastColl = health?.last_collection ? timeAgo(health.last_collection) : null;
+                    const srcHealthy = health?.sources_healthy ?? 0;
                     const srcActive = health?.sources_active ?? 0;
-                    const srcTotal = health?.sources_total ?? 0;
-                    const srcDegraded = srcTotal > 0 && srcActive < srcTotal * 0.5;
-                    const srcLabel = srcTotal > 0 ? `${srcActive}/${srcTotal} sources` : '';
+                    const srcDegraded = srcActive > 0 && srcHealthy < srcActive * 0.5;
+                    const srcLabel = srcActive > 0 ? `${srcHealthy}/${srcActive} sources OK` : '';
                     const freshnessHtml = lastColl
-                        ? `<span class="overview-freshness" title="Last news collection">Updated ${lastColl}</span>${srcLabel ? ` <span class="overview-freshness${srcDegraded ? ' overview-freshness-stale' : ''}" title="${srcActive} of ${srcTotal} sources enabled">&middot; ${srcLabel}</span>` : ''}`
+                        ? `<span class="overview-freshness" title="Last news collection">Updated ${lastColl}</span>${srcLabel ? ` <span class="overview-freshness${srcDegraded ? ' overview-freshness-stale' : ''}" title="${srcHealthy} of ${srcActive} enabled sources returned data">&middot; ${srcLabel}</span>` : ''}`
                         : `<span class="overview-freshness overview-freshness-stale" title="No news collected yet">No data collected yet</span>`;
 
                     summaryEl.innerHTML = `<div class="overview-band">
@@ -1212,8 +1212,13 @@
                         <div class="health-item"><div class="label">Sources</div><div class="value">${health.sources_active ?? '?'} / ${health.sources_total ?? '?'} active</div></div>
                         <div class="health-item"><div class="label">Uptime</div><div class="value">${formatUptime(health.uptime_seconds)}</div></div>
                         <div class="health-item"><div class="label">Last Collection</div><div class="value">${timeAgo(health.last_collection) || '\u2014'}</div></div>
-                        <div class="health-item"><div class="label">Analysis Mode</div><div class="value">${health.llm_available ? `${statusDot('ok')} AI` : `${statusDot('idle')} Standard`}</div></div>
-                        ${!health.llm_available ? `<div class="health-item" style="grid-column:1/-1;"><div class="label">Standard Mode</div><div class="value text-xs text-muted" style="font-family:var(--font-sans);">All core features are active. Add an AI provider to unlock smart analysis, insights, and natural language queries.</div></div>` : ''}
+                        <div class="health-item"><div class="label">Analysis Mode</div><div class="value">${
+                            health.llm_status === 'active' ? `${statusDot('ok')} AI` :
+                            health.llm_status === 'configured' ? `${statusDot('idle')} AI (not responding)` :
+                            `${statusDot('idle')} Standard`
+                        }</div></div>
+                        ${health.llm_status === 'configured' ? `<div class="health-item" style="grid-column:1/-1;"><div class="value text-xs" style="font-family:var(--font-sans);color:var(--warning);">AI provider is configured but not responding. Check your API key and credits.</div></div>` : ''}
+                        ${health.llm_status === 'disabled' ? `<div class="health-item" style="grid-column:1/-1;"><div class="value text-xs text-muted" style="font-family:var(--font-sans);">All core features are active. Add an AI provider to unlock smart analysis, insights, and natural language queries.</div></div>` : ''}
                         <div class="health-item"><div class="label">Version</div><div class="value text-mono">${esc(health.version || '\u2014')}</div></div>
                     </div>
                 </div>`;

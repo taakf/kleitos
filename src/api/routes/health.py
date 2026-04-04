@@ -27,10 +27,12 @@ class HealthStatus(BaseModel):
     scheduler: str
     sources_active: int
     sources_total: int
+    sources_healthy: int = 0  # sources with last_status='ok'
     last_collection: datetime | None
     uptime_seconds: float
     version: str
     llm_available: bool
+    llm_status: str = "disabled"  # disabled / configured / active
     telegram_enabled: bool = False
     telegram_configured: bool = False
 
@@ -54,11 +56,19 @@ async def get_health(
         )
         sources_total = total_result.scalar_one()
 
-        # Active sources
+        # Active sources (enabled)
         active_result = await session.execute(
             select(func.count()).select_from(Source).where(Source.enabled == 1)
         )
         sources_active = active_result.scalar_one()
+
+        # Healthy sources (last_status='ok')
+        healthy_result = await session.execute(
+            select(func.count()).select_from(Source).where(
+                Source.enabled == 1, Source.last_status == "ok"
+            )
+        )
+        sources_healthy = healthy_result.scalar_one()
 
         # Last collection time — most recent event fetched_at
         last_fetch_result = await session.execute(
@@ -80,15 +90,26 @@ async def get_health(
         db_status = "error"
         sources_total = 0
         sources_active = 0
+        sources_healthy = 0
         last_collection = None
 
     uptime = time.monotonic() - _START_TIME
 
     from src.llm.client import is_llm_available
     from src.config import get_settings
+    settings = get_settings()
     llm_ok = is_llm_available()
 
-    tg_settings = get_settings().telegram
+    # Determine LLM status: disabled / configured / active
+    llm_provider = settings.llm.provider if hasattr(settings.llm, 'provider') else ""
+    if llm_ok:
+        llm_status = "active"
+    elif llm_provider and llm_provider != "none":
+        llm_status = "configured"  # key exists but provider not responding
+    else:
+        llm_status = "disabled"
+
+    tg_settings = settings.telegram
     tg_enabled = tg_settings.enabled
     tg_configured = bool(tg_settings.token and tg_settings.chat_ids)
 
@@ -98,10 +119,12 @@ async def get_health(
         scheduler=("running" if getattr(getattr(request.app.state, "scheduler", None), "is_running", False) else "stopped"),
         sources_active=sources_active,
         sources_total=sources_total,
+        sources_healthy=sources_healthy,
         last_collection=last_collection,
         uptime_seconds=round(uptime, 2),
         version="1.0.0",
         llm_available=llm_ok,
+        llm_status=llm_status,
         telegram_enabled=tg_enabled,
         telegram_configured=tg_configured,
     )
