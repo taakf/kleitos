@@ -201,6 +201,19 @@ set "KLEITOS_DATA_DIR=%DATA_DIR%"
 set "KLEITOS_DB_PATH=%DATA_DIR%\db\kleitos.db"
 set "PATH=%VENV_DIR%\Scripts;%PATH%"
 
+:: Check if port is already in use
+netstat -ano 2>NUL | findstr ":%PORT% " | findstr "LISTENING" >NUL 2>&1
+if %errorlevel%==0 (
+    echo.
+    echo   Port %PORT% is already in use by another application.
+    echo   Either close the other application or set KLEITOS_PORT
+    echo   to a different port number and try again.
+    echo.
+    echo [%date% %time%] Port %PORT% in use >> "%LOG_FILE%"
+    pause
+    exit /b 1
+)
+
 echo [%date% %time%] Starting Axion (direct) >> "%LOG_FILE%"
 
 start /B "" "%PYTHON%" -m uvicorn src.main:app --host 0.0.0.0 --port %PORT% >> "%LOG_DIR%\kleitos-stdout.log" 2>> "%LOG_DIR%\kleitos-stderr.log"
@@ -219,8 +232,9 @@ timeout /t 1 /nobreak >NUL
 set /a waited+=1
 if %waited% geq %MAX_WAIT% (
     echo.
-    echo   Startup timed out after %MAX_WAIT%s. Check logs at:
-    echo   %LOG_DIR%
+    echo   Startup timed out after %MAX_WAIT% seconds.
+    echo   This usually means a dependency issue or port conflict.
+    echo   Logs are at: %LOG_DIR%
     echo.
     echo [%date% %time%] Startup timed out >> "%LOG_FILE%"
     pause

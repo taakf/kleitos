@@ -72,16 +72,12 @@ These are internal development/engineering artifacts:
 | `RELEASE_BACKLOG.md` | Internal issue tracker |
 | `RELEASE_DECISIONS.md` | Internal decision log |
 | `RELEASE_READINESS_CHECKLIST.md` | Internal QA checklist |
-| `Kleitos.app/` | Legacy macOS bundle — use `Axion.app/` instead |
 | `DELIVERY_GUIDE.md` | This file — internal only |
-| `Kleitos.bat` | Legacy compatibility shim — remove for clean delivery |
-| `scripts/kleitos-*.pyw` | Legacy shims — remove for clean delivery |
-| `scripts/kleitos-*.py` | Legacy shims — remove for clean delivery |
-| `scripts/stop-kleitos.bat` | Legacy shim — remove for clean delivery |
-| `config/launchd/com.kleitos.*` | Legacy plists — use `com.axion.*` instead |
 | `test_api.py` | Test script — internal |
 | `test_full_pipeline.py` | Test script — internal |
 | `tests/` | Test suite — internal |
+| `install.sh`, `setup.sh`, etc. | Developer ops scripts — not for client delivery |
+| `healthcheck.sh`, `start.sh`, etc. | Server control — internal only |
 | `pyproject.toml` | Dev tooling config |
 | `.venv/` | Created automatically by launcher |
 | `kleitos-data/` | Created automatically at runtime |
