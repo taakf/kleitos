@@ -23,6 +23,7 @@ from src.api.routes import (
     export,
     health,
     portfolio,
+    portfolios,
     settings,
     sources,
     ws,
@@ -220,6 +221,7 @@ if _dashboard_dir.is_dir():
 
 # -- Routers ---------------------------------------------------------------
 app.include_router(health.router)
+app.include_router(portfolios.router)
 app.include_router(portfolio.router)
 app.include_router(events.router)
 app.include_router(analysis.router)

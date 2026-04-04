@@ -9,6 +9,7 @@
     // API Endpoints
     // ================================================================
     const API = {
+        portfolios:   '/api/v1/portfolios',
         holdings:     '/api/v1/portfolio/holdings',
         holdingById:  (id) => `/api/v1/portfolio/holdings/${id}`,
         summary:      '/api/v1/portfolio/summary',

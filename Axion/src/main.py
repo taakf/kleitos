@@ -23,6 +23,7 @@ from src.api.routes import (
     export,
     health,
     portfolio,
+    portfolios,
     settings,
     sources,
     ws,
@@ -43,7 +44,7 @@ async def lifespan(app: FastAPI):
 
     from src.database.connection import close_database
     from src.database.migrations import run_migrations
-    from src.scheduler.jobs import KleitosScheduler
+    from src.scheduler.jobs import AxionScheduler
     from src.llm.client import close_llm_client
 
     await run_migrations()
@@ -108,7 +109,7 @@ async def lifespan(app: FastAPI):
             logger.warning("No Anthropic API key — LLM features will use fallback mode.")
 
     # Start background scheduler
-    scheduler = KleitosScheduler()
+    scheduler = AxionScheduler()
     scheduler.setup(settings.model_dump())
     scheduler.start()
     app.state.scheduler = scheduler
@@ -138,7 +139,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error("Failed to start Telegram bot: %s", e, exc_info=True)
     else:
-        logger.info("Telegram bot disabled (set KLEITOS_TELEGRAM_TOKEN to enable)")  # env var kept for backward compat
+        logger.info("Telegram bot disabled (set KLEITOS_TELEGRAM_TOKEN env var to enable)")
 
     logger.info("Axion API startup complete.")
     yield
@@ -220,6 +221,7 @@ if _dashboard_dir.is_dir():
 
 # -- Routers ---------------------------------------------------------------
 app.include_router(health.router)
+app.include_router(portfolios.router)
 app.include_router(portfolio.router)
 app.include_router(events.router)
 app.include_router(analysis.router)

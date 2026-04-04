@@ -241,6 +241,7 @@ class HoldingCreateRequest(BaseModel):
     currency: str = "USD"
     isin: str | None = None
     venue: str | None = None
+    portfolio_id: str = "default"
 
     @field_validator("ticker")
     @classmethod
@@ -347,6 +348,7 @@ def _row_to_holding(h: HoldingModel, s: Security | None) -> HoldingResponse:
 # ---------------------------------------------------------------------------
 @router.get("/holdings", response_model=list[HoldingResponse])
 async def list_holdings(
+    portfolio_id: str = Query("default", description="Portfolio ID (defaults to default portfolio)"),
     sector: str | None = Query(None, description="Filter by sector"),
     geography: str | None = Query(None, description="Filter by geography"),
     currency: str | None = Query(None, description="Filter by currency"),
@@ -360,6 +362,7 @@ async def list_holdings(
         select(HoldingModel, Security)
         .outerjoin(Security, HoldingModel.ticker == Security.ticker)
         .where(HoldingModel.status == "active")
+        .where(HoldingModel.portfolio_id == portfolio_id)
         .order_by(HoldingModel.weight_pct.desc().nullslast())
     )
 
@@ -448,6 +451,7 @@ async def create_holding(
         "currency": body.currency,
         "isin": body.isin,
         "venue": body.venue,
+        "portfolio_id": body.portfolio_id,
     }
     # Compute market_value if we have price info
     price = body.current_price or body.avg_cost_basis
@@ -455,7 +459,7 @@ async def create_holding(
         data["market_value"] = round(price * body.quantity, 4)
 
     holding_id, action = await ledger.upsert_holding(data, agent_id="manual")
-    await ledger.recalculate_weights()
+    await ledger.recalculate_weights(portfolio_id=body.portfolio_id)
 
     # Return the full holding response
     return await get_holding_simple(holding_id, session)
@@ -614,6 +618,7 @@ async def submit_trade(
 
 @router.get("/trades", response_model=list[TradeResponse])
 async def list_trades(
+    portfolio_id: str = Query("default", description="Portfolio ID"),
     ticker: str | None = Query(None, description="Filter by ticker"),
     trade_type: str | None = Query(None, description="Filter by trade type (buy/sell/dividend)"),
     limit: int = Query(50, ge=1, le=500),
@@ -621,7 +626,12 @@ async def list_trades(
     session: AsyncSession = Depends(get_session),
 ) -> list[TradeResponse]:
     """List trade history with optional filters."""
-    stmt = select(TradeModel).order_by(TradeModel.trade_date.desc(), TradeModel.created_at.desc())
+    stmt = (
+        select(TradeModel)
+        .outerjoin(HoldingModel, TradeModel.holding_id == HoldingModel.id)
+        .where(HoldingModel.portfolio_id == portfolio_id)
+        .order_by(TradeModel.trade_date.desc(), TradeModel.created_at.desc())
+    )
 
     if ticker:
         stmt = stmt.where(TradeModel.ticker == ticker.strip().upper())
@@ -862,6 +872,7 @@ async def upload_portfolio_removed() -> None:
 @router.get("/exposure", response_model=ExposureBreakdown)
 async def get_exposure(
     dimension: ExposureDimension = Query(ExposureDimension.sector, description="Breakdown dimension"),
+    portfolio_id: str = Query("default", description="Portfolio ID"),
     session: AsyncSession = Depends(get_session),
 ) -> ExposureBreakdown:
     """Get portfolio exposure breakdown by sector, geography, currency or theme."""
@@ -869,6 +880,7 @@ async def get_exposure(
         select(HoldingModel, Security)
         .outerjoin(Security, HoldingModel.ticker == Security.ticker)
         .where(HoldingModel.status == "active")
+        .where(HoldingModel.portfolio_id == portfolio_id)
     )
     rows = (await session.execute(stmt)).all()
 
@@ -918,6 +930,7 @@ async def get_exposure(
 
 @router.get("/summary", response_model=PortfolioSummary)
 async def get_summary(
+    portfolio_id: str = Query("default", description="Portfolio ID"),
     session: AsyncSession = Depends(get_session),
 ) -> PortfolioSummary:
     """Return high-level portfolio summary statistics."""
@@ -925,6 +938,7 @@ async def get_summary(
         select(HoldingModel, Security)
         .outerjoin(Security, HoldingModel.ticker == Security.ticker)
         .where(HoldingModel.status == "active")
+        .where(HoldingModel.portfolio_id == portfolio_id)
     )
     rows = (await session.execute(stmt)).all()
 

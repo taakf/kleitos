@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 class PortfolioLedger:
     """Manages the canonical portfolio ledger."""
 
-    async def get_all_holdings(self, portfolio_id: str = "main", status: str = "active") -> list[dict]:
+    async def get_all_holdings(self, portfolio_id: str = "default", status: str = "active") -> list[dict]:
         """Get all holdings for a portfolio with security metadata."""
         async with get_db() as session:
             stmt = (
@@ -70,7 +70,7 @@ class PortfolioLedger:
             d.update({"name": s.name, "sector": s.sector, "geography": s.geography, "themes": s.themes})
         return d
 
-    async def get_holding_by_ticker(self, ticker: str, portfolio_id: str = "main") -> dict | None:
+    async def get_holding_by_ticker(self, ticker: str, portfolio_id: str = "default") -> dict | None:
         """Get a holding by ticker."""
         async with get_db() as session:
             stmt = select(Holding).where(
@@ -170,7 +170,7 @@ class PortfolioLedger:
 
         return holdings
 
-    async def recalculate_weights(self, portfolio_id: str = "main") -> None:
+    async def recalculate_weights(self, portfolio_id: str = "default") -> None:
         """Recalculate market_value and weight_pct for all active holdings.
 
         market_value = quantity * (current_price or avg_cost_basis)
@@ -210,7 +210,7 @@ class PortfolioLedger:
             len(holdings), total_mv,
         )
 
-    async def get_portfolio_summary(self, portfolio_id: str = "main") -> dict:
+    async def get_portfolio_summary(self, portfolio_id: str = "default") -> dict:
         """Get portfolio summary statistics."""
         holdings = await self.get_all_holdings(portfolio_id)
         total_value = sum(h.get("market_value", 0) or 0 for h in holdings)

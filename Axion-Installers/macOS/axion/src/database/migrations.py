@@ -29,20 +29,107 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Current schema version — increment this when adding a new migration step.
 # ---------------------------------------------------------------------------
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 2
 
 # ---------------------------------------------------------------------------
-# Migration registry — ordered list of (version, description, function).
-# Each function receives a synchronous SQLAlchemy connection.
-#
-# Convention:
-#   - Version 1 is the baseline (tables created by create_all).
-#   - Version 2+ are incremental migrations added as the schema evolves.
+# Migration steps
+# ---------------------------------------------------------------------------
+
+_DEFAULT_PORTFOLIO_ID = "default"
+
+
+def _migrate_v2(sync_conn) -> None:
+    """V2: Add multi-portfolio support.
+
+    1. Create portfolios table.
+    2. Insert default "Main Portfolio" with id='default'.
+    3. Add portfolio_id FK to holdings (update existing rows).
+    4. Add portfolio_id to alerts and digests (nullable, backfill).
+
+    Note: SQLite cannot add FK constraints via ALTER TABLE, so we add
+    the column without the FK and rely on the ORM for referential integrity.
+    The FK is defined in the model for fresh installs (create_all).
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    inspector = inspect(sync_conn)
+    existing_tables = set(inspector.get_table_names())
+
+    # 1. Create portfolios table if not exists
+    if "portfolios" not in existing_tables:
+        sync_conn.execute(text("""
+            CREATE TABLE portfolios (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                base_currency TEXT NOT NULL DEFAULT 'USD',
+                is_default INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        """))
+        sync_conn.execute(text(
+            "CREATE INDEX ix_portfolios_is_default ON portfolios (is_default)"
+        ))
+        logger.info("Created portfolios table")
+
+    # 2. Insert default portfolio if not exists
+    existing = sync_conn.execute(
+        text("SELECT id FROM portfolios WHERE id = :id"),
+        {"id": _DEFAULT_PORTFOLIO_ID},
+    ).fetchone()
+    if not existing:
+        sync_conn.execute(text("""
+            INSERT INTO portfolios (id, name, description, base_currency, is_default, created_at, updated_at)
+            VALUES (:id, :name, :desc, :ccy, 1, :now, :now)
+        """), {
+            "id": _DEFAULT_PORTFOLIO_ID,
+            "name": "Main Portfolio",
+            "desc": "Default portfolio created during upgrade",
+            "ccy": "USD",
+            "now": now,
+        })
+        logger.info("Created default portfolio '%s'", _DEFAULT_PORTFOLIO_ID)
+
+    # 3. Update holdings: change portfolio_id from 'main' to 'default'
+    #    (the old hardcoded value was 'main')
+    if "holdings" in existing_tables:
+        sync_conn.execute(text("""
+            UPDATE holdings SET portfolio_id = :new_id
+            WHERE portfolio_id = 'main' OR portfolio_id IS NULL
+        """), {"new_id": _DEFAULT_PORTFOLIO_ID})
+        logger.info("Migrated holdings to default portfolio")
+
+    # 4. Add portfolio_id to alerts if missing
+    if "alerts" in existing_tables:
+        alert_cols = {c["name"] for c in inspector.get_columns("alerts")}
+        if "portfolio_id" not in alert_cols:
+            sync_conn.execute(text(
+                "ALTER TABLE alerts ADD COLUMN portfolio_id TEXT"
+            ))
+            sync_conn.execute(text(
+                "UPDATE alerts SET portfolio_id = :pid"
+            ), {"pid": _DEFAULT_PORTFOLIO_ID})
+            logger.info("Added portfolio_id to alerts")
+
+    # 5. Add portfolio_id to digests if missing
+    if "digests" in existing_tables:
+        digest_cols = {c["name"] for c in inspector.get_columns("digests")}
+        if "portfolio_id" not in digest_cols:
+            sync_conn.execute(text(
+                "ALTER TABLE digests ADD COLUMN portfolio_id TEXT"
+            ))
+            sync_conn.execute(text(
+                "UPDATE digests SET portfolio_id = :pid"
+            ), {"pid": _DEFAULT_PORTFOLIO_ID})
+            logger.info("Added portfolio_id to digests")
+
+
+# ---------------------------------------------------------------------------
+# Migration registry
 # ---------------------------------------------------------------------------
 _MIGRATIONS: list[tuple[int, str, callable]] = [
-    # (1, "baseline", None)  — version 1 is implicit (create_all)
-    # Future example:
-    # (2, "add portfolio table and portfolio_id columns", _migrate_v2),
+    # Version 1 is implicit (create_all baseline).
+    (2, "add multi-portfolio support", _migrate_v2),
 ]
 
 
@@ -156,6 +243,18 @@ async def run_migrations() -> None:
         if not existing_tables:
             logger.info("Fresh database — creating all tables")
             await conn.run_sync(Base.metadata.create_all)
+            # Insert default portfolio for fresh installs
+            now = datetime.now(timezone.utc).isoformat()
+            await conn.execute(text("""
+                INSERT INTO portfolios (id, name, description, base_currency, is_default, created_at, updated_at)
+                VALUES (:id, :name, :desc, :ccy, 1, :now, :now)
+            """), {
+                "id": _DEFAULT_PORTFOLIO_ID,
+                "name": "Main Portfolio",
+                "desc": "Default portfolio",
+                "ccy": "USD",
+                "now": now,
+            })
             await conn.run_sync(
                 lambda sc: _set_db_version(sc, CURRENT_SCHEMA_VERSION, "initial schema")
             )

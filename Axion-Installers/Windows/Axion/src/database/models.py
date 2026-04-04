@@ -18,6 +18,31 @@ class Base(DeclarativeBase):
 
 
 # ---------------------------------------------------------------------------
+# Portfolio — top-level entity that scopes holdings, trades, alerts, digests
+# ---------------------------------------------------------------------------
+
+
+class Portfolio(Base):
+    """A named portfolio that contains holdings, trades, and derived data."""
+    __tablename__ = "portfolios"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    base_currency: Mapped[str] = mapped_column(Text, nullable=False, server_default="USD")
+    is_default: Mapped[int] = mapped_column(default=0)  # 1 = default portfolio
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Relationships
+    holdings: Mapped[list[Holding]] = relationship(back_populates="portfolio")
+
+    __table_args__ = (
+        Index("ix_portfolios_is_default", "is_default"),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Canonical tables — source of truth
 # ---------------------------------------------------------------------------
 
@@ -36,7 +61,7 @@ class Holding(Base):
     market_value: Mapped[float | None] = mapped_column()
     weight_pct: Mapped[float | None] = mapped_column()
     portfolio_id: Mapped[str] = mapped_column(
-        Text, nullable=False, server_default="main"
+        Text, ForeignKey("portfolios.id"), nullable=False
     )
     status: Mapped[str] = mapped_column(
         Text, nullable=False, server_default="active"
@@ -45,6 +70,7 @@ class Holding(Base):
     updated_at: Mapped[str] = mapped_column(Text, nullable=False)
 
     # Relationships
+    portfolio: Mapped[Portfolio] = relationship(back_populates="holdings")
     trades: Mapped[list[Trade]] = relationship(back_populates="holding")
     analysis_notes: Mapped[list[AnalysisNote]] = relationship(
         back_populates="holding"
@@ -265,6 +291,7 @@ class Alert(Base):
     __tablename__ = "alerts"
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
+    portfolio_id: Mapped[str | None] = mapped_column(Text, ForeignKey("portfolios.id"))
     alert_type: Mapped[str] = mapped_column(Text, nullable=False)
     severity: Mapped[str] = mapped_column(Text, nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
@@ -290,6 +317,7 @@ class Digest(Base):
     __tablename__ = "digests"
 
     id: Mapped[str] = mapped_column(Text, primary_key=True)
+    portfolio_id: Mapped[str | None] = mapped_column(Text, ForeignKey("portfolios.id"))
     digest_type: Mapped[str] = mapped_column(Text, nullable=False)
     period_start: Mapped[str] = mapped_column(Text, nullable=False)
     period_end: Mapped[str] = mapped_column(Text, nullable=False)
