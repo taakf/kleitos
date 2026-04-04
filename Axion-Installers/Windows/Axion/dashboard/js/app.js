@@ -397,7 +397,7 @@
 
                     summaryEl.innerHTML = `<div class="overview-band">
                         <div class="overview-stat">
-                            <div class="label">Portfolio Value</div>
+                            <div class="label">Main Portfolio</div>
                             <div class="value">${formatCurrency(tv)}</div>
                         </div>
                         <div class="overview-divider"></div>
@@ -438,14 +438,14 @@
         const circle = '&#9675;';  // ○
 
         // Capabilities summary — show what's available right now
-        const coreFeatures = 'Portfolio tracking, alerts, news collection, CSV and structured PDF import, holdings management, trade recording, and exposure analysis.';
-        const aiFeatures = 'Event classification, portfolio analysis notes, intelligence digests, natural language chat, and image/scanned PDF extraction.';
+        const coreFeatures = 'Full portfolio tracking, automated news monitoring, risk alerts, position management, trade recording, and CSV/PDF import.';
+        const aiFeatures = 'Smart event analysis, portfolio insights, daily intelligence digests, natural language queries, and image extraction.';
 
         return `<div class="welcome-card">
             <div class="welcome-header">
                 <div>
                     <div class="welcome-title">Welcome to Axion</div>
-                    <div class="welcome-subtitle">Portfolio intelligence by 4Labs. Get started in a few steps.</div>
+                    <div class="welcome-subtitle">Portfolio intelligence for institutional investors. Get started in a few steps.</div>
                 </div>
             </div>
             <div class="welcome-steps">
@@ -460,21 +460,21 @@
                     <span class="step-icon">${circle}</span>
                     <div>
                         <div class="step-label">Upload your portfolio</div>
-                        <div class="step-hint">CSV with ticker, quantity, price, currency columns</div>
+                        <div class="step-hint">Upload a CSV, PDF, or image of your portfolio</div>
                     </div>
                 </div>
                 <div class="welcome-step ${llmOk ? 'done' : ''}">
                     <span class="step-icon">${llmOk ? check : circle}</span>
                     <div>
-                        <div class="step-label">Configure AI provider <span class="text-xs text-muted">(optional)</span></div>
-                        <div class="step-hint">${llmOk ? 'AI-enhanced analysis active' : 'Adds event classification, analysis notes, digests, and chat. Core features work without AI.'}</div>
+                        <div class="step-label">Connect AI for deeper analysis <span class="text-xs text-muted">(optional)</span></div>
+                        <div class="step-hint">${llmOk ? 'AI analysis active' : 'All core features work out of the box. AI adds deeper insights.'}</div>
                     </div>
                 </div>
                 <div class="welcome-step ${collected ? 'done' : ''}">
                     <span class="step-icon">${collected ? check : circle}</span>
                     <div>
                         <div class="step-label">First news collection</div>
-                        <div class="step-hint">${collected ? 'Events collected' : 'Happens automatically every 30 minutes after portfolio upload'}</div>
+                        <div class="step-hint">${collected ? 'Events collected' : 'Runs automatically every 30 minutes'}</div>
                     </div>
                 </div>
             </div>
@@ -520,7 +520,7 @@
             <thead><tr>
                 <th class="sortable" data-sort="ticker">Ticker</th><th class="sortable" data-sort="name">Name</th><th class="sortable" data-sort="sector">Sector</th>
                 <th class="num sortable" data-sort="quantity">Shares</th><th class="num sortable" data-sort="avg_cost_basis">Avg Cost</th><th class="num sortable" data-sort="current_price">Price</th>
-                <th class="num sortable" data-sort="_mv">Mkt Value</th><th class="num sortable" data-sort="_wt">Weight</th><th class="num sortable" data-sort="_pnl">P&L</th><th class="num sortable" data-sort="_pnl_pct">P&L %</th>
+                <th class="num sortable" data-sort="_mv">Market Value</th><th class="num sortable" data-sort="_wt">Allocation</th><th class="num sortable" data-sort="_pnl">P&L</th><th class="num sortable" data-sort="_pnl_pct">P&L %</th>
                 <th style="width:70px;"></th>
             </tr></thead>
             <tbody>${enriched.map(h => `<tr>
@@ -613,7 +613,7 @@
                 refreshTab('holdings');
                 refreshTab('exposures');
             } catch (e) {
-                showToast('Failed: ' + e.message, 'error');
+                showToast('Could not add holding: ' + e.message, 'error');
             }
         });
     };
@@ -666,7 +666,7 @@
                 refreshTab('holdings');
                 refreshTab('exposures');
             } catch (e) {
-                showToast('Failed: ' + e.message, 'error');
+                showToast('Could not update holding: ' + e.message, 'error');
             }
         });
     };
@@ -693,7 +693,7 @@
                 refreshTab('holdings');
                 refreshTab('exposures');
             } catch (e) {
-                showToast('Failed: ' + e.message, 'error');
+                showToast('Could not remove holding: ' + e.message, 'error');
             }
         });
     };
@@ -764,7 +764,7 @@
                 refreshTab('holdings');
                 refreshTab('exposures');
             } catch (e) {
-                showToast('Failed: ' + e.message, 'error');
+                showToast('Could not submit trade: ' + e.message, 'error');
             }
         });
     };
@@ -1120,8 +1120,8 @@
                         <div class="health-item"><div class="label">Sources</div><div class="value">${health.sources_active ?? '?'} / ${health.sources_total ?? '?'} active</div></div>
                         <div class="health-item"><div class="label">Uptime</div><div class="value">${formatUptime(health.uptime_seconds)}</div></div>
                         <div class="health-item"><div class="label">Last Collection</div><div class="value">${timeAgo(health.last_collection) || '\u2014'}</div></div>
-                        <div class="health-item"><div class="label">Analysis Mode</div><div class="value">${health.llm_available ? `${statusDot('ok')} AI-enhanced` : `${statusDot('idle')} Core mode`}</div></div>
-                        ${!health.llm_available ? `<div class="health-item" style="grid-column:1/-1;"><div class="label">Core Mode</div><div class="value text-xs text-muted" style="font-family:var(--font-sans);">Portfolio tracking, alerts, news collection, and CSV/PDF import are fully active. Add an AI provider key above to enable event classification, analysis notes, digests, and chat.</div></div>` : ''}
+                        <div class="health-item"><div class="label">Analysis Mode</div><div class="value">${health.llm_available ? `${statusDot('ok')} AI` : `${statusDot('idle')} Standard`}</div></div>
+                        ${!health.llm_available ? `<div class="health-item" style="grid-column:1/-1;"><div class="label">Standard Mode</div><div class="value text-xs text-muted" style="font-family:var(--font-sans);">All core features are active. Add an AI provider to unlock smart analysis, insights, and natural language queries.</div></div>` : ''}
                         <div class="health-item"><div class="label">Version</div><div class="value text-mono">${esc(health.version || '\u2014')}</div></div>
                     </div>
                 </div>`;
@@ -1270,7 +1270,7 @@
                 // Open review modal with extracted data
                 openReviewModal(data);
             } catch (e) {
-                showToast('Extraction failed: ' + e.message, 'error');
+                showToast('Could not extract portfolio data. Try a different file format. ' + e.message, 'error');
             }
         });
     };
@@ -1504,7 +1504,7 @@
             refreshTab('alerts');
             // (sidebar removed)
         } catch (e) {
-            showToast('Failed: ' + e.message, 'error');
+            showToast('Could not acknowledge alert: ' + e.message, 'error');
         }
     };
 
@@ -1634,7 +1634,7 @@
             const h = await fetchJSON(API.health).catch(() => null);
             const badgeEl = document.getElementById('cmd-mode-badge');
             if (h) {
-                const mode = h.llm_available ? 'AI-enhanced' : 'Core mode';
+                const mode = h.llm_available ? 'AI' : 'Standard';
                 const tip = h.llm_available ? '' : ' — portfolio queries use core lookups. Add an AI key in Settings for natural language analysis.';
                 if (badgeEl) {
                     badgeEl.style.display = '';
@@ -1728,7 +1728,7 @@
         const metaParts = [];
         if (data.mode) {
             const dot = data.mode === 'ai-enhanced' ? 'green' : 'yellow';
-            const modeLabel = data.mode === 'rule-based' ? 'Core mode' : data.mode;
+            const modeLabel = data.mode === 'rule-based' ? 'Standard' : data.mode;
             metaParts.push(`<span class="cmd-meta-chip"><span class="dot ${dot}"></span>${esc(modeLabel)}</span>`);
         }
         if (data.provider) {
@@ -1984,7 +1984,7 @@
             } else {
                 dot.className = 'status-dot status-stopped';
                 mode.textContent = 'AI disabled';
-                hint.textContent = 'Select a provider above and add an API key to enable AI-enhanced analysis.';
+                hint.textContent = 'Select a provider above and add an API key to enable AI analysis.';
                 if (actions) actions.style.display = 'none';
             }
 
@@ -2180,7 +2180,7 @@
             showToast(enable ? 'Source enabled' : 'Source disabled');
             tabLoaded.settings = false; // invalidate settings source health
         } catch (e) {
-            showToast('Failed: ' + e.message, 'error');
+            showToast('Could not update source: ' + e.message, 'error');
             loadSources(); // revert toggle visually
         }
     };
@@ -2260,7 +2260,7 @@
                 tabLoaded.settings = false;
                 await loadSources();
             } catch (e) {
-                showToast('Failed: ' + e.message, 'error');
+                showToast('Could not save source: ' + e.message, 'error');
             }
         });
     };
@@ -2283,7 +2283,7 @@
                 tabLoaded.settings = false;
                 await loadSources();
             } catch (e) {
-                showToast('Failed: ' + e.message, 'error');
+                showToast('Could not remove source: ' + e.message, 'error');
             }
         });
     };
@@ -2322,7 +2322,7 @@
                 const data = await fetchJSON(API.sources);
                 allSources = data;
             } catch (e) {
-                showToast('Failed: ' + e.message, 'error');
+                showToast('Could not add source: ' + e.message, 'error');
             }
         });
     };
@@ -2438,7 +2438,7 @@
                 <div class="detail-row"><span class="label">Shares</span><span class="value">${formatNum(h.quantity, 0)}</span></div>
                 <div class="detail-row"><span class="label">Avg Cost</span><span class="value">${formatNum(h.avg_cost_basis)}</span></div>
                 <div class="detail-row"><span class="label">Current Price</span><span class="value">${formatNum(h.current_price)}</span></div>
-                <div class="detail-row"><span class="label">Weight</span><span class="value">${h.weight_pct != null ? h.weight_pct.toFixed(1) + '%' : '\u2014'}</span></div>
+                <div class="detail-row"><span class="label">Allocation</span><span class="value">${h.weight_pct != null ? h.weight_pct.toFixed(1) + '%' : '\u2014'}</span></div>
                 <div class="detail-row"><span class="label">Currency</span><span class="value" style="font-family:inherit">${esc(h.currency || 'USD')}</span></div>
             </div>
 

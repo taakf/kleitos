@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/dashboard/css/styles.css?v=32">
+    <link rel="stylesheet" href="/dashboard/css/styles.css?v=33">
 </head>
 <body>
     <!-- Navigation -->
@@ -27,9 +27,9 @@
             </div>
             <div class="nav-tabs" role="tablist" aria-label="Dashboard navigation">
                 <button class="tab-link active" data-tab="portfolio" role="tab" aria-selected="true">Portfolio</button>
-                <button class="tab-link" data-tab="intelligence" role="tab" aria-selected="false">Intelligence <span id="badge-events" class="tab-badge" hidden></span></button>
+                <button class="tab-link" data-tab="intelligence" role="tab" aria-selected="false">Insights <span id="badge-events" class="tab-badge" hidden></span></button>
                 <button class="tab-link" data-tab="alerts" role="tab" aria-selected="false">Alerts <span id="badge-alerts" class="tab-badge" hidden></span></button>
-                <button class="tab-link" data-tab="command" role="tab" aria-selected="false">Command</button>
+                <button class="tab-link" data-tab="command" role="tab" aria-selected="false">Assistant</button>
                 <button class="tab-link" data-tab="settings" role="tab" aria-selected="false">Settings</button>
             </div>
         </div>
@@ -184,8 +184,8 @@
                         <div class="cmd-transcript" id="cmd-transcript">
                             <div class="cmd-welcome" id="cmd-welcome">
                                 <div class="cmd-welcome-mark">A</div>
-                                <h3>Command Center</h3>
-                                <p class="text-sm text-muted" style="max-width:400px;line-height:1.5;">Query your portfolio, review events and risks, or trigger intelligence workflows.</p>
+                                <h3>Axion Assistant</h3>
+                                <p class="text-sm text-muted" style="max-width:400px;line-height:1.5;">Ask about your portfolio, review risks, or run analysis workflows.</p>
                                 <div class="cmd-prompts" id="cmd-prompts">
                                     <button class="cmd-prompt-chip" data-prompt="What matters most in my portfolio today?">What matters most today?</button>
                                     <button class="cmd-prompt-chip" data-prompt="Summarize my top risks">Top risks</button>
@@ -243,7 +243,7 @@
 
                         <!-- Primary AI -->
                         <div class="settings-group" style="flex-direction:column;align-items:flex-start;">
-                            <label for="setting-primary-provider" class="text-sm" style="margin-bottom:0.35rem;">Primary AI</label>
+                            <label for="setting-primary-provider" class="text-sm" style="margin-bottom:0.35rem;">AI Provider</label>
                             <select id="setting-primary-provider" class="select-input" style="width:240px;">
                                 <option value="">None — AI disabled</option>
                                 <option value="anthropic">Anthropic (Claude)</option>
@@ -251,7 +251,7 @@
                                 <option value="google">Google (Gemini)</option>
                             </select>
                             <p class="text-xs text-muted" style="margin-top:0.25rem;">
-                                Enables intelligent analysis, classification, and chat.
+                                Powers smart event analysis, portfolio insights, and natural language queries.
                             </p>
                         </div>
 
@@ -268,7 +268,7 @@
 
                         <!-- Fallback AI -->
                         <div id="fallback-section" class="settings-group" style="flex-direction:column;align-items:flex-start;display:none;">
-                            <label for="setting-backup-provider" class="text-sm" style="margin-bottom:0.35rem;">Fallback AI <span class="text-xs text-muted">(optional)</span></label>
+                            <label for="setting-backup-provider" class="text-sm" style="margin-bottom:0.35rem;">Backup Provider <span class="text-xs text-muted">(optional)</span></label>
                             <select id="setting-backup-provider" class="select-input" style="width:240px;">
                                 <option value="">None</option>
                                 <option value="anthropic">Anthropic (Claude)</option>
@@ -296,7 +296,7 @@
                             <button class="btn btn-primary" id="save-provider-btn" onclick="saveProviderSelection()">Save Provider Selection</button>
                             <span id="provider-save-status" class="text-xs text-muted"></span>
                         </div>
-                        <p class="text-xs text-muted" style="margin-top:0.5rem;padding:0 0.1rem;">Provider selection and API keys are stored in ~/.axion.env. Restart Axion after changes.</p>
+                        <p class="text-xs text-muted" style="margin-top:0.5rem;padding:0 0.1rem;">Provider selection and API keys are saved automatically. Restart Axion after changes.</p>
                         <div id="api-key-actions" class="settings-group" style="display:none;margin-top:0.5rem;">
                             <button class="btn btn-ghost text-xs" onclick="removeApiKey()">Remove all keys and disable AI</button>
                         </div>
@@ -310,7 +310,7 @@
                                 <span class="status-dot status-stopped" id="telegram-dot"></span>
                                 <span class="text-sm" id="telegram-label">Not configured</span>
                             </div>
-                            <span class="text-xs text-muted">Add <code>AXION_TELEGRAM_TOKEN</code> and <code>AXION_TELEGRAM_CHAT_ID</code> to <code>~/.axion.env</code> to enable.</span>
+                            <span class="text-xs text-muted">Add your Telegram bot credentials in the Axion configuration file to receive alerts. See the setup guide for details.</span>
                         </div>
                     </div>
 
@@ -405,7 +405,7 @@
                             <button class="btn btn-primary" onclick="saveSettings()">Save Settings</button>
                             <button class="btn btn-ghost" onclick="resetSettings()">Reset to Defaults</button>
                         </div>
-                        <span class="brand-credit">Axion by 4Labs</span>
+                        <span class="brand-credit">Axion v1.0 by 4Labs</span>
                     </div>
                 </div>
 
@@ -728,6 +728,6 @@
         </div>
     </dialog>
 
-    <script src="/dashboard/js/app.js?v=32"></script>
+    <script src="/dashboard/js/app.js?v=33"></script>
 </body>
 </html>
