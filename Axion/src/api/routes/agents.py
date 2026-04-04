@@ -61,23 +61,43 @@ class AgentRunTriggerResponse(BaseModel):
 # Background task helper
 # ---------------------------------------------------------------------------
 async def _run_agent_in_background(agent_id: str) -> None:
-    """Instantiate and run the appropriate agent."""
+    """Instantiate and run the appropriate agent.
+
+    For portfolio-scoped agents (risk, analysis), iterates all portfolios.
+    For global agents (collection, classification, coverage_qa), runs once.
+    """
     try:
+        # Portfolio-scoped agents: iterate all portfolios
+        if agent_id in ("risk", "analysis"):
+            from src.database.connection import get_db
+            from src.database.models import Portfolio
+            from sqlalchemy import select
+
+            async with get_db() as session:
+                portfolios = (await session.execute(select(Portfolio))).scalars().all()
+                portfolio_ids = [p.id for p in portfolios] if portfolios else ["default"]
+
+            for pid in portfolio_ids:
+                if agent_id == "risk":
+                    from src.agents import RiskAgent
+                    agent = RiskAgent()
+                else:
+                    from src.agents import AnalysisAgent
+                    agent = AnalysisAgent()
+                await agent.run(portfolio_id=pid)
+                logger.info("Agent %s completed for portfolio '%s'", agent_id, pid)
+            return
+
+        # Global agents: run once
         if agent_id == "collection":
             from src.agents import CollectionAgent
             agent = CollectionAgent()
-        elif agent_id == "analysis":
-            from src.agents import AnalysisAgent
-            agent = AnalysisAgent()
         elif agent_id == "classification":
             from src.agents import ClassificationAgent
             agent = ClassificationAgent()
         elif agent_id == "coverage_qa":
             from src.agents import CoverageQAAgent
             agent = CoverageQAAgent()
-        elif agent_id == "risk":
-            from src.agents import RiskAgent
-            agent = RiskAgent()
         elif agent_id == "intake":
             from src.agents import IntakeAgent
             agent = IntakeAgent()
