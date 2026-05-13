@@ -20,16 +20,16 @@ def sample_holdings():
     return [
         {"id": "h1", "ticker": "AAPL", "currency": "USD", "quantity": 100,
          "current_price": 180.0, "market_value": 18000.0, "weight_pct": 6.2,
-         "portfolio_id": "main", "status": "active"},
+         "portfolio_id": "default", "status": "active"},
         {"id": "h2", "ticker": "MSFT", "currency": "USD", "quantity": 50,
          "current_price": 400.0, "market_value": 20000.0, "weight_pct": 6.9,
-         "portfolio_id": "main", "status": "active"},
+         "portfolio_id": "default", "status": "active"},
         {"id": "h3", "ticker": "NESN", "currency": "CHF", "quantity": 200,
          "current_price": 95.0, "market_value": 19000.0, "weight_pct": 6.5,
-         "portfolio_id": "main", "status": "active"},
+         "portfolio_id": "default", "status": "active"},
         {"id": "h4", "ticker": "TSM", "currency": "USD", "quantity": 150,
          "current_price": 120.0, "market_value": 18000.0, "weight_pct": 6.2,
-         "portfolio_id": "main", "status": "active"},
+         "portfolio_id": "default", "status": "active"},
     ]
 
 

@@ -90,7 +90,7 @@ class PortfolioLedger:
     async def upsert_holding(self, data: dict, agent_id: str = "intake") -> tuple[str, str]:
         """Insert or update a holding. Returns (holding_id, action)."""
         ticker = data["ticker"].upper().strip()
-        portfolio_id = data.get("portfolio_id", "main")
+        portfolio_id = data.get("portfolio_id") or "default"
         now = datetime.now(timezone.utc).isoformat()
 
         existing = await self.get_holding_by_ticker(ticker, portfolio_id)
