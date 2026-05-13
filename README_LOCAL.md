@@ -96,14 +96,46 @@ If the backup write fails (disk full, permissions), the launcher refuses to migr
 | Symptom | Fix |
 |---------|-----|
 | `Python 3.11 or newer is required` | Install from <https://www.python.org/downloads/> and re-run. On Windows, tick **Add Python to PATH**. |
-| `Port 7777 is in use` | Either stop the other app, or `AXION_PORT=7778 ./scripts/run_local.sh`. |
+| `Port 7777 is in use` | The launcher names the process (e.g. `node (pid 12345)`). Either stop it, or set a different port: `AXION_PORT=7778 ./scripts/run_local.sh` on macOS/Linux, `$env:AXION_PORT='7778'; PowerShell -ExecutionPolicy Bypass -File scripts\run_local.ps1` on Windows. |
 | Dashboard shows "degraded" | Open <http://127.0.0.1:7777/api/v1/health> for details — usually means the scheduler hasn't completed its first cycle yet (give it a minute). |
 | **"Your Axion data was created by a newer version"** | This build's schema is older than your DB. Update Axion, or restore an older backup from `~/axion-data/backups/`. Your data is unchanged. |
 | **"Axion could not open the database"** | DB file is corrupt or unreadable. Axion does **not** delete or overwrite it. Restore a backup, or move the file aside and relaunch for a fresh DB. |
 | **"Pre-migration backup failed"** | Free disk space or fix folder permissions on `~/axion-data/backups/`, then relaunch. No schema change was applied. |
 | Want a totally fresh start | See [docs/DEMO_RESET.md](docs/DEMO_RESET.md). |
 | Want to verify the install is correct | `python scripts/smoke_local.py` runs 16 end-to-end checks against a temp DB. |
-| Want a programmatic recovery check while the server is up | `curl http://127.0.0.1:7777/api/v1/system/recovery` returns structured JSON about the DB state. |
+| Want a programmatic recovery / diagnostics check while the server is up | `curl http://127.0.0.1:7777/api/v1/system/recovery` (recovery only) or `/api/v1/system/diagnostics` (full structured snapshot, no secrets). |
+| Need to send Axion's state to support | `python scripts/support_bundle.py` — creates a redacted zip at `~/axion-data/support/`. |
+
+## Logs
+
+The launcher writes to `~/axion-data/logs/`:
+
+| File | What's in it |
+|------|---|
+| `axion-launcher.log` | Each launch (timestamp, project root, port, every stage line) |
+| `axion-server.log` | uvicorn stdout/stderr — the actual server log |
+| `axion-migration.log` | Output of `scripts/migrate.py` per launch |
+
+Files grow until they reach 5 MiB, at which point the launcher rotates them (keeping up to 5 historical files per name as `axion-server.log.1`, `.2`, …). Nothing automated deletes log content, only ages it out.
+
+## Support bundle
+
+When something goes wrong, run:
+
+```bash
+python scripts/support_bundle.py
+```
+
+This produces a single zip at `~/axion-data/support/axion-support-<YYYYMMDD-HHMMSS>.zip` that you can attach to a support email. It includes:
+
+- App + platform info (git commit, Python version, OS)
+- Schema version + table counts
+- Source registry counts (no API keys)
+- Last 200 KB of each log file
+- List of backup filenames (not the backup files themselves)
+- Redacted environment + redacted settings
+
+It does **not** include: your database file, any backup `.db` file, the raw `.env`, any API keys, holdings values, or portfolio names. Secrets matching common patterns (Anthropic `sk-ant-*`, OpenAI `sk-*`, Telegram bot tokens, etc.) are also redacted by value, not just by env-var name.
 
 ## What this is NOT
 

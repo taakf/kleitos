@@ -1,18 +1,15 @@
 # =============================================================================
 # Axion by 4Labs — Local Launcher (Windows / PowerShell)
 #
-# One-command "double-click and go" path for Windows end users.
-#
-#   1. Finds Python 3.11+ (python, python3, py -3)
-#   2. Creates .venv if missing
-#   3. Installs requirements.txt
-#   4. Creates the data directory (%USERPROFILE%\axion-data or AXION_DATA_DIR)
-#   5. Runs migrations on the SQLite database
-#   6. Starts uvicorn on 127.0.0.1:${env:AXION_PORT or 7777}
-#   7. Opens the dashboard in the default browser
-#
-# Exits cleanly on port conflicts, missing Python, dep failures.
-# No Docker required. Pure local install.
+# Stages:
+#   1/7  Detect Python 3.11+
+#   2/7  Create/use .venv
+#   3/7  Install/update dependencies
+#   4/7  Prepare the data directory + rotate logs
+#   5/7  Run migrations (scripts\migrate.py owns customer-facing messages)
+#   6/7  Check port 7777 (or AXION_PORT) and show PID/process on conflict
+#   7/7  Start uvicorn on 127.0.0.1:${PORT}, open dashboard, mirror to
+#        axion-server.log
 #
 # To run from PowerShell:
 #   PowerShell -ExecutionPolicy Bypass -File scripts\run_local.ps1
@@ -25,24 +22,18 @@ param()
 
 $ErrorActionPreference = 'Stop'
 
-function Write-Info($msg) { Write-Host "[INFO]  $msg" -ForegroundColor Blue }
-function Write-Ok($msg)   { Write-Host "[OK]    $msg" -ForegroundColor Green }
-function Write-Warn($msg) { Write-Host "[WARN]  $msg" -ForegroundColor Yellow }
-function Write-Fail($msg) { Write-Host "[ERROR] $msg" -ForegroundColor Red }
-
-# Resolve project root (this script lives in scripts\)
+# ── Resolve project root ────────────────────────────────────────────────────
 $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
 Set-Location -LiteralPath $ProjectRoot
 
-# Configuration
+# ── Configuration ───────────────────────────────────────────────────────────
 $Port = if ($env:AXION_PORT) { $env:AXION_PORT }
         elseif ($env:KLEITOS_PORT) { $env:KLEITOS_PORT }
         else { '7777' }
 $VHost = '127.0.0.1'
 $VenvDir = Join-Path $ProjectRoot '.venv'
 
-# Data dir: prefer existing kleitos-data for back-compat, else axion-data
 $DataDir = if ($env:AXION_DATA_DIR) { $env:AXION_DATA_DIR }
            elseif ($env:KLEITOS_DATA_DIR) { $env:KLEITOS_DATA_DIR }
            else {
@@ -56,15 +47,66 @@ $env:AXION_DB_PATH    = Join-Path $DataDir 'db\kleitos.db'
 $env:KLEITOS_DATA_DIR = $DataDir
 $env:KLEITOS_DB_PATH  = Join-Path $DataDir 'db\kleitos.db'
 
+$LogDir       = Join-Path $DataDir 'logs'
+$LauncherLog  = Join-Path $LogDir 'axion-launcher.log'
+$ServerLog    = Join-Path $LogDir 'axion-server.log'
+$MigrateLog   = Join-Path $LogDir 'axion-migration.log'
+New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
+
+# ── Output helpers (console + axion-launcher.log) ───────────────────────────
+function Write-LogLine([string]$msg) {
+    Add-Content -Path $LauncherLog -Value $msg
+}
+function Write-Stage([string]$n, [string]$msg) {
+    Write-Host "[$n]    $msg" -ForegroundColor Blue
+    Write-LogLine "[$n]    $msg"
+}
+function Write-Info([string]$msg) {
+    Write-Host "[INFO]  $msg" -ForegroundColor Blue
+    Write-LogLine "[INFO]  $msg"
+}
+function Write-Ok([string]$msg) {
+    Write-Host "[OK]    $msg" -ForegroundColor Green
+    Write-LogLine "[OK]    $msg"
+}
+function Write-Warn([string]$msg) {
+    Write-Host "[WARN]  $msg" -ForegroundColor Yellow
+    Write-LogLine "[WARN]  $msg"
+}
+function Write-Fail([string]$msg) {
+    Write-Host "[ERROR] $msg" -ForegroundColor Red
+    Write-LogLine "[ERROR] $msg"
+}
+function Write-FailureHint() {
+    Write-Host ""
+    Write-Host "  For diagnostics:" -ForegroundColor DarkGray
+    Write-Host "    $VenvDir\Scripts\python.exe scripts\support_bundle.py" -ForegroundColor DarkGray
+    Write-Host "    (creates a redacted zip at $DataDir\support\)" -ForegroundColor DarkGray
+    Write-Host "  Launcher log: $LauncherLog" -ForegroundColor DarkGray
+}
+
 Write-Host ""
 Write-Host "  Axion by 4Labs - Local Launcher" -ForegroundColor Cyan
 Write-Host ""
 Write-Info "Project root : $ProjectRoot"
 Write-Info "Data dir     : $DataDir"
+Write-Info "Logs         : $LogDir"
 Write-Info "Port         : $Port"
 Write-Host ""
 
-# 1. Find Python 3.11+
+Write-LogLine ""
+Write-LogLine "=== launcher run $(Get-Date -Format 'yyyy-MM-ddTHH:mm:ssZ') ==="
+Write-LogLine "  PROJECT_ROOT=$ProjectRoot"
+Write-LogLine "  DATA_DIR=$DataDir"
+Write-LogLine "  PORT=$Port"
+
+# Pre-rotate logs so growing files don't accumulate forever.
+$preVenvPy = Join-Path $VenvDir 'Scripts\python.exe'
+if (Test-Path $preVenvPy) {
+    try { & $preVenvPy (Join-Path $ProjectRoot 'scripts\rotate_logs.py') $LogDir | Out-Null } catch { }
+}
+
+# 1/7. Find Python 3.11+
 function Find-Python {
     $candidates = @(
         @{ cmd = 'python3.13'; args = @() },
@@ -101,29 +143,30 @@ if ($null -eq $Py) {
     Write-Host ""
     Write-Host "  Install from https://www.python.org/downloads/"
     Write-Host "  IMPORTANT: tick 'Add Python to PATH' during install."
-    Write-Host ""
+    Write-FailureHint
     exit 1
 }
-Write-Ok ("Python $($Py.Version) ($($Py.Cmd) $($Py.Args -join ' '))")
+Write-Stage "1/7" ("Python    : $($Py.Cmd) $($Py.Args -join ' ') ($($Py.Version))")
 
-# 2. Virtual environment
+# 2/7. Virtual environment
 if (-not (Test-Path $VenvDir)) {
-    Write-Info "Creating virtual environment at .venv ..."
+    Write-Info "First run detected - setting up a fresh virtual environment ..."
     $venvArgs = $Py.Args + @('-m', 'venv', $VenvDir)
     & $Py.Cmd @venvArgs
-    if ($LASTEXITCODE -ne 0) { Write-Fail "Failed to create venv."; exit 1 }
-    Write-Ok "Virtual environment created"
+    if ($LASTEXITCODE -ne 0) { Write-Fail "Failed to create venv."; Write-FailureHint; exit 1 }
+    Write-Stage "2/7" "Virtual env: created at .venv"
 } else {
-    Write-Ok "Virtual environment exists"
+    Write-Stage "2/7" "Virtual env: reusing existing .venv"
 }
 
 $VenvPy = Join-Path $VenvDir 'Scripts\python.exe'
 if (-not (Test-Path $VenvPy)) {
     Write-Fail "Virtual environment is broken (missing $VenvPy). Delete .venv and retry."
+    Write-FailureHint
     exit 1
 }
 
-# 3. Dependencies (skip if marker is newer than requirements.txt)
+# 3/7. Dependencies
 $Marker = Join-Path $VenvDir '.deps-installed'
 $ReqFile = Join-Path $ProjectRoot 'requirements.txt'
 $needInstall = $true
@@ -133,66 +176,82 @@ if ((Test-Path $Marker) -and (Test-Path $ReqFile)) {
     }
 }
 if ($needInstall) {
-    Write-Info "Installing dependencies (this can take 1-2 minutes on first run) ..."
+    Write-Info "Installing dependencies (first run can take 1-2 minutes) ..."
     & $VenvPy -m pip install --upgrade pip --quiet
     & $VenvPy -m pip install -r $ReqFile --quiet
     if ($LASTEXITCODE -ne 0) {
         Write-Fail "pip install failed. Check your internet connection."
+        Write-FailureHint
         exit 1
     }
     Set-Content -Path $Marker -Value (Get-Date).ToString('o')
-    Write-Ok "Dependencies installed"
+    Write-Stage "3/7" "Deps      : installed"
 } else {
-    Write-Ok "Dependencies up to date"
+    Write-Stage "3/7" "Deps      : up to date"
 }
 
-# 4. Data directory
+# 4/7. Data directory + log rotation
 New-Item -ItemType Directory -Force -Path (Join-Path $DataDir 'db')      | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $DataDir 'logs')    | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $DataDir 'backups') | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $DataDir 'exports') | Out-Null
-Write-Ok "Data dir ready ($DataDir)"
+New-Item -ItemType Directory -Force -Path (Join-Path $DataDir 'support') | Out-Null
+try { & $VenvPy (Join-Path $ProjectRoot 'scripts\rotate_logs.py') $LogDir | Out-Null } catch { }
+Write-Stage "4/7" "Data dir  : $DataDir"
 
-# 5. Migrations
-# scripts\migrate.py prints clean, customer-facing output and returns a
-# structured exit code so this launcher doesn't have to format messages
-# itself. Exit codes are documented at the top of that script.
+# 5/7. Migrations
 Write-Info "Running migrations ..."
-& $VenvPy (Join-Path $ProjectRoot 'scripts\migrate.py')
-switch ($LASTEXITCODE) {
+$migrateOutput = & $VenvPy (Join-Path $ProjectRoot 'scripts\migrate.py') 2>&1
+$migrateRc = $LASTEXITCODE
+$migrateOutput | ForEach-Object { Write-Host $_ }
+$migrateOutput | ForEach-Object { Add-Content -Path $MigrateLog -Value $_ }
+switch ($migrateRc) {
     0 {
-        Write-Ok "Database is at schema head"
+        Write-Stage "5/7" "Database  : at schema head"
     }
     2 {
         Write-Host ""
         Write-Fail "Cannot start: database is newer than this version of Axion."
         Write-Host "    See the message above for recovery steps."
+        Write-FailureHint
         exit 2
     }
     3 {
         Write-Host ""
         Write-Fail "Cannot start: database is corrupt or unreadable."
         Write-Host "    See the message above for recovery steps."
+        Write-FailureHint
         exit 3
     }
     4 {
         Write-Host ""
         Write-Fail "Cannot start: pre-migration backup failed."
         Write-Host "    See the message above for recovery steps."
+        Write-FailureHint
         exit 4
     }
     default {
         Write-Host ""
         Write-Fail "Migrations failed (see above)."
+        Write-FailureHint
         exit 1
     }
 }
 
-# 6. Port check — if Axion already running, open the dashboard and exit
+# 6/7. Port conflict check + PID/process info on collision
 $portInUse = $false
+$portOwner = $null
 try {
     $tcp = Get-NetTCPConnection -LocalPort ([int]$Port) -State Listen -ErrorAction SilentlyContinue
-    if ($tcp) { $portInUse = $true }
+    if ($tcp) {
+        $portInUse = $true
+        try {
+            $proc = Get-Process -Id ($tcp | Select-Object -First 1).OwningProcess -ErrorAction SilentlyContinue
+            if ($proc) {
+                $portOwner = "$($proc.ProcessName) (pid $($proc.Id))"
+            }
+        } catch { }
+    }
 } catch { }
 
 if ($portInUse) {
@@ -205,31 +264,34 @@ if ($portInUse) {
         }
     } catch { }
     Write-Fail "Port $Port is in use by another application."
+    if ($portOwner) {
+        Write-Host "  Owner   : $portOwner"
+    }
     Write-Host ""
-    Write-Host "  Close the other application, or set AXION_PORT to a different port:"
-    Write-Host "    $env:AXION_PORT='7778'; .\scripts\run_local.ps1"
+    Write-Host "  Options:"
+    Write-Host "    1. Close the other application."
+    Write-Host "    2. Or run Axion on a different port:"
+    Write-Host "         `$env:AXION_PORT='7778'; PowerShell -ExecutionPolicy Bypass -File scripts\run_local.ps1"
     Write-Host ""
+    Write-FailureHint
     exit 2
 }
+Write-Stage "6/7" "Port      : $Port free"
 
-# 7. Start uvicorn in background, wait for health, open browser, then attach
+# 7/7. Start uvicorn (mirror server output to axion-server.log)
 Write-Host ""
 Write-Info "Starting Axion on http://${VHost}:${Port} ..."
 Write-Host ""
-
-# Start uvicorn as a background job so we can monitor health, then surface logs.
-$LogStdout = Join-Path $DataDir 'logs\axion-stdout.log'
-$LogStderr = Join-Path $DataDir 'logs\axion-stderr.log'
 
 $proc = Start-Process -FilePath $VenvPy `
     -ArgumentList @('-m','uvicorn','src.main:app','--host',$VHost,'--port',$Port,'--log-level','info') `
     -WorkingDirectory $ProjectRoot `
     -NoNewWindow `
     -PassThru `
-    -RedirectStandardOutput $LogStdout `
-    -RedirectStandardError $LogStderr
+    -RedirectStandardOutput $ServerLog `
+    -RedirectStandardError $ServerLog
 
-# Wait up to 30s for /api/v1/health
+# Wait up to 30s for health
 $healthy = $false
 for ($i = 0; $i -lt 30; $i++) {
     Start-Sleep -Seconds 1
@@ -238,14 +300,16 @@ for ($i = 0; $i -lt 30; $i++) {
         if ($r.StatusCode -eq 200) { $healthy = $true; break }
     } catch { }
     if ($proc.HasExited) {
-        Write-Fail "uvicorn exited unexpectedly. See $LogStderr"
+        Write-Fail "uvicorn exited unexpectedly. See $ServerLog"
+        Write-FailureHint
         exit 1
     }
 }
 
 if (-not $healthy) {
-    Write-Fail "Axion did not become healthy within 30 seconds. See $LogStderr"
+    Write-Fail "Axion did not become healthy within 30 seconds. See $ServerLog"
     if (-not $proc.HasExited) { try { $proc.Kill() } catch { } }
+    Write-FailureHint
     exit 1
 }
 
@@ -256,11 +320,11 @@ Write-Host "  ============================================" -ForegroundColor Gre
 Write-Host "    Dashboard : http://${VHost}:${Port}" -ForegroundColor White
 Write-Host "    API docs  : http://${VHost}:${Port}/docs"
 Write-Host "    Data      : $DataDir"
-Write-Host "    Logs      : $LogStdout"
+Write-Host "    Logs      : $ServerLog"
+Write-Host "    Support   : $VenvPy scripts\support_bundle.py"
 Write-Host "    Stop      : Ctrl+C in this window, or close the window"
 Write-Host ""
 
 Start-Process "http://${VHost}:${Port}/dashboard/"
 
-# Wait for the uvicorn process — Ctrl+C will propagate.
 Wait-Process -Id $proc.Id

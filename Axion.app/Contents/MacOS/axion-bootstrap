@@ -432,6 +432,11 @@ export KLEITOS_DB_PATH="${DATA_DIR}/db/kleitos.db"
 export PATH="${VENV_DIR}/bin:${PATH}"
 
 # ============================================================================
+# LOG ROTATION (Phase 4 — keep logs bounded across launches)
+# ============================================================================
+"${PYTHON}" "${RUNTIME_DIR}/scripts/rotate_logs.py" "${LOG_DIR}" >/dev/null 2>&1 || true
+
+# ============================================================================
 # PRE-FLIGHT MIGRATIONS (Phase 3 — data safety hardening)
 #
 # Run scripts/migrate.py before uvicorn so any newer-DB / corrupt-DB /

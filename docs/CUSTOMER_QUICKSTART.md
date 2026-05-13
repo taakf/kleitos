@@ -117,6 +117,32 @@ If anything looks off, run the bundled smoke test:
 
 It runs 16 end-to-end checks against a throwaway temp DB (your real data is untouched) and prints PASS / FAIL for each.
 
+## 9. Sending Axion's state to support
+
+If something doesn't work and you'd like to share state with us, run:
+
+```bash
+.venv/bin/python scripts/support_bundle.py        # macOS / Linux
+.venv\Scripts\python.exe scripts\support_bundle.py  # Windows
+```
+
+This writes a redacted zip to `~/axion-data/support/`. Attach that single file — it carries the app version, OS info, schema version, table counts, source health summary, and the last 200 KB of each log file. Secrets are removed by both env-var name and value pattern. The zip never contains your database, backup files, raw `.env`, or holdings.
+
+## 10. Port already in use?
+
+If the launcher reports `Port 7777 is in use by another application`, it also tries to show the process name and PID. Two options:
+
+- **Close the other application** (often a stale Axion from a previous launch).
+- **Run Axion on a different port:**
+  ```bash
+  AXION_PORT=7778 ./scripts/run_local.sh                # macOS / Linux
+  ```
+  ```powershell
+  $env:AXION_PORT='7778'; PowerShell -ExecutionPolicy Bypass -File scripts\run_local.ps1   # Windows
+  ```
+
+The dashboard URL will be `http://127.0.0.1:7778/dashboard/` in that case.
+
 ## Where your data lives
 
 | Item | Location |

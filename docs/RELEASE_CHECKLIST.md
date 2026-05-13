@@ -77,6 +77,19 @@ Run from the project root with the venv active.
   - `/api/v1/system/recovery` returns the correct structured state for ok / version_too_new / corrupt.
   - `scripts/migrate.py` exits 0 / 2 / 3 / 4 according to the documented contract.
 
+- [ ] **Support tooling regressions pass**
+  ```bash
+  python -m pytest -q tests/unit/test_phase4_support_diagnostics.py
+  ```
+  Must report all green. Covers:
+  - `scripts/rotate_logs.py` rotates oversized files and leaves small / unknown files alone.
+  - `scripts/support_bundle.py` produces a zip with the expected metadata + log tails.
+  - Support bundle excludes `.db` files and raw `.env`.
+  - Support bundle redacts Anthropic / OpenAI / Telegram-style secrets by both key name and value pattern.
+  - `/api/v1/system/diagnostics` returns 200 with redacted structured snapshot.
+  - Diagnostics endpoint handles missing DB and corrupt DB without crashing.
+  - First-run welcome card markup carries the `data-first-run="empty"` marker, mentions the offline CSV path, labels AI as optional, points at `sample_portfolio.csv`, and does not promise live prices.
+
 ## D. Fresh-machine simulation
 
 Wipe everything and run as if a customer just downloaded the project.

@@ -1074,14 +1074,16 @@
         const circle = '&#9675;';  // ○
 
         // Capabilities summary — show what's available right now
-        const coreFeatures = 'Full portfolio tracking, automated news monitoring, risk alerts, position management, trade recording, and CSV/PDF import.';
-        const aiFeatures = 'Smart event analysis, portfolio insights, daily intelligence digests, natural language queries, and image extraction.';
+        // Phase 4 rewrites: no promise of live prices, no implication AI is
+        // required, no implication sources are configured for the user.
+        const coreFeatures = 'CSV portfolio import (offline), holdings + exposures, trade history, news collection from public RSS feeds, deterministic risk alerts, daily digests, automatic backup before every upgrade.';
+        const aiFeatures = 'LLM-narrated impact scoring, conversational assistant over your data, AI vision extraction for scanned-PDF imports. Needs an Anthropic, OpenAI, or Google key.';
 
-        return `<div class="welcome-card">
+        return `<div class="welcome-card" data-first-run="empty">
             <div class="welcome-header">
                 <div>
                     <div class="welcome-title">Welcome to Axion</div>
-                    <div class="welcome-subtitle">Portfolio intelligence for institutional investors. Get started in a few steps.</div>
+                    <div class="welcome-subtitle">Local portfolio intelligence. CSV import works offline, AI is optional, sources can be configured later.</div>
                 </div>
             </div>
             <div class="welcome-steps">
@@ -1089,28 +1091,28 @@
                     <span class="step-icon">${sysOk ? check : circle}</span>
                     <div>
                         <div class="step-label">System running</div>
-                        <div class="step-hint">${sysOk ? `${srcCount} news sources active` : 'Starting up\u2026'}</div>
+                        <div class="step-hint">${sysOk ? `${srcCount} source${srcCount === 1 ? '' : 's'} enabled` : 'Starting up\u2026'}</div>
                     </div>
                 </div>
                 <div class="welcome-step">
                     <span class="step-icon">${circle}</span>
                     <div>
-                        <div class="step-label">Upload your portfolio</div>
-                        <div class="step-hint">Upload a CSV, PDF, or image of your portfolio</div>
+                        <div class="step-label">Import your portfolio</div>
+                        <div class="step-hint">CSV is the fastest path. PDF and image upload also work; scanned PDFs need an AI vision provider.</div>
                     </div>
                 </div>
                 <div class="welcome-step ${llmOk ? 'done' : ''}">
                     <span class="step-icon">${llmOk ? check : circle}</span>
                     <div>
-                        <div class="step-label">Connect AI for deeper analysis <span class="text-xs text-muted">(optional)</span></div>
-                        <div class="step-hint">${llmOk ? 'AI analysis active' : 'All core features work out of the box. AI adds deeper insights.'}</div>
+                        <div class="step-label">Connect an AI provider <span class="text-xs text-muted">(optional)</span></div>
+                        <div class="step-hint">${llmOk ? 'AI provider configured and reachable.' : 'All core features work without AI. Add a key in Settings to enable narrative analysis and the Assistant tab.'}</div>
                     </div>
                 </div>
                 <div class="welcome-step ${collected ? 'done' : ''}">
                     <span class="step-icon">${collected ? check : circle}</span>
                     <div>
                         <div class="step-label">First news collection</div>
-                        <div class="step-hint">${collected ? 'Events collected' : 'Runs automatically every 30 minutes'}</div>
+                        <div class="step-hint">${collected ? 'Events collected.' : 'Runs every 30 minutes automatically — nothing to do here.'}</div>
                     </div>
                 </div>
             </div>
@@ -1120,18 +1122,18 @@
                         <div class="capabilities-label"><span class="dot green"></span>Available now</div>
                         <div class="capabilities-text">${coreFeatures}</div>
                     </div>
-                    ${!llmOk ? `<div class="capabilities-group">
-                        <div class="capabilities-label"><span class="dot yellow"></span>With AI provider</div>
+                    <div class="capabilities-group">
+                        <div class="capabilities-label"><span class="dot ${llmOk ? 'green' : 'yellow'}"></span>${llmOk ? 'AI features (active)' : 'With an AI key'}</div>
                         <div class="capabilities-text">${aiFeatures}</div>
-                    </div>` : `<div class="capabilities-group">
-                        <div class="capabilities-label"><span class="dot green"></span>AI features</div>
-                        <div class="capabilities-text">${aiFeatures}</div>
-                    </div>`}
+                    </div>
+                </div>
+                <div class="welcome-note text-xs text-muted">
+                    Want to try it without your real data? A sample CSV ships in <code>sample_portfolio.csv</code> at the project root — open it in Finder / File Explorer and drag onto the Import dialog.
                 </div>
             </div>
             <div class="welcome-actions">
-                <button class="btn btn-primary" onclick="uploadPortfolio()">Upload Portfolio</button>
-                <button class="btn btn-outline" onclick="document.querySelector('[data-tab=settings]').click()">Open Settings</button>
+                <button class="btn btn-primary" onclick="uploadPortfolio()">Import portfolio</button>
+                <button class="btn btn-outline" onclick="document.querySelector('[data-tab=settings]').click()">Configure AI / sources</button>
             </div>
         </div>`;
     }

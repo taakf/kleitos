@@ -67,6 +67,8 @@ COMMON_FILES = [
     "scripts/run_local.sh",
     "scripts/run_local.ps1",
     "scripts/migrate.py",
+    "scripts/rotate_logs.py",
+    "scripts/support_bundle.py",
     "scripts/smoke_local.py",
     "scripts/smoke_server_startup.py",
     "scripts/backup.sh",
@@ -93,11 +95,14 @@ MACOS_DIRS = ["Axion.app"]
 
 # ── Path-level exclusions applied to every file walk ─────────────────────────
 EXCLUDE_DIR_NAMES = {
-    "__pycache__", ".pytest_cache", ".venv", "venv", ".git",
+    "__pycache__", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+    ".venv", "venv", ".git",
     ".vscode", ".idea", ".claude", "node_modules",
     "dist", "build", "release", "Axion-Delivery",
     "Axion-Installers", "Axion",  # stale dupes — never ship
     "kleitos-data", "axion-data",
+    "support",  # runtime support-bundle output; never ship to a fresh customer
+    "test-results",  # Playwright e2e artefacts
 }
 
 EXCLUDE_SUFFIXES = {".pyc", ".pyo", ".db", ".db-wal", ".db-shm", ".log", ".swp"}
@@ -219,6 +224,9 @@ def verify_zip(zip_path: Path) -> bool:
         "axion/config/sources.yaml",
         "axion/requirements.txt",
         "axion/scripts/smoke_local.py",
+        "axion/scripts/migrate.py",
+        "axion/scripts/support_bundle.py",
+        "axion/scripts/rotate_logs.py",
         "axion/README_LOCAL.md",
     ]
     ok = True

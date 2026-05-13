@@ -18,6 +18,16 @@ The source is disabled by default. Planned for V2.
 The `price_history` and `portfolio_snapshots` database tables exist but are not populated automatically.
 Current prices must be set manually (via CSV upload, API, or dashboard). Planned for V2.
 
+**There is no live market price feed.** Holdings rows carry only the `current_price` you imported. The dashboard does **not** call any market data vendor at runtime. Don't ship marketing copy that suggests otherwise.
+
+### macOS `.app` is not code-signed
+`Axion.app` bundles a working launcher but is **not signed or notarised**. macOS Gatekeeper will block first launch with "cannot be opened because Apple cannot check it for malicious software." To clear it once:
+
+1. Right-click `Axion.app` → **Open**.
+2. Click **Open** in the Gatekeeper dialog.
+
+Or, recommended: use `./scripts/run_local.sh` from a terminal — that path avoids Gatekeeper entirely. Signing/notarisation is on the installer roadmap (`docs/RELEASE_CHECKLIST.md`).
+
 ### Event Clustering
 Events are deduplicated (exact hash and near-duplicate detection), but related events are not
 automatically grouped into clusters. The clustering infrastructure exists but is not active.
