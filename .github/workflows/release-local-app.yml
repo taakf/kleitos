@@ -1,0 +1,152 @@
+name: Release Local App Validation
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# Avoid stacking redundant runs on the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ─────────────────────────────────────────────────────────────────────────
+  # macOS — verifies the bash launcher, .app bootstrap, smoke, zip, and a
+  # real uvicorn startup from a temp data dir.
+  # ─────────────────────────────────────────────────────────────────────────
+  macos:
+    name: macOS local launcher validation
+    runs-on: macos-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pytest pytest-asyncio
+
+      - name: Compile sources
+        run: python -m compileall -q src scripts tests
+
+      - name: Run pytest
+        run: python -m pytest -q
+
+      - name: Run in-process smoke (16 checks)
+        env:
+          AXION_LOG_LEVEL: WARNING
+        run: python scripts/smoke_local.py
+
+      - name: Parse-check shell launchers
+        run: |
+          bash -n scripts/run_local.sh
+          bash -n Axion.app/Contents/MacOS/axion-bootstrap
+
+      - name: Build release zips
+        run: python scripts/build_release_zip.py
+
+      - name: Live server startup smoke (real uvicorn)
+        run: python scripts/smoke_server_startup.py
+
+      - name: Smoke from inside extracted macOS zip
+        run: |
+          set -e
+          EXTRACT_DIR="$(mktemp -d)"
+          unzip -q dist/axion-macos.zip -d "$EXTRACT_DIR"
+          cd "$EXTRACT_DIR/axion"
+          # The extracted tree has no .venv; pip-install enough to run the smoke
+          python -m pip install --quiet -r requirements.txt
+          python scripts/smoke_local.py
+
+      - name: Upload release artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: axion-macos-zip
+          path: dist/axion-macos.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Windows — the gate this whole workflow exists to close.
+  # ─────────────────────────────────────────────────────────────────────────
+  windows:
+    name: Windows local launcher validation
+    runs-on: windows-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+          python -m pip install pytest pytest-asyncio
+
+      - name: Parse-check PowerShell launcher
+        run: |
+          $tokens = $null
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile(
+              "$PWD\scripts\run_local.ps1", [ref]$tokens, [ref]$errors) | Out-Null
+          if ($errors -and $errors.Count -gt 0) {
+              $errors | ForEach-Object { Write-Host $_.ToString() }
+              throw "scripts\run_local.ps1 has parse errors"
+          }
+          Write-Host "scripts\run_local.ps1: parse OK"
+
+      - name: Compile sources
+        run: python -m compileall -q src scripts tests
+
+      - name: Run pytest
+        run: python -m pytest -q
+
+      - name: Run in-process smoke (16 checks)
+        env:
+          AXION_LOG_LEVEL: WARNING
+        run: python scripts\smoke_local.py
+
+      - name: Build release zips
+        run: python scripts\build_release_zip.py
+
+      - name: Live server startup smoke (real uvicorn)
+        run: python scripts\smoke_server_startup.py
+
+      - name: Smoke from inside extracted Windows zip
+        run: |
+          $extractDir = New-Item -ItemType Directory -Path (Join-Path $env:RUNNER_TEMP "axion-win-extract") -Force
+          Expand-Archive -Path dist\axion-windows.zip -DestinationPath $extractDir.FullName -Force
+          Push-Location (Join-Path $extractDir.FullName "axion")
+          try {
+              python -m pip install --quiet -r requirements.txt
+              python scripts\smoke_local.py
+              if ($LASTEXITCODE -ne 0) { throw "smoke_local from extracted zip failed" }
+          } finally {
+              Pop-Location
+          }
+
+      - name: Upload release artefacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: axion-windows-zip
+          path: dist/axion-windows.zip
+          if-no-files-found: error
+          retention-days: 7

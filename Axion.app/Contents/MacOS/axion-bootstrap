@@ -6,10 +6,11 @@
 # No terminal, no commands, no setup needed.
 #
 # Runtime architecture:
-#   ~/kleitos-data/           — stable runtime home (always in user home dir)
-#   ~/kleitos-data/app/       — copy of source code (src/, dashboard/, scripts/)
-#   ${VENV_DIR}/     — Python virtual environment
-#   ~/kleitos-data/db/        — SQLite database
+#   ~/axion-data/             — stable runtime home (default; ~/kleitos-data
+#                               is honoured as a back-compat fallback)
+#   ~/axion-data/app/         — copy of source code (src/, dashboard/, scripts/)
+#   ${VENV_DIR}/              — Python virtual environment
+#   ~/axion-data/db/          — SQLite database
 #   ${LOG_DIR}/      — log files
 #   Contents/Resources/       — bundled requirements.txt (always readable)
 # ============================================================================
@@ -41,18 +42,30 @@ elif [[ -f "${HOME}/.profile" ]]; then
 fi
 
 APP_NAME="Axion"
-PORT="${KLEITOS_PORT:-7777}"
+# Port: AXION_PORT preferred, KLEITOS_PORT honoured for back-compat.
+PORT="${AXION_PORT:-${KLEITOS_PORT:-7777}}"
 HEALTH_URL="http://localhost:${PORT}/api/v1/health"
 MAX_WAIT=45
 
 # ============================================================================
 # STABLE RUNTIME PATHS — always in user home dir (no Finder EPERM issues)
+# Default is ~/axion-data; ~/kleitos-data is honoured for back-compat.
+# Matches the resolution in scripts/run_local.sh so both launchers agree.
 # ============================================================================
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 BUNDLE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 BUNDLE_RESOURCES="${BUNDLE_DIR}/Resources"
 
-DATA_DIR="${HOME}/kleitos-data"
+if [[ -n "${AXION_DATA_DIR:-}" ]]; then
+    DATA_DIR="${AXION_DATA_DIR}"
+elif [[ -n "${KLEITOS_DATA_DIR:-}" ]]; then
+    DATA_DIR="${KLEITOS_DATA_DIR}"
+elif [[ -d "${HOME}/kleitos-data" ]] && [[ ! -d "${HOME}/axion-data" ]]; then
+    DATA_DIR="${HOME}/kleitos-data"
+else
+    DATA_DIR="${HOME}/axion-data"
+fi
+
 LOG_DIR="${DATA_DIR}/logs"
 RUNTIME_DIR="${DATA_DIR}/app"
 VENV_DIR="${DATA_DIR}/.venv"
@@ -133,7 +146,7 @@ if curl -s -o /dev/null -w "%{http_code}" "${HEALTH_URL}" 2>/dev/null | grep -q 
 fi
 
 # ============================================================================
-# COPY/REFRESH RUNTIME FILES — from repo or bundle to ~/kleitos-data/app/
+# COPY/REFRESH RUNTIME FILES — from repo or bundle to ${DATA_DIR}/app/
 # ============================================================================
 if [[ -n "$REPO_DIR" && -f "${REPO_DIR}/src/main.py" ]]; then
     # Copy from repo (preferred — gets latest source)
@@ -381,13 +394,17 @@ if [[ ! -f "${PLIST_PATH}" ]]; then
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>${DATA_DIR}/logs/kleitos-stdout.log</string>
+    <string>${DATA_DIR}/logs/axion-stdout.log</string>
     <key>StandardErrorPath</key>
-    <string>${DATA_DIR}/logs/kleitos-stderr.log</string>
+    <string>${DATA_DIR}/logs/axion-stderr.log</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
         <string>${VENV_DIR}/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>AXION_DATA_DIR</key>
+        <string>${DATA_DIR}</string>
+        <key>AXION_DB_PATH</key>
+        <string>${DATA_DIR}/db/kleitos.db</string>
         <key>KLEITOS_DATA_DIR</key>
         <string>${DATA_DIR}</string>
         <key>KLEITOS_DB_PATH</key>
@@ -408,6 +425,8 @@ cd "${RUNTIME_DIR}"
 log "Starting Axion from ${RUNTIME_DIR}..."
 notify "Starting Axion..."
 
+export AXION_DATA_DIR="${DATA_DIR}"
+export AXION_DB_PATH="${DATA_DIR}/db/kleitos.db"
 export KLEITOS_DATA_DIR="${DATA_DIR}"
 export KLEITOS_DB_PATH="${DATA_DIR}/db/kleitos.db"
 export PATH="${VENV_DIR}/bin:${PATH}"
@@ -416,11 +435,11 @@ export PATH="${VENV_DIR}/bin:${PATH}"
 "${PYTHON}" -m uvicorn src.main:app \
     --host 127.0.0.1 \
     --port ${PORT} \
-    >> "${LOG_DIR}/kleitos-stdout.log" \
-    2>> "${LOG_DIR}/kleitos-stderr.log" &
+    >> "${LOG_DIR}/axion-stdout.log" \
+    2>> "${LOG_DIR}/axion-stderr.log" &
 
 SERVER_PID=$!
-echo "${SERVER_PID}" > "${DATA_DIR}/kleitos.pid"
+echo "${SERVER_PID}" > "${DATA_DIR}/axion.pid"
 log "Server started (PID ${SERVER_PID})"
 
 # ============================================================================
@@ -430,7 +449,7 @@ waited=0
 while true; do
     if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
         log "ERROR: Server process died"
-        log "ERROR: Check ${LOG_DIR}/kleitos-stderr.log for details"
+        log "ERROR: Check ${LOG_DIR}/axion-stderr.log for details"
         alert "The server failed to start.\n\nCheck logs at:\n${LOG_DIR}/" "critical"
         exit 1
     fi

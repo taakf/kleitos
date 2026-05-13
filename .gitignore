@@ -17,6 +17,7 @@ build/
 
 # Data (runtime)
 kleitos-data/
+axion-data/
 *.db
 *.db-wal
 *.db-shm
@@ -42,8 +43,12 @@ server_err.txt
 # PyInstaller
 *.spec
 
-# Installer EXE (large binary — rebuild locally)
-Axion-Installers/Windows/Axion/Axion.exe
+# Generated delivery packages — built on demand by scripts/build_release_zip.py.
+# Never commit these — they duplicate the live tree and rot quickly.
+Axion-Delivery/
+Axion-Installers/
+Axion/
+release/
 
 # Test
 .coverage
