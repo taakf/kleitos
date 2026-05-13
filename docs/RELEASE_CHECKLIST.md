@@ -123,107 +123,49 @@ Wipe everything and run as if a customer just downloaded the project.
 - [ ] Each zip **excludes** `.git`, `.venv`, `__pycache__`, `dist`, `~/axion-data`, and any `Axion/` / `Axion-Installers/` duplicates.
 - [ ] Extracting the zip on a clean machine, then running the launcher, reaches a healthy dashboard.
 
-## Windows validation still required
+## Cross-platform validation
 
-The PowerShell launcher (`scripts/run_local.ps1`) was authored on macOS and **not parse-checked against a real Windows PowerShell host** in the release branch. Before tagging a build for Windows customers, run the following on a clean Windows 10 or 11 machine and tick every box.
+Before publishing a release, the GitHub Actions workflow **`Release Local App Validation`** must pass on both runners:
 
-### Pre-conditions
+- `windows-latest`
+- `macos-latest`
 
-- [ ] Fresh Windows 10/11 user account (or `~/.venv`, `~/axion-data\`, `~/.axion.env` deleted).
-- [ ] Python 3.11+ installed from <https://www.python.org/downloads/> with **"Add Python to PATH"** ticked.
-- [ ] Open **PowerShell** in the project directory.
+It runs automatically on every pull request to `main`, and can be triggered manually via the **Actions → Release Local App Validation → Run workflow** button. The workflow definition is at [`.github/workflows/release-local-app.yml`](../.github/workflows/release-local-app.yml).
 
-### 1. Parse-check the script
+What the workflow proves on **each** OS:
 
-```powershell
-$tokens = $null; $errors = $null
-[System.Management.Automation.Language.Parser]::ParseFile(
-    'scripts\run_local.ps1', [ref]$tokens, [ref]$errors
-)
-$errors
-```
+- [ ] Python compilation succeeds (`compileall`)
+- [ ] Test suite passes (`pytest`)
+- [ ] In-process end-to-end smoke passes (`scripts/smoke_local.py` — 16 checks)
+- [ ] Launcher syntax is valid (`bash -n` on macOS, PowerShell AST parse on Windows)
+- [ ] Release zips build and verify (`scripts/build_release_zip.py`)
+- [ ] Real local server startup works (`scripts/smoke_server_startup.py` — boots uvicorn on a temp DB, hits `/api/v1/health` and `/dashboard/`, then shuts down cleanly)
+- [ ] Smoke from inside the extracted release zip passes (proves the zip itself is shippable)
 
-Expected: output is empty (no parse errors).
+If both jobs are green, **the Windows path is fully validated**. There is no separate manual Windows validation step required for release.
 
-### 2. Launch via PowerShell
+### Manual fallback if CI is unavailable
 
-```powershell
-PowerShell -ExecutionPolicy Bypass -File scripts\run_local.ps1
-```
+If for any reason CI cannot run (e.g. the workflow file is broken, GitHub is down, or you need to release urgently from a fork), reproduce the same gates manually:
 
-Expected console output, in order:
-- [ ] `[OK]    Python 3.X (python ...)`
-- [ ] `[INFO]  Creating virtual environment at .venv ...` then `[OK]    Virtual environment created`
-- [ ] `[INFO]  Installing dependencies ...` then `[OK]    Dependencies installed` (1–2 minutes, first run only)
-- [ ] `[OK]    Data dir ready (C:\Users\<user>\axion-data)`
-- [ ] `[INFO]  Running migrations ...` then `migrations: ok` then `[OK]    Database is at schema head`
-- [ ] `[INFO]  Starting Axion on http://127.0.0.1:7777 ...`
-- [ ] Within 30s: `Axion is running.` banner.
-
-The default browser should open `http://127.0.0.1:7777/dashboard/` automatically.
-
-No red `[ERROR]` lines should appear.
-
-### 3. Launch via the `.bat`
-
-```cmd
-Axion.bat
-```
-
-Expected: same flow as the PowerShell path (the `.bat` may fall through to the tray app if `pystray` / `Pillow` are installed, or to uvicorn directly otherwise).
-
-- [ ] No CMD window stays open if the tray app starts.
-- [ ] Dashboard opens.
-
-### 4. Health endpoint
-
-```powershell
-(Invoke-WebRequest http://127.0.0.1:7777/api/v1/health -UseBasicParsing).Content
-```
-
-- [ ] Returns JSON with `"status":"ok"` (or `"degraded"`) and `"database":"connected"`.
-- [ ] Does not 500 or hang.
-
-### 5. CSV import
-
-In the dashboard:
-- [ ] Drag `sample_portfolio.csv` from the project root onto the Holdings tab.
-- [ ] The review screen shows 10 rows.
-- [ ] Clicking Import returns success and shows the imported rows.
-
-### 6. Smoke test
-
-In a second PowerShell window:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\smoke_local.py
-```
-
-Expected: `Result: 16/16 passed, 0 failed`.
-
-### 7. Port conflict path
-
-While Axion is still running, in a new PowerShell:
-
-```powershell
-PowerShell -ExecutionPolicy Bypass -File scripts\run_local.ps1
-```
-
-Expected: a clean `Axion is already running at http://127.0.0.1:7777` line, **not** a stack trace or a long timeout. Dashboard opens.
-
-### 8. Stop cleanly
-
-- [ ] Ctrl+C in the original launcher window returns to the prompt within a few seconds.
-- [ ] No orphan `python.exe` running uvicorn (verify with `Get-Process python | Select-Object Id, ProcessName, MainWindowTitle`).
-
-### 9. Sign-off
-
-- [ ] Tester name: ____________
-- [ ] Windows build: ____________
-- [ ] Python version: ____________
-- [ ] All boxes above are ticked.
-
-Until this section is signed off, **do not ship `axion-windows.zip` to customers as a generally-available release.** It is acceptable to ship as a beta to a Windows tester first.
+1. On a fresh Windows 10/11 machine with Python 3.11+ on PATH:
+   ```powershell
+   python -m pip install -r requirements.txt pytest pytest-asyncio
+   python scripts\smoke_local.py             # expect 16/16
+   python scripts\build_release_zip.py
+   python scripts\smoke_server_startup.py    # expect all checks PASS
+   ```
+2. On a fresh macOS machine with Python 3.11+:
+   ```bash
+   python -m pip install -r requirements.txt pytest pytest-asyncio
+   python scripts/smoke_local.py             # expect 16/16
+   python scripts/build_release_zip.py
+   python scripts/smoke_server_startup.py    # expect all checks PASS
+   ```
+3. Tester sign-off:
+   - [ ] Tester name: ____________
+   - [ ] OS / version: ____________
+   - [ ] Python version: ____________
 
 ---
 
@@ -237,7 +179,7 @@ Until this section is signed off, **do not ship `axion-windows.zip` to customers
 | CSV import (E) | | |
 | Settings/AI (F) | | |
 | Stop/restart (G) | | |
-| Windows validation (above) | | |
+| Cross-platform CI green (`Release Local App Validation` — both `macos-latest` and `windows-latest`) | | |
 
 When every box above is ticked, the build is **customer-ready**.
 
