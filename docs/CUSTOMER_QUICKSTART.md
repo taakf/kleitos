@@ -124,7 +124,23 @@ It runs 16 end-to-end checks against a throwaway temp DB (your real data is unto
 | Database, logs, exports | `~/axion-data/` (or `~/kleitos-data/` on older installs) |
 | API keys and settings | `~/.axion.env` |
 | Source allowlist | `config/sources.yaml` (in the project folder) |
-| Daily backup | `~/axion-data/backups/` |
+| Pre-upgrade safety backups | `~/axion-data/backups/kleitos-pre-v<N>-<timestamp>.db` |
+
+### What happens during an upgrade
+
+When you launch a new build of Axion against an older database, the launcher:
+
+1. Verifies the database is readable and not corrupt.
+2. Creates a consistent backup at `~/axion-data/backups/kleitos-pre-v<N>-<timestamp>.db` (where `<N>` is the new schema version).
+3. Only then applies the migration steps.
+
+If the backup write fails, the launcher refuses to migrate and tells you what to fix. **Your live database is never modified.**
+
+### If you see one of these recovery messages
+
+- **"Your Axion data was created by a newer version of Axion"** — this build's schema is older than your data. Either update Axion, or restore an older backup from `~/axion-data/backups/`. Your data is intact.
+- **"Axion could not open the database"** — the DB file is corrupt or unreadable. Axion does **not** delete or overwrite it. Restore a backup, or move the file aside and relaunch for a fresh DB.
+- **"Pre-migration backup failed"** — free disk space or fix folder permissions on `~/axion-data/backups/`, then relaunch. No schema change was applied.
 
 To start completely fresh, see [DEMO_RESET.md](DEMO_RESET.md).
 

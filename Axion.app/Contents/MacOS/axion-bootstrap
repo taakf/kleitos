@@ -431,6 +431,44 @@ export KLEITOS_DATA_DIR="${DATA_DIR}"
 export KLEITOS_DB_PATH="${DATA_DIR}/db/kleitos.db"
 export PATH="${VENV_DIR}/bin:${PATH}"
 
+# ============================================================================
+# PRE-FLIGHT MIGRATIONS (Phase 3 — data safety hardening)
+#
+# Run scripts/migrate.py before uvicorn so any newer-DB / corrupt-DB /
+# backup-failure condition is surfaced as a clear macOS alert instead of
+# uvicorn dying with a Python traceback in the background.
+# Exit codes documented at the top of scripts/migrate.py.
+# ============================================================================
+"${PYTHON}" "${RUNTIME_DIR}/scripts/migrate.py" \
+    >> "${LOG_DIR}/migrate-stdout.log" \
+    2>> "${LOG_DIR}/migrate-stderr.log"
+MIGRATE_RC=$?
+case "${MIGRATE_RC}" in
+    0)
+        log "Migrations OK (database is at schema head)"
+        ;;
+    2)
+        log "Migration pre-flight: database is newer than this app (rc=${MIGRATE_RC})"
+        alert "Your Axion data was created by a newer version of Axion. Update Axion or restore a backup from ${DATA_DIR}/backups/. Details: ${LOG_DIR}/migrate-stdout.log" "critical"
+        exit 2
+        ;;
+    3)
+        log "Migration pre-flight: database is corrupt or unreadable (rc=${MIGRATE_RC})"
+        alert "Axion could not open the database at ${DATA_DIR}/db/. Your data was NOT modified. Restore a backup from ${DATA_DIR}/backups/. Details: ${LOG_DIR}/migrate-stdout.log" "critical"
+        exit 3
+        ;;
+    4)
+        log "Migration pre-flight: pre-migration backup failed (rc=${MIGRATE_RC})"
+        alert "Axion could not create a safety backup before upgrading the database. No schema changes were applied. Free disk space and retry. Details: ${LOG_DIR}/migrate-stdout.log" "critical"
+        exit 4
+        ;;
+    *)
+        log "Migration pre-flight failed (rc=${MIGRATE_RC})"
+        alert "Axion could not start because the database migration failed. Details: ${LOG_DIR}/migrate-stderr.log" "critical"
+        exit 1
+        ;;
+esac
+
 # Start uvicorn in background
 "${PYTHON}" -m uvicorn src.main:app \
     --host 127.0.0.1 \

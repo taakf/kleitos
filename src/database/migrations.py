@@ -17,7 +17,9 @@ Design principles:
 from __future__ import annotations
 
 import logging
+import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 
 from sqlalchemy import inspect, text
 
@@ -36,6 +38,159 @@ CURRENT_SCHEMA_VERSION = 8
 # ---------------------------------------------------------------------------
 
 _DEFAULT_PORTFOLIO_ID = "default"
+
+
+# ---------------------------------------------------------------------------
+# Typed errors — Phase 3 data-safety hardening
+#
+# The launcher (scripts/migrate.py) catches these and renders a clean
+# customer-facing message; the recovery endpoint (/api/v1/system/recovery)
+# reads them at runtime. The base class is RuntimeError so existing
+# blanket ``except Exception`` blocks still catch them.
+# ---------------------------------------------------------------------------
+
+
+class AxionDatabaseError(RuntimeError):
+    """Base class for typed Axion database/migration errors."""
+
+
+class DatabaseVersionTooNewError(AxionDatabaseError):
+    """Raised when the live DB schema version is newer than the app supports.
+
+    The app must not attempt to downgrade; the user must update Axion or
+    restore a compatible backup. Data is never modified by this code path.
+    """
+
+    def __init__(
+        self,
+        db_version: int,
+        app_version: int,
+        db_path: Path | str,
+        data_dir: Path | str,
+        backup_dir: Path | str,
+    ) -> None:
+        self.db_version = db_version
+        self.app_version = app_version
+        self.db_path = Path(db_path)
+        self.data_dir = Path(data_dir)
+        self.backup_dir = Path(backup_dir)
+        super().__init__(
+            f"Database schema version ({db_version}) is newer than this "
+            f"application supports ({app_version}). "
+            f"Update Axion or restore a compatible backup from {self.backup_dir}. "
+            f"Your data has not been modified."
+        )
+
+
+class DatabaseCorruptError(AxionDatabaseError):
+    """Raised when the SQLite database is unreadable or fails integrity checks.
+
+    The corrupt file is never deleted, overwritten, or modified.
+    """
+
+    def __init__(
+        self,
+        db_path: Path | str,
+        backup_dir: Path | str,
+        original_error: BaseException | None = None,
+    ) -> None:
+        self.db_path = Path(db_path)
+        self.backup_dir = Path(backup_dir)
+        self.original_error = original_error
+        super().__init__(
+            f"Axion could not open the database at {self.db_path}. "
+            f"Your database file has not been modified. "
+            f"Restore a backup from {self.backup_dir} or move the file aside "
+            f"and relaunch Axion to start with a fresh database."
+        )
+
+
+class BackupFailedError(AxionDatabaseError):
+    """Raised when the pre-migration backup step fails.
+
+    When this is raised, **no migration has been applied** — the live DB
+    is byte-identical to its pre-launch state.
+    """
+
+    def __init__(
+        self,
+        db_path: Path | str,
+        backup_path: Path | str,
+        reason: str,
+    ) -> None:
+        self.db_path = Path(db_path)
+        self.backup_path = Path(backup_path)
+        self.reason = reason
+        super().__init__(
+            f"Pre-migration backup of {self.db_path} to {self.backup_path} failed: "
+            f"{reason}. No migration was applied. Free disk space or fix folder "
+            f"permissions on the backups directory and retry."
+        )
+
+
+# ---------------------------------------------------------------------------
+# Read-only helpers used by run_migrations() and the recovery endpoint.
+# They use raw sqlite3 (not SQLAlchemy) so they leave no engine-state behind.
+# ---------------------------------------------------------------------------
+
+
+def _quick_integrity_check(db_path: Path) -> None:
+    """Raise ``sqlite3.DatabaseError`` (or OSError) if the DB is corrupt.
+
+    Opens read-only via URI mode so a failure here cannot mutate the file.
+    """
+    uri = f"file:{db_path}?mode=ro"
+    conn = sqlite3.connect(uri, uri=True)
+    try:
+        row = conn.execute("PRAGMA quick_check").fetchone()
+        if not row or row[0] != "ok":
+            raise sqlite3.DatabaseError(f"PRAGMA quick_check returned: {row!r}")
+    finally:
+        conn.close()
+
+
+def _read_db_version_raw(db_path: Path) -> int | None:
+    """Read the schema version via raw sqlite3 (no SQLAlchemy side effects).
+
+    Returns None if the database has no ``_schema_version`` table yet.
+    Propagates ``sqlite3.DatabaseError`` if the file is corrupt — callers
+    should translate that into ``DatabaseCorruptError``.
+    """
+    conn = sqlite3.connect(str(db_path))
+    try:
+        cur = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='_schema_version'"
+        )
+        if not cur.fetchone():
+            return None
+        row = conn.execute("SELECT version FROM _schema_version WHERE id=1").fetchone()
+        return int(row[0]) if row else None
+    finally:
+        conn.close()
+
+
+def _backup_db(db_path: Path, backup_dir: Path, target_version: int) -> Path:
+    """Create a SQLite-safe pre-migration backup and return the backup path.
+
+    Uses ``sqlite3.Connection.backup()`` so the copy is consistent even if
+    the WAL has uncheckpointed pages. The backup filename pattern matches
+    what docs/DEMO_RESET.md tells the user to look for.
+    """
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    backup_name = f"kleitos-pre-v{target_version}-{timestamp}.db"
+    backup_path = backup_dir / backup_name
+
+    src = sqlite3.connect(str(db_path))
+    try:
+        dst = sqlite3.connect(str(backup_path))
+        try:
+            src.backup(dst)
+        finally:
+            dst.close()
+    finally:
+        src.close()
+    return backup_path
 
 
 def _migrate_v2(sync_conn) -> None:
@@ -535,18 +690,74 @@ async def run_migrations() -> None:
     Ensure the database schema is up to date.
 
     Strategy:
-      1. If the DB is brand new (no tables), run ``create_all`` and stamp
+      1. **Pre-flight (Phase 3):** if a non-empty DB file exists, run a
+         raw quick integrity check, read the schema version with raw
+         sqlite3, refuse newer DBs (typed ``DatabaseVersionTooNewError``),
+         translate sqlite errors to ``DatabaseCorruptError``, and create
+         a timestamped backup if the schema is older than the head
+         version. If the backup fails, raise ``BackupFailedError`` before
+         touching the live schema.
+      2. If the DB is brand new (no tables), run ``create_all`` and stamp
          with the current version.
-      2. If the DB has tables but no version table, this is an existing
+      3. If the DB has tables but no version table, this is an existing
          install from before versioning — baseline it at version 1.
-      3. If the DB version matches the code, do nothing (fast path).
-      4. If the DB version is higher than the code, refuse to start
-         (prevents running old code against a newer schema).
+      4. If the DB version matches the code, do nothing (fast path).
       5. If the DB version is lower, apply incremental migrations.
 
     Always runs ``_ensure_columns`` to handle simple additive schema
     changes that don't need a full migration step.
     """
+    # ── Phase 3 pre-flight: corrupt-DB, newer-DB, pre-migration backup ──
+    from src.config import get_settings as _get_settings  # local import: keep migrations import-light
+
+    _settings = _get_settings()
+    db_path = Path(_settings.database.path)
+    data_dir = Path(_settings.data_dir)
+    backup_dir = data_dir / "backups"
+
+    file_exists_with_content = db_path.exists() and db_path.stat().st_size > 0
+
+    if file_exists_with_content:
+        # Detect corrupt DB before touching SQLAlchemy.
+        try:
+            _quick_integrity_check(db_path)
+        except (sqlite3.DatabaseError, OSError) as exc:
+            raise DatabaseCorruptError(db_path, backup_dir, original_error=exc) from exc
+
+        # Detect newer-than-app DB before SQLAlchemy creates any side effects.
+        try:
+            existing_version = _read_db_version_raw(db_path)
+        except sqlite3.DatabaseError as exc:
+            raise DatabaseCorruptError(db_path, backup_dir, original_error=exc) from exc
+
+        if existing_version is not None and existing_version > CURRENT_SCHEMA_VERSION:
+            raise DatabaseVersionTooNewError(
+                db_version=existing_version,
+                app_version=CURRENT_SCHEMA_VERSION,
+                db_path=db_path,
+                data_dir=data_dir,
+                backup_dir=backup_dir,
+            )
+
+        # Pre-migration backup if any upgrade is going to happen.
+        # ``existing_version is None`` means the legacy "pre-versioned"
+        # install path that gets baselined at v1 — we want a backup of
+        # that too because the v2 migration mutates holdings/alerts/digests.
+        upgrade_needed = (
+            existing_version is None
+            or existing_version < CURRENT_SCHEMA_VERSION
+        )
+        if upgrade_needed:
+            try:
+                backup_path = _backup_db(db_path, backup_dir, CURRENT_SCHEMA_VERSION)
+            except (OSError, sqlite3.Error) as exc:
+                raise BackupFailedError(
+                    db_path=db_path,
+                    backup_path=backup_dir / f"kleitos-pre-v{CURRENT_SCHEMA_VERSION}-*.db",
+                    reason=str(exc),
+                ) from exc
+            logger.info("Created pre-migration backup at %s", backup_path)
+
     engine = get_engine()
 
     async with engine.begin() as conn:
@@ -594,11 +805,17 @@ async def run_migrations() -> None:
             db_version = 1
 
         # --- Version compatibility check ---
+        # The Phase 3 pre-flight at the top of this function catches this
+        # earlier (without opening a SQLAlchemy engine), but we keep the
+        # check here too as defence-in-depth — e.g. if another code path
+        # imports SQLAlchemy first and then calls into here.
         if db_version > CURRENT_SCHEMA_VERSION:
-            raise RuntimeError(
-                f"Database schema version ({db_version}) is newer than this "
-                f"application supports ({CURRENT_SCHEMA_VERSION}). "
-                f"Please upgrade Axion or restore from a compatible backup."
+            raise DatabaseVersionTooNewError(
+                db_version=db_version,
+                app_version=CURRENT_SCHEMA_VERSION,
+                db_path=db_path,
+                data_dir=data_dir,
+                backup_dir=backup_dir,
             )
 
         if db_version == CURRENT_SCHEMA_VERSION:

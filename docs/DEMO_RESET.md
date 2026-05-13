@@ -106,17 +106,40 @@ The smoke test runs 16 end-to-end checks in an isolated temp DB. It should repor
 
 ## 6. Restore from a backup
 
-Axion writes a daily SQLite backup to `~/axion-data/backups/` (timestamped). To roll back:
+There are two kinds of backups in `~/axion-data/backups/`:
 
-1. Stop Axion (Ctrl+C).
-2. Pick the backup you want, e.g. `~/axion-data/backups/kleitos-2026-05-13.db`.
+| Filename pattern | When it's written | What it contains |
+|---|---|---|
+| `kleitos-pre-v<N>-<YYYYMMDD-HHMMSS>.db` | **Automatically**, by the launcher, every time a schema upgrade is about to run. | A consistent snapshot of the live DB at the moment **before** schema v`<N>` was applied. |
+| `kleitos-<YYYY-MM-DD>.db` | Optionally, by `scripts/backup.sh` (e.g. a cron job). | A scheduled snapshot of the live DB. |
+
+To roll back to either kind:
+
+1. Stop Axion (Ctrl+C in the launcher window).
+2. Pick the backup you want, e.g. `~/axion-data/backups/kleitos-pre-v8-20260514-013500.db`.
 3. Replace the live DB:
    ```bash
-   cp ~/axion-data/backups/kleitos-2026-05-13.db ~/axion-data/db/kleitos.db
+   cp ~/axion-data/backups/kleitos-pre-v8-20260514-013500.db ~/axion-data/db/kleitos.db
    ```
 4. Relaunch.
 
-The migration system will leave the schema as-is if it's already at head; otherwise it will upgrade in place.
+The migration system will leave the schema as-is if the backup is already at head; otherwise it will upgrade in place (creating a fresh `kleitos-pre-v…-…` backup of *that* version first).
+
+## 6a. Recovery messages from the launcher
+
+The launcher prints clean, copy-pasteable messages for the three failure modes. None of them modifies your data file.
+
+- **"Your Axion data was created by a newer version of Axion"** (exit code 2) — your DB is at a higher schema version than this build supports. Update Axion or restore an older `kleitos-pre-v<N>-*.db` backup.
+- **"Axion could not open the database"** (exit code 3) — DB file is corrupt or unreadable. Restore a backup, or move the file aside and relaunch for a fresh DB.
+- **"Pre-migration backup failed"** (exit code 4) — disk full or permissions; free space / fix perms, then relaunch.
+
+While the server is running, the same state is available as JSON at:
+
+```bash
+curl http://127.0.0.1:7777/api/v1/system/recovery
+```
+
+Fields: `status`, `issue`, `db_version`, `app_supported_version`, `db_path`, `data_dir`, `backup_dir`, `next_steps`.
 
 ## 7. "I want to give my colleague a clean demo"
 

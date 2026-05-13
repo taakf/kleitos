@@ -31,6 +31,7 @@ from src.api.routes import (
     saved_views,
     settings,
     sources,
+    system,
     ws,
 )
 from src.config import get_settings, PROJECT_ROOT
@@ -262,6 +263,7 @@ app.include_router(operator.router)
 app.include_router(notifications.router)
 app.include_router(action_state.router)
 app.include_router(saved_views.router)
+app.include_router(system.router)
 
 # OpenClaw bridge
 try:

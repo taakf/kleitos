@@ -154,20 +154,39 @@ New-Item -ItemType Directory -Force -Path (Join-Path $DataDir 'exports') | Out-N
 Write-Ok "Data dir ready ($DataDir)"
 
 # 5. Migrations
+# scripts\migrate.py prints clean, customer-facing output and returns a
+# structured exit code so this launcher doesn't have to format messages
+# itself. Exit codes are documented at the top of that script.
 Write-Info "Running migrations ..."
-$migrateScript = @'
-import asyncio, logging
-logging.basicConfig(level=logging.WARNING)
-from src.database.migrations import run_migrations
-asyncio.run(run_migrations())
-print("migrations: ok")
-'@
-& $VenvPy -c $migrateScript
-if ($LASTEXITCODE -ne 0) {
-    Write-Fail "Migrations failed. See above."
-    exit 1
+& $VenvPy (Join-Path $ProjectRoot 'scripts\migrate.py')
+switch ($LASTEXITCODE) {
+    0 {
+        Write-Ok "Database is at schema head"
+    }
+    2 {
+        Write-Host ""
+        Write-Fail "Cannot start: database is newer than this version of Axion."
+        Write-Host "    See the message above for recovery steps."
+        exit 2
+    }
+    3 {
+        Write-Host ""
+        Write-Fail "Cannot start: database is corrupt or unreadable."
+        Write-Host "    See the message above for recovery steps."
+        exit 3
+    }
+    4 {
+        Write-Host ""
+        Write-Fail "Cannot start: pre-migration backup failed."
+        Write-Host "    See the message above for recovery steps."
+        exit 4
+    }
+    default {
+        Write-Host ""
+        Write-Fail "Migrations failed (see above)."
+        exit 1
+    }
 }
-Write-Ok "Database is at schema head"
 
 # 6. Port check — if Axion already running, open the dashboard and exit
 $portInUse = $false

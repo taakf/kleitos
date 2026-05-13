@@ -129,19 +129,40 @@ mkdir -p "$DATA_DIR/db" "$DATA_DIR/logs" "$DATA_DIR/backups" "$DATA_DIR/exports"
 ok "Data dir ready ($DATA_DIR)"
 
 # ── 5. Run migrations ────────────────────────────────────────────────────────
+# scripts/migrate.py prints clean, customer-facing output and returns a
+# structured exit code so this launcher doesn't have to format messages
+# itself. Exit codes are documented at the top of that script.
 info "Running migrations ..."
-if ! "$VENV_PY" -c "
-import asyncio
-import logging
-logging.basicConfig(level=logging.WARNING)
-from src.database.migrations import run_migrations
-asyncio.run(run_migrations())
-print('migrations: ok')
-"; then
-    fail "Migrations failed. See above for details."
-    exit 1
-fi
-ok "Database is at schema head"
+"$VENV_PY" "$PROJECT_ROOT/scripts/migrate.py"
+MIGRATE_RC=$?
+case "$MIGRATE_RC" in
+    0)
+        ok "Database is at schema head"
+        ;;
+    2)
+        echo ""
+        fail "Cannot start: database is newer than this version of Axion."
+        echo "    See the message above for recovery steps."
+        exit 2
+        ;;
+    3)
+        echo ""
+        fail "Cannot start: database is corrupt or unreadable."
+        echo "    See the message above for recovery steps."
+        exit 3
+        ;;
+    4)
+        echo ""
+        fail "Cannot start: pre-migration backup failed."
+        echo "    See the message above for recovery steps."
+        exit 4
+        ;;
+    *)
+        echo ""
+        fail "Migrations failed (see above)."
+        exit 1
+        ;;
+esac
 
 # ── 6. Check port ────────────────────────────────────────────────────────────
 port_in_use() {

@@ -64,6 +64,19 @@ Run from the project root with the venv active.
   ```
   Must report `16/16 passed`.
 
+- [ ] **Database safety regressions pass**
+  ```bash
+  python -m pytest -q tests/unit/test_phase3_migration_safety.py
+  ```
+  Must report all green. Covers:
+  - Pre-migration backup is created on upgrades and skipped on no-ops.
+  - Backup failure stops migration before any schema change.
+  - Newer-DB raises a typed `DatabaseVersionTooNewError` and does not modify the file.
+  - Corrupt DB raises `DatabaseCorruptError` and the file is byte-identical.
+  - v3–v8 migrations are idempotent.
+  - `/api/v1/system/recovery` returns the correct structured state for ok / version_too_new / corrupt.
+  - `scripts/migrate.py` exits 0 / 2 / 3 / 4 according to the documented contract.
+
 ## D. Fresh-machine simulation
 
 Wipe everything and run as if a customer just downloaded the project.

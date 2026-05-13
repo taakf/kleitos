@@ -66,6 +66,7 @@ COMMON_FILES = [
     "ARCHITECTURE.md",
     "scripts/run_local.sh",
     "scripts/run_local.ps1",
+    "scripts/migrate.py",
     "scripts/smoke_local.py",
     "scripts/smoke_server_startup.py",
     "scripts/backup.sh",
