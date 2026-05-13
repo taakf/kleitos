@@ -4,12 +4,14 @@ import time
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_session
 from src.database.models import Source, Event
+from src.intelligence.evaluation import BENCHMARK_VERSION, HARNESS_VERSION
+from src.intelligence.policy import get_active_policy
 
 router = APIRouter(prefix="/api/v1", tags=["health"])
 
@@ -19,6 +21,35 @@ _START_TIME = time.monotonic()
 # ---------------------------------------------------------------------------
 # Response models
 # ---------------------------------------------------------------------------
+class IntelligencePolicyInfo(BaseModel):
+    """Phase 9C: exposed active confidence-policy metadata.
+
+    Tiny safe surface so operators can confirm which thresholds are
+    in force without digging through code.  Numeric-only — no
+    live calibration claim, no evaluation results.
+    """
+
+    name: str
+    version: int
+    classifier_min_confidence: float
+    propagator_min_abs_sensitivity: float
+    macro_factor_link_min: float
+    analysis_min_relevance: float
+
+
+class IntelligenceEvaluationInfo(BaseModel):
+    """Phase 9C: versions of the synthetic benchmark + harness.
+
+    Numbers only — the actual evaluation summary is produced by
+    running the CLI (``python -m src.intelligence.evaluation.run``);
+    we deliberately do NOT run the harness on the hot health path.
+    """
+
+    benchmark_version: str
+    harness_version: str
+    is_synthetic_benchmark: bool = True
+
+
 class HealthStatus(BaseModel):
     """System health snapshot."""
 
@@ -35,6 +66,9 @@ class HealthStatus(BaseModel):
     llm_status: str = "disabled"  # disabled / configured / active
     telegram_enabled: bool = False
     telegram_configured: bool = False
+    # Phase 9C additions — tiny, safe, metadata-only.
+    intelligence_policy: IntelligencePolicyInfo | None = None
+    intelligence_evaluation: IntelligenceEvaluationInfo | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +147,24 @@ async def get_health(
     tg_enabled = tg_settings.enabled
     tg_configured = bool(tg_settings.token and tg_settings.chat_ids)
 
+    # Phase 9C: read the active confidence policy once so health
+    # callers can see which thresholds the runtime is using.  This
+    # is metadata only — it does not run the evaluation harness.
+    policy = get_active_policy()
+    policy_info = IntelligencePolicyInfo(
+        name=policy.name,
+        version=policy.version,
+        classifier_min_confidence=policy.classifier_min_confidence,
+        propagator_min_abs_sensitivity=policy.propagator_min_abs_sensitivity,
+        macro_factor_link_min=policy.macro_factor_link_min,
+        analysis_min_relevance=policy.analysis_min_relevance,
+    )
+    eval_info = IntelligenceEvaluationInfo(
+        benchmark_version=BENCHMARK_VERSION,
+        harness_version=HARNESS_VERSION,
+        is_synthetic_benchmark=True,
+    )
+
     return HealthStatus(
         status="ok" if db_status == "connected" else "degraded",
         database=db_status,
@@ -127,6 +179,8 @@ async def get_health(
         llm_status=llm_status,
         telegram_enabled=tg_enabled,
         telegram_configured=tg_configured,
+        intelligence_policy=policy_info,
+        intelligence_evaluation=eval_info,
     )
 
 

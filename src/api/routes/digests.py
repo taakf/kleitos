@@ -160,20 +160,47 @@ async def latest_digest(
 
 
 async def _generate_digest_in_background(digest_type: str, portfolio_id: str = "default") -> None:
-    """Background task that runs the DigestGenerator for a specific portfolio."""
-    from src.reporting.digests import DigestGenerator
+    """Background task that generates a digest for a specific portfolio.
+
+    Phase 9A consistency fix: this path previously used the legacy
+    ``DigestGenerator`` in ``src/reporting/digests.py``, which did
+    NOT include the deterministic ``macro_factor_touchpoints`` field.
+    That meant manual dashboard / Telegram / API-triggered digests
+    silently lacked Phase 9A factor intelligence, while
+    scheduler-triggered digests (via ``AnalysisAgent.generate_digest``)
+    included it.
+
+    Now unified: every write path — scheduler, OpenClaw bridge, and
+    this API background task — goes through
+    ``AnalysisAgent.generate_digest`` and therefore produces a digest
+    with consistent content including ``macro_factor_touchpoints``.
+    """
+    from src.agents.analysis import AnalysisAgent
+
+    # Map API-level ``digest_type`` onto ``AnalysisAgent``'s ``period``
+    # parameter.  "ad-hoc" and "daily" both use the 1-day window; the
+    # difference is purely in how the row is labelled downstream, and
+    # ``AnalysisAgent`` uses ``period`` as the ``digest_type`` it writes.
+    period_map = {
+        "daily": "daily",
+        "ad-hoc": "daily",
+        "weekly": "weekly",
+        "monthly": "monthly",
+    }
+    if digest_type not in period_map:
+        logger.error(
+            "Unsupported digest type: %r (supported: %s)",
+            digest_type, sorted(period_map),
+        )
+        return
 
     try:
-        generator = DigestGenerator(portfolio_id=portfolio_id)
-        if digest_type == "daily":
-            await generator.generate_daily_digest()
-        elif digest_type == "ad-hoc":
-            await generator.generate_daily_digest()
-        else:
-            raise ValueError(
-                f"Unsupported digest type: {digest_type!r}. "
-                f"Supported types: 'daily', 'ad-hoc'."
-            )
+        agent = AnalysisAgent()
+        await agent.run(
+            digest=True,
+            period=period_map[digest_type],
+            portfolio_id=portfolio_id,
+        )
     except Exception:
         logger.exception("Background digest generation failed (type=%s)", digest_type)
 

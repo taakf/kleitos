@@ -37,6 +37,8 @@ from telegram.ext import (
     filters,
 )
 
+from src.database.connection import get_db
+
 logger = logging.getLogger("axion.telegram")
 
 # ---------------------------------------------------------------------------
@@ -82,6 +84,23 @@ def _get_client() -> httpx.AsyncClient:
     if _client is None or _client.is_closed:
         _client = httpx.AsyncClient(timeout=30.0)
     return _client
+
+
+async def _active_portfolio_id(chat_id: int) -> str:
+    """Resolve the active portfolio id for a Telegram chat.
+
+    Phase 9F: per-chat state lives in the ``telegram_sessions`` table.
+    Fallback is ``'default'`` so pre-9F users keep working with zero
+    configuration.  Never raises.
+    """
+    try:
+        from src.integrations.telegram.grounded import get_active_portfolio_id
+
+        async with get_db() as session:
+            return await get_active_portfolio_id(session, chat_id)
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("Could not resolve active portfolio: %s", exc)
+        return "default"
 
 
 async def _api_get(path: str, params: dict | None = None) -> Any:
@@ -163,6 +182,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "I monitor your portfolio 24/7\\. You can do everything from this chat\\.\n\n"
         "*Portfolio*\n"
         "/portfolio \u2014 Summary & top holdings\n"
+        "/portfolio\\_list \u2014 List portfolios & show active pin\n"
+        "/portfolio\\_select \u2014 Switch this chat's active portfolio\n"
         "/holdings \u2014 Full holdings list\n"
         "/exposure \u2014 Sector/geo/currency breakdown\n"
         "/trades \u2014 Recent trade history\n\n"
@@ -196,20 +217,118 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await cmd_start(update, context)
 
 
+# ---- Portfolio context (Phase 9F) ----
+@auth_required
+async def cmd_portfolio_list(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """List known portfolios and mark which one this chat is pinned to."""
+    await update.message.chat.send_action(ChatAction.TYPING)
+    chat_id = update.effective_chat.id if update.effective_chat else 0
+
+    active = await _active_portfolio_id(chat_id)
+    portfolios: list[dict[str, Any]] = []
+    try:
+        from sqlalchemy import select
+        from src.database.models import Portfolio
+
+        async with get_db() as session:
+            rows = (await session.execute(
+                select(Portfolio).order_by(Portfolio.is_default.desc(), Portfolio.id)
+            )).scalars().all()
+            for p in rows:
+                portfolios.append({
+                    "id": p.id, "name": p.name or p.id,
+                    "is_default": bool(p.is_default),
+                })
+    except Exception as exc:
+        logger.warning("Portfolio list fetch failed: %s", exc)
+
+    if not portfolios:
+        await update.message.reply_text(
+            "No portfolios found.  Active: `default`.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    lines = ["**Portfolios**\n"]
+    for p in portfolios:
+        marker = " \u2b50" if p["id"] == active else ""
+        default_tag = " (default)" if p["is_default"] else ""
+        lines.append(f"  - `{p['id']}` \u2014 {p['name']}{default_tag}{marker}")
+    lines.append(f"\nActive: `{active}`")
+    lines.append("Switch with: `/portfolio_select <id>`")
+
+    await update.message.reply_text(
+        _safe_text("\n".join(lines)), parse_mode=ParseMode.MARKDOWN,
+    )
+
+
+@auth_required
+async def cmd_portfolio_select(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Pin this Telegram chat to a specific portfolio.
+
+    Usage: ``/portfolio_select <id>``.  All subsequent commands
+    (``/portfolio``, ``/holdings``, ``/alerts``, ``/digest``,
+    ``/events``) and free-text chat are scoped to the selected
+    portfolio.  If the id doesn't exist the command is a no-op
+    and we report the error — we never silently redirect.
+    """
+    chat_id = update.effective_chat.id if update.effective_chat else 0
+    args = context.args or []
+    if not args:
+        await update.message.reply_text(
+            "Usage: `/portfolio_select <id>` \u2014 run `/portfolio_list` "
+            "to see available portfolios.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
+        return
+
+    target = args[0].strip()
+    try:
+        from sqlalchemy import select
+
+        from src.database.models import Portfolio
+        from src.integrations.telegram.grounded import set_active_portfolio_id
+
+        async with get_db() as session:
+            row = (await session.execute(
+                select(Portfolio).where(Portfolio.id == target)
+            )).scalars().first()
+            if row is None:
+                await update.message.reply_text(
+                    f"Portfolio `{target}` not found. Use /portfolio_list.",
+                    parse_mode=ParseMode.MARKDOWN,
+                )
+                return
+            await set_active_portfolio_id(session, chat_id, target)
+    except Exception as exc:
+        await update.message.reply_text(f"Portfolio switch failed: {exc}")
+        return
+
+    await update.message.reply_text(
+        f"\u2705 Active portfolio for this chat: `{target}`",
+        parse_mode=ParseMode.MARKDOWN,
+    )
+
+
 # ---- Portfolio ----
 @auth_required
 async def cmd_portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.chat.send_action(ChatAction.TYPING)
 
-    summary = await _api_get("/portfolio/summary")
-    holdings = await _api_get("/portfolio/holdings", {"limit": 10})
+    chat_id = update.effective_chat.id if update.effective_chat else 0
+    pid = await _active_portfolio_id(chat_id)
+
+    summary = await _api_get("/portfolio/summary", {"portfolio_id": pid})
+    holdings = await _api_get(
+        "/portfolio/holdings", {"limit": 10, "portfolio_id": pid},
+    )
 
     if not summary:
         await update.message.reply_text("Could not fetch portfolio data. Is Axion running?")
         return
 
     lines = [
-        "**PORTFOLIO SUMMARY**\n",
+        f"**PORTFOLIO SUMMARY** (`{pid}`)\n",
         f"Total Value: {_fmt_currency(summary.get('total_market_value'))}",
         f"Total P&L: {_fmt_currency(summary.get('total_pnl'))} ({_fmt_pct(summary.get('total_pnl_pct'))})",
         f"Holdings: {summary.get('holding_count', 0)}",
@@ -241,7 +360,12 @@ async def cmd_portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_holdings(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.chat.send_action(ChatAction.TYPING)
 
-    holdings = await _api_get("/portfolio/holdings", {"limit": 50})
+    chat_id = update.effective_chat.id if update.effective_chat else 0
+    pid = await _active_portfolio_id(chat_id)
+
+    holdings = await _api_get(
+        "/portfolio/holdings", {"limit": 50, "portfolio_id": pid},
+    )
     if not holdings:
         await update.message.reply_text("No holdings found. Upload a CSV or use /help to add holdings.")
         return
@@ -333,7 +457,10 @@ async def cmd_trades(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def cmd_alerts(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.chat.send_action(ChatAction.TYPING)
 
-    alerts = await _api_get("/alerts/active")
+    chat_id = update.effective_chat.id if update.effective_chat else 0
+    pid = await _active_portfolio_id(chat_id)
+
+    alerts = await _api_get("/alerts/active", {"portfolio_id": pid})
     alerts_list = alerts if isinstance(alerts, list) else (alerts or {}).get("items", (alerts or {}).get("alerts", []))
 
     if not alerts_list:
@@ -392,55 +519,57 @@ async def cmd_risk(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(_safe_text("\n".join(lines)), parse_mode=ParseMode.MARKDOWN)
 
 
-# ---- Digest ----
+# ---- Digest (Phase 9F: grounded shape) ----
 @auth_required
 async def cmd_digest(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Render the latest grounded digest for the chat's active portfolio.
+
+    Phase 9F: the digest is rendered via
+    :func:`src.integrations.telegram.grounded.format_grounded_digest_message`
+    which reads the Phase 9E grounded digest JSON shape
+    (``headline``, ``portfolio_assessment``, ``risk_flags``,
+    ``holdings_requiring_attention``, ``key_developments``) directly
+    from ``Digest.content``.  No legacy free-form sections path.
+    """
     await update.message.chat.send_action(ChatAction.TYPING)
+
+    chat_id = update.effective_chat.id if update.effective_chat else 0
+    pid = await _active_portfolio_id(chat_id)
 
     args = context.args
     if args and args[0] == "new":
         await update.message.reply_text("Generating fresh digest...")
-        await _api_post("/digests/generate", {"digest_type": "ad-hoc", "scope": "portfolio"})
+        await _api_post(
+            "/digests/generate",
+            {"digest_type": "ad-hoc", "scope": "portfolio", "portfolio_id": pid},
+        )
         await asyncio.sleep(3)
 
-    digest = await _api_get("/digests/latest")
+    digest = await _api_get("/digests/latest", {"portfolio_id": pid})
     if not digest:
-        await update.message.reply_text("No digest available.\n\nUse `/digest new` to generate one.", parse_mode=ParseMode.MARKDOWN)
+        await update.message.reply_text(
+            f"No digest available for portfolio `{pid}`.\n\nUse `/digest new` to generate one.",
+            parse_mode=ParseMode.MARKDOWN,
+        )
         return
 
-    sections = digest.get("sections", [])
-    content_str = digest.get("content") or ""
+    # The API returns a wrapper row whose ``content`` field is the
+    # Phase 9E grounded JSON.  The grounded formatter accepts either
+    # the wrapper dict or the inner JSON string.
+    from src.integrations.telegram.grounded import format_grounded_digest_message
 
-    lines = [
-        f"\U0001F4CA **INTELLIGENCE DIGEST** ({digest.get('digest_type', digest.get('period', 'daily'))})",
-        f"Period: {digest.get('period_start', digest.get('start_date', '?'))} to {digest.get('period_end', digest.get('end_date', '?'))}",
-        "",
-    ]
+    inner = digest.get("content")
+    if isinstance(inner, str):
+        body = inner
+    elif isinstance(inner, dict):
+        body = inner
+    else:
+        body = digest  # last-resort: render whatever we got
 
-    if sections:
-        for s in sections:
-            lines.append(f"**{s.get('title', 'Section')}**")
-            content = s.get("content", "")
-            if isinstance(content, str):
-                try:
-                    parsed = json.loads(content)
-                    if isinstance(parsed, list):
-                        for item in parsed[:5]:
-                            if isinstance(item, dict):
-                                lines.append(f"  \u2022 {item.get('title', item.get('name', str(item)[:80]))}")
-                            else:
-                                lines.append(f"  \u2022 {str(item)[:100]}")
-                    else:
-                        lines.append(str(parsed)[:300])
-                except (json.JSONDecodeError, TypeError):
-                    lines.append(content[:300])
-            else:
-                lines.append(str(content)[:300])
-            lines.append("")
-    elif content_str:
-        lines.append(content_str[:2000])
-
-    await update.message.reply_text(_safe_text("\n".join(lines)), parse_mode=ParseMode.MARKDOWN)
+    message = format_grounded_digest_message(body, portfolio_id=pid)
+    await update.message.reply_text(
+        _safe_text(message), parse_mode=ParseMode.MARKDOWN,
+    )
 
 
 # ---- Events ----
@@ -888,11 +1017,22 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ---------------------------------------------------------------------------
-# Natural Language Handler — powered by Claude
+# Natural Language Handler — Phase 9F grounded chat
 # ---------------------------------------------------------------------------
 @auth_required
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle free-text messages — route to Commander via Claude API."""
+    """Handle free-text messages by routing through the Phase 9E grounded
+    chat layer — the same stack as the dashboard/API ``/chat`` endpoint.
+
+    Phase 9F: the chat is PORTFOLIO-SCOPED via the
+    ``telegram_sessions`` row for this chat.  Cross-portfolio leakage
+    is structurally impossible because ``assemble_chat_context`` joins
+    every downstream read through ``Holding.portfolio_id``.  The LLM
+    system prompt is built by ``build_chat_system_prompt`` so the
+    Phase 9E grounding contract is enforced.  Deterministic fallback
+    (:func:`render_deterministic_chat_answer`) is used whenever the
+    LLM is unavailable or returns an ``[Axion]`` error stub.
+    """
     text = update.message.text
     if not text or not text.strip():
         return
@@ -901,111 +1041,42 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.chat.send_action(ChatAction.TYPING)
     lower = text.lower()
 
-    # Keyword routing for common queries
+    # Lightweight keyword routing for command-style phrases — these
+    # still go through the dedicated cmd_* handlers (which are now
+    # portfolio-scoped via _active_portfolio_id).
     routing = [
-        (["portfolio", "my positions", "what do i hold", "my stocks", "show me my"], cmd_portfolio),
-        (["all holdings", "full list", "every holding"], cmd_holdings),
         (["exposure", "breakdown", "sector exposure", "allocation"], cmd_exposure),
         (["trade history", "my trades", "recent trades"], cmd_trades),
-        (["alert", "warning", "danger", "risk alert"], cmd_alerts),
-        (["digest", "briefing", "morning brief"], cmd_digest),
-        (["news", "event", "what happened", "latest"], cmd_events),
-        (["health", "system status", "is it running", "uptime"], cmd_status),
         (["audit", "audit trail", "log", "who changed"], cmd_audit),
         (["report", "export", "download", "csv", "send me"], cmd_report),
     ]
-
     for keywords, handler in routing:
         if any(w in lower for w in keywords):
             await handler(update, context)
             return
 
-    # Gather full context for Claude
-    summary = await _api_get("/portfolio/summary")
-    holdings = await _api_get("/portfolio/holdings", {"limit": 20})
-    alerts = await _api_get("/alerts/active")
-    recent_events = await _api_get("/events/recent", {"limit": 5})
-
-    h_list = holdings if isinstance(holdings, list) else []
-    a_list = alerts if isinstance(alerts, list) else (alerts or {}).get("items", [])
-    e_list = recent_events if isinstance(recent_events, list) else (recent_events or {}).get("items", [])
-
-    context_parts = []
-
-    if summary:
-        context_parts.append(
-            f"Portfolio: {summary.get('holding_count', 0)} holdings, "
-            f"value {_fmt_currency(summary.get('total_market_value'))}, "
-            f"P&L {_fmt_currency(summary.get('total_pnl'))} ({_fmt_pct(summary.get('total_pnl_pct'))}), "
-            f"{summary.get('sector_count', 0)} sectors, {summary.get('currency_count', 0)} currencies."
-        )
-
-    if h_list:
-        top = ", ".join(
-            f"{h.get('ticker', '?')} ({h.get('weight_pct', 0):.1f}%, {_fmt_currency(h.get('market_value'))})"
-            for h in h_list[:10]
-        )
-        context_parts.append(f"Top holdings: {top}")
-
-    if a_list:
-        alert_summary = "; ".join(
-            f"[{a.get('severity', '?')}] {a.get('title', '?')}" for a in a_list[:5]
-        )
-        context_parts.append(f"Active alerts ({len(a_list)}): {alert_summary}")
-    else:
-        context_parts.append("No active alerts.")
-
-    if e_list:
-        events_summary = "; ".join(e.get("title", "?")[:60] for e in e_list[:5])
-        context_parts.append(f"Recent events: {events_summary}")
-
-    context_block = "\n".join(context_parts)
-
-    # Try Claude for conversational response
+    # Everything else goes through the grounded chat layer.
+    chat_id = update.effective_chat.id if update.effective_chat else 0
     try:
-        import anthropic
-        from src.config import get_settings
-        settings = get_settings()
-        api_key = settings.anthropic_api_key.get_secret_value()
+        from src.integrations.telegram.grounded import render_grounded_telegram_reply
 
-        if api_key and api_key.startswith("sk-ant-"):
-            client = anthropic.AsyncAnthropic(api_key=api_key)
-            response = await client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=1024,
-                system=(
-                    "You are Axion, a portfolio intelligence assistant for a hedge fund manager. "
-                    "You have access to the following real-time portfolio data:\n\n"
-                    f"{context_block}\n\n"
-                    "Rules:\n"
-                    "- Be concise, professional, and factual\n"
-                    "- Never recommend buying or selling securities\n"
-                    "- Use the data above to answer questions accurately\n"
-                    "- If asked about something not in the data, say you don't have that information\n"
-                    "- Format with bullet points and bold for readability\n"
-                    "- Suggest relevant commands when helpful (e.g., /risk, /events, /report)\n"
-                    "- Keep responses under 400 words"
-                ),
-                messages=[{"role": "user", "content": text}],
+        async with get_db() as session:
+            answer, mode, portfolio_id = await render_grounded_telegram_reply(
+                session, chat_id=chat_id, query=text,
             )
-            reply = response.content[0].text
-            await update.message.reply_text(_safe_text(reply))
-            return
-    except ImportError:
-        pass
-    except Exception as e:
-        logger.warning("LLM response failed: %s", e)
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning("Grounded chat path failed: %s", exc)
+        await update.message.reply_text(
+            "I couldn't reach the intelligence engine right now.  "
+            "Try /portfolio, /alerts, or /digest in the meantime."
+        )
+        return
 
-    # Fallback
+    # Prefix with a tiny context hint so the user always knows which
+    # portfolio this chat is scoped to.
+    prefix = f"_[portfolio=`{portfolio_id}` \u00b7 {mode}]_\n"
     await update.message.reply_text(
-        "I understood your message but need Claude API access for conversational responses.\n\n"
-        "Try these commands:\n"
-        "/portfolio - Portfolio overview\n"
-        "/exposure - Exposure breakdown\n"
-        "/alerts - Active alerts\n"
-        "/events - Recent events\n"
-        "/report - Download reports\n"
-        "/help - All commands"
+        _safe_text(prefix + answer), parse_mode=ParseMode.MARKDOWN,
     )
 
 
@@ -1070,6 +1141,8 @@ async def start_bot(token: str, chat_ids: list[int] | None = None) -> Applicatio
         ("start", cmd_start),
         ("help", cmd_help),
         ("portfolio", cmd_portfolio),
+        ("portfolio_list", cmd_portfolio_list),
+        ("portfolio_select", cmd_portfolio_select),
         ("holdings", cmd_holdings),
         ("exposure", cmd_exposure),
         ("trades", cmd_trades),
@@ -1098,6 +1171,8 @@ async def start_bot(token: str, chat_ids: list[int] | None = None) -> Applicatio
     # Set bot commands for Telegram menu
     await _bot_app.bot.set_my_commands([
         BotCommand("portfolio", "Portfolio summary & top holdings"),
+        BotCommand("portfolio_list", "List portfolios & show active pin"),
+        BotCommand("portfolio_select", "Switch this chat's active portfolio"),
         BotCommand("holdings", "Full holdings list"),
         BotCommand("exposure", "Sector/geo/currency breakdown"),
         BotCommand("trades", "Recent trade history"),

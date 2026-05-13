@@ -29,7 +29,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Current schema version — increment this when adding a new migration step.
 # ---------------------------------------------------------------------------
-CURRENT_SCHEMA_VERSION = 2
+CURRENT_SCHEMA_VERSION = 8
 
 # ---------------------------------------------------------------------------
 # Migration steps
@@ -124,12 +124,325 @@ def _migrate_v2(sync_conn) -> None:
             logger.info("Added portfolio_id to digests")
 
 
+def _migrate_v3(sync_conn) -> None:
+    """V3: Deterministic macro factor reasoning (Phase 9A).
+
+    1. Add ``channel`` and ``details_json`` nullable columns to
+       ``event_links`` so factor-driven links can carry a factor key
+       and a structured causal chain without repurposing
+       ``link_target`` (which runtime consumers treat as a holding
+       UUID).
+    2. Create ``holding_factor_sensitivities`` (per-holding factor
+       weights) if missing.
+    3. Create ``macro_factor_events`` (one row per classified
+       event-factor pair) if missing.
+
+    All operations are additive and idempotent. This migration never
+    touches existing event_link rows or direct matching behavior.
+    """
+    inspector = inspect(sync_conn)
+    existing_tables = set(inspector.get_table_names())
+
+    # 1. Add event_links.channel and event_links.details_json if missing
+    if "event_links" in existing_tables:
+        el_cols = {c["name"] for c in inspector.get_columns("event_links")}
+        if "channel" not in el_cols:
+            sync_conn.execute(text(
+                "ALTER TABLE event_links ADD COLUMN channel TEXT"
+            ))
+            logger.info("Added event_links.channel column")
+        if "details_json" not in el_cols:
+            sync_conn.execute(text(
+                "ALTER TABLE event_links ADD COLUMN details_json TEXT"
+            ))
+            logger.info("Added event_links.details_json column")
+
+    # 2. Create holding_factor_sensitivities table if missing
+    if "holding_factor_sensitivities" not in existing_tables:
+        sync_conn.execute(text("""
+            CREATE TABLE holding_factor_sensitivities (
+                id TEXT PRIMARY KEY,
+                holding_id TEXT NOT NULL,
+                factor TEXT NOT NULL,
+                sensitivity REAL NOT NULL,
+                source TEXT NOT NULL DEFAULT 'default',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (holding_id) REFERENCES holdings(id),
+                CONSTRAINT uq_holding_factor_sensitivities_holding_factor
+                    UNIQUE (holding_id, factor)
+            )
+        """))
+        sync_conn.execute(text(
+            "CREATE INDEX ix_holding_factor_sensitivities_holding_id "
+            "ON holding_factor_sensitivities (holding_id)"
+        ))
+        sync_conn.execute(text(
+            "CREATE INDEX ix_holding_factor_sensitivities_factor "
+            "ON holding_factor_sensitivities (factor)"
+        ))
+        logger.info("Created holding_factor_sensitivities table")
+
+    # 3. Create macro_factor_events table if missing
+    if "macro_factor_events" not in existing_tables:
+        sync_conn.execute(text("""
+            CREATE TABLE macro_factor_events (
+                id TEXT PRIMARY KEY,
+                event_id TEXT NOT NULL,
+                factor TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                magnitude TEXT NOT NULL DEFAULT 'unknown',
+                confidence REAL NOT NULL,
+                rationale TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (event_id) REFERENCES events(id),
+                CONSTRAINT uq_macro_factor_events_event_factor
+                    UNIQUE (event_id, factor)
+            )
+        """))
+        sync_conn.execute(text(
+            "CREATE INDEX ix_macro_factor_events_event_id "
+            "ON macro_factor_events (event_id)"
+        ))
+        sync_conn.execute(text(
+            "CREATE INDEX ix_macro_factor_events_factor "
+            "ON macro_factor_events (factor)"
+        ))
+        logger.info("Created macro_factor_events table")
+
+
+def _migrate_v4(sync_conn) -> None:
+    """V4: Deterministic relationship graph (Phase 9D).
+
+    1. Create ``holding_relationships`` table if missing.  Rows are
+       anchored to ``holding_id`` so portfolio correctness flows
+       naturally through the FK — there is no separate portfolio
+       column and no risk of cross-portfolio leakage.
+    2. Add supporting indexes on the join keys used by the runtime
+       matcher: holding_id (for bulk load), related_ticker (for
+       ticker hit lookups), related_entity_key, and relationship_type.
+
+    All operations are additive and idempotent.  Nothing existing is
+    touched; direct matching, factor links, and chain data continue
+    to work unchanged.
+    """
+    inspector = inspect(sync_conn)
+    existing_tables = set(inspector.get_table_names())
+
+    if "holding_relationships" not in existing_tables:
+        sync_conn.execute(text("""
+            CREATE TABLE holding_relationships (
+                id TEXT PRIMARY KEY,
+                holding_id TEXT NOT NULL,
+                relationship_type TEXT NOT NULL,
+                related_ticker TEXT,
+                related_entity_key TEXT,
+                related_name TEXT,
+                strength REAL NOT NULL DEFAULT 0.5,
+                source TEXT NOT NULL DEFAULT 'seed',
+                description TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (holding_id) REFERENCES holdings(id),
+                CONSTRAINT uq_holding_relationships_unique_edge
+                    UNIQUE (holding_id, relationship_type, related_ticker, related_entity_key)
+            )
+        """))
+        sync_conn.execute(text(
+            "CREATE INDEX ix_holding_relationships_holding_id "
+            "ON holding_relationships (holding_id)"
+        ))
+        sync_conn.execute(text(
+            "CREATE INDEX ix_holding_relationships_related_ticker "
+            "ON holding_relationships (related_ticker)"
+        ))
+        sync_conn.execute(text(
+            "CREATE INDEX ix_holding_relationships_related_entity_key "
+            "ON holding_relationships (related_entity_key)"
+        ))
+        sync_conn.execute(text(
+            "CREATE INDEX ix_holding_relationships_type "
+            "ON holding_relationships (relationship_type)"
+        ))
+        logger.info("Created holding_relationships table (Phase 9D)")
+
+
+def _migrate_v5(sync_conn) -> None:
+    """V5: Telegram session + delivery bookkeeping (Phase 9F).
+
+    1. Create ``telegram_sessions`` (per-chat active portfolio pin).
+    2. Create ``telegram_deliveries`` (per-chat per-alert audit trail
+       with dedupe + cooldown bookkeeping).
+
+    Both tables are additive.  A fresh install gets them via
+    ``create_all`` on the model metadata; this migration step only
+    runs when we're upgrading a pre-9F database in place.
+    """
+    inspector = inspect(sync_conn)
+    existing_tables = set(inspector.get_table_names())
+
+    if "telegram_sessions" not in existing_tables:
+        sync_conn.execute(text("""
+            CREATE TABLE telegram_sessions (
+                chat_id INTEGER PRIMARY KEY,
+                active_portfolio_id TEXT NOT NULL DEFAULT 'default',
+                updated_at TEXT NOT NULL
+            )
+        """))
+        logger.info("Created telegram_sessions table (Phase 9F)")
+
+    if "telegram_deliveries" not in existing_tables:
+        sync_conn.execute(text("""
+            CREATE TABLE telegram_deliveries (
+                id TEXT PRIMARY KEY,
+                chat_id INTEGER NOT NULL,
+                alert_id TEXT NOT NULL,
+                portfolio_id TEXT,
+                dedup_key TEXT,
+                status TEXT NOT NULL,
+                error TEXT,
+                sent_at TEXT NOT NULL,
+                CONSTRAINT uq_telegram_deliveries_chat_alert
+                    UNIQUE (chat_id, alert_id)
+            )
+        """))
+        sync_conn.execute(text(
+            "CREATE INDEX ix_telegram_deliveries_alert_id "
+            "ON telegram_deliveries (alert_id)"
+        ))
+        sync_conn.execute(text(
+            "CREATE INDEX ix_telegram_deliveries_dedup_key "
+            "ON telegram_deliveries (dedup_key)"
+        ))
+        sync_conn.execute(text(
+            "CREATE INDEX ix_telegram_deliveries_sent_at "
+            "ON telegram_deliveries (sent_at)"
+        ))
+        logger.info("Created telegram_deliveries table (Phase 9F)")
+
+
+def _migrate_v6(sync_conn) -> None:
+    """V6: Phase 9P notification inbox read state.
+
+    1. Create ``notification_reads`` table if missing.  Tracks the
+       operator's per-portfolio read state for inbox items composed
+       from existing alert / digest / operator / recommendation rows.
+
+    All operations are additive and idempotent.  No existing tables
+    are touched.
+    """
+    inspector = inspect(sync_conn)
+    existing_tables = set(inspector.get_table_names())
+
+    if "notification_reads" not in existing_tables:
+        sync_conn.execute(text("""
+            CREATE TABLE notification_reads (
+                id TEXT PRIMARY KEY,
+                portfolio_id TEXT NOT NULL,
+                notification_key TEXT NOT NULL,
+                source_type TEXT NOT NULL,
+                source_id TEXT NOT NULL,
+                read_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                CONSTRAINT uq_notification_reads_portfolio_key
+                    UNIQUE (portfolio_id, notification_key)
+            )
+        """))
+        sync_conn.execute(text(
+            "CREATE INDEX ix_notification_reads_portfolio_id "
+            "ON notification_reads (portfolio_id)"
+        ))
+        sync_conn.execute(text(
+            "CREATE INDEX ix_notification_reads_source_type "
+            "ON notification_reads (source_type)"
+        ))
+        sync_conn.execute(text(
+            "CREATE INDEX ix_notification_reads_read_at "
+            "ON notification_reads (read_at)"
+        ))
+        logger.info("Created notification_reads table (Phase 9P)")
+
+
+def _migrate_v7(sync_conn) -> None:
+    """V7: Phase 9T recommended action dismiss/read state.
+
+    1. Create ``action_states`` table if missing.  Tracks per-portfolio
+       lifecycle state (read / dismissed) and a fingerprint for the
+       reappearance rule.
+
+    All operations are additive and idempotent.
+    """
+    inspector = inspect(sync_conn)
+    existing_tables = set(inspector.get_table_names())
+
+    if "action_states" not in existing_tables:
+        sync_conn.execute(text("""
+            CREATE TABLE action_states (
+                id TEXT PRIMARY KEY,
+                portfolio_id TEXT NOT NULL,
+                action_key TEXT NOT NULL,
+                state TEXT NOT NULL,
+                fingerprint TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                CONSTRAINT uq_action_states_portfolio_key
+                    UNIQUE (portfolio_id, action_key)
+            )
+        """))
+        sync_conn.execute(text(
+            "CREATE INDEX ix_action_states_portfolio_id "
+            "ON action_states (portfolio_id)"
+        ))
+        sync_conn.execute(text(
+            "CREATE INDEX ix_action_states_state "
+            "ON action_states (state)"
+        ))
+        logger.info("Created action_states table (Phase 9T)")
+
+
+def _migrate_v8(sync_conn) -> None:
+    """V8: Phase 9U saved analytical views.
+
+    1. Create ``saved_views`` table if missing.
+
+    All operations are additive and idempotent.
+    """
+    inspector = inspect(sync_conn)
+    existing_tables = set(inspector.get_table_names())
+
+    if "saved_views" not in existing_tables:
+        sync_conn.execute(text("""
+            CREATE TABLE saved_views (
+                id TEXT PRIMARY KEY,
+                portfolio_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                surface TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                CONSTRAINT uq_saved_views_portfolio_name
+                    UNIQUE (portfolio_id, name)
+            )
+        """))
+        sync_conn.execute(text(
+            "CREATE INDEX ix_saved_views_portfolio_id "
+            "ON saved_views (portfolio_id)"
+        ))
+        logger.info("Created saved_views table (Phase 9U)")
+
+
 # ---------------------------------------------------------------------------
 # Migration registry
 # ---------------------------------------------------------------------------
 _MIGRATIONS: list[tuple[int, str, callable]] = [
     # Version 1 is implicit (create_all baseline).
     (2, "add multi-portfolio support", _migrate_v2),
+    (3, "add deterministic macro factor reasoning (Phase 9A)", _migrate_v3),
+    (4, "add deterministic relationship graph (Phase 9D)", _migrate_v4),
+    (5, "add telegram session + delivery bookkeeping (Phase 9F)", _migrate_v5),
+    (6, "add notification inbox read state (Phase 9P)", _migrate_v6),
+    (7, "add recommended action dismiss/read state (Phase 9T)", _migrate_v7),
+    (8, "add saved analytical views (Phase 9U)", _migrate_v8),
 ]
 
 

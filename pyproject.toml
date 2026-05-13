@@ -42,3 +42,39 @@ line-length = 100
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+# Phase 9J: the e2e suite spins up a live uvicorn server + headless
+# Chromium.  It conflicts with the async fixture lifecycle of the
+# unit/integration suite (each group wants its own event loop), so
+# we exclude tests/e2e from the default ``pytest`` invocation and
+# expose it via an explicit opt-in:
+#
+#     pytest tests/e2e --browser chromium
+#
+# The full regression path becomes:
+#
+#     pytest tests/ --ignore=tests/e2e    # fast, no browser
+#     pytest tests/e2e --browser chromium # real-browser validation
+#
+# CI should run both; local developers usually only run the first.
+norecursedirs = ["tests/e2e", ".venv", "__pycache__"]
+markers = [
+    "e2e: real-browser end-to-end tests (run via tests/e2e explicitly)",
+]
+
+# Phase 9K: the E2E runner uses these pytest-playwright flags by default
+# so every failed browser test produces a screenshot, a video recording,
+# and a full Playwright trace in test-results/e2e/<slug>/.  Explicit CLI
+# flags still win because pytest's argparse layer lets the command line
+# override addopts.  The options are registered globally by
+# pytest-playwright (which is in the dev extras), so addopts is safe
+# even when the E2E suite is not being collected.
+#
+# Open a saved trace with:
+#     .venv/bin/python -m playwright show-trace \
+#         test-results/e2e/<slug>/trace.zip
+addopts = [
+    "--screenshot=only-on-failure",
+    "--video=retain-on-failure",
+    "--tracing=retain-on-failure",
+    "--output=test-results/e2e",
+]

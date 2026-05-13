@@ -35,7 +35,35 @@
         importReviewed: '/api/v1/portfolio/import-reviewed',
         events:       '/api/v1/events',
         eventsRecent: '/api/v1/events/recent',
+        eventById:    (id) => `/api/v1/events/${id}`,
         analysisNotes:'/api/v1/analysis/notes',
+        intelligenceSummary: '/api/v1/intelligence/summary',
+        // Phase 9I — Operator control surface (read + write)
+        opFactorSensitivities:   '/api/v1/operator/factor-sensitivities',
+        opFactorOverrides:       '/api/v1/operator/factor-sensitivities/overrides',
+        opFactorOverrideById:    (id) => `/api/v1/operator/factor-sensitivities/overrides/${id}`,
+        opRelationships:         '/api/v1/operator/relationships',
+        opRelationshipById:      (id) => `/api/v1/operator/relationships/${id}`,
+        opRelationshipsReconcile:'/api/v1/operator/relationships/reconcile',
+        opBackfill:              '/api/v1/operator/backfill',
+        opFactorTaxonomy:        '/api/v1/operator/taxonomy/factors',
+        // Phase 9L — live action status + audit readback
+        opActionsStatus:         '/api/v1/operator/actions/status',
+        auditEntries:            '/api/v1/audit',
+        // Phase 9O — compact recent operator actions + ref categories
+        auditRecent:             '/api/v1/audit/recent',
+        auditCategories:         '/api/v1/audit/categories',
+        // Phase 9P — Notification Center / inbox
+        notificationsInbox:      '/api/v1/notifications',
+        notificationsMarkRead:   '/api/v1/notifications/mark-read',
+        notificationsMarkAllRead:'/api/v1/notifications/mark-all-read',
+        // Phase 9U — saved views
+        savedViews:              '/api/v1/views',
+        // Phase 9T — action lifecycle state
+        actionsEffective:        '/api/v1/actions/effective',
+        actionsSetState:         '/api/v1/actions/set-state',
+        actionsReadAll:          '/api/v1/actions/read-all',
+        actionsClearState:       '/api/v1/actions/clear-state',
     };
 
     // ================================================================
@@ -131,11 +159,122 @@
         return d.innerHTML;
     }
 
+    //: Phase 9Q — proper HTML-attribute escaper.  ``esc()`` above
+    //: uses ``textContent → innerHTML`` which encodes ``<``, ``>``
+    //: and ``&`` but leaves ``"`` and ``'`` alone.  That's fine for
+    //: element content but BREAKS when the escaped string is used
+    //: inside a ``"..."`` attribute value (the first embedded quote
+    //: closes the attribute early).  This helper explicitly encodes
+    //: both quote characters so ``data-nav-target="${escAttr(json)}"``
+    //: round-trips intact through ``getAttribute`` + ``JSON.parse``.
+    function escAttr(str) {
+        if (str == null) return '';
+        return String(str)
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    // ================================================================
+    // Phase 9L — structured API error
+    // ================================================================
+    //
+    // The old fetch layer collapsed every non-2xx response into a plain
+    // ``Error(message)``, which meant the UI couldn't distinguish a
+    // 429 rate-limit from a 500 crash or a 409 in-progress from a 409
+    // identity-collision.  Phase 9L keeps the ``.message`` field
+    // backward-compatible (so existing ``catch (e)`` branches still
+    // work) but additionally attaches:
+    //
+    //   e.status         — numeric HTTP status
+    //   e.body           — the raw parsed JSON body (or {} if empty)
+    //   e.isRateLimit    — true iff status === 429 AND bucket is set
+    //   e.bucket         — rate-limit bucket name (Phase 9K)
+    //   e.retryAfter     — retry-after seconds (from body or header)
+    //   e.limitPerMinute — bucket ceiling (Phase 9K)
+    //   e.isInProgress   — true iff status === 409 AND detail.in_progress
+    //   e.action         — which action is in progress (reconcile|backfill)
+    //
+    // Callers that want the old behavior keep working because the
+    // string form of the error remains readable.
+    class ApiError extends Error {
+        constructor(message, { status, body, url } = {}) {
+            super(message);
+            this.name = 'ApiError';
+            this.status = status || 0;
+            this.body = body || {};
+            this.url = url || '';
+
+            // Phase 9K 429 shape: {detail, bucket, limit_per_minute, retry_after_seconds}
+            this.bucket = this.body.bucket || null;
+            this.limitPerMinute = this.body.limit_per_minute || null;
+            this.retryAfter = (
+                this.body.retry_after_seconds != null
+                    ? Number(this.body.retry_after_seconds)
+                    : null
+            );
+            this.isRateLimit = status === 429;
+
+            // Phase 9K 409 in-progress shape:
+            //   {detail: {detail, in_progress: true, action: "reconcile"|"backfill"}}
+            // FastAPI wraps HTTPException.detail under a top-level "detail" key,
+            // so we unwrap one level here.
+            const inner = this.body.detail;
+            if (
+                status === 409
+                && inner
+                && typeof inner === 'object'
+                && inner.in_progress === true
+            ) {
+                this.isInProgress = true;
+                this.action = inner.action || null;
+                // Prefer the inner human-readable detail for the .message
+                if (inner.detail) {
+                    this.message = String(inner.detail);
+                }
+            } else {
+                this.isInProgress = false;
+                this.action = null;
+            }
+        }
+    }
+
+    async function _parseErrorBody(res) {
+        try {
+            return await res.clone().json();
+        } catch (_e) {
+            return {};
+        }
+    }
+
+    async function _throwForStatus(res, url) {
+        const body = await _parseErrorBody(res);
+        // Build a human-readable primary message for backward compat.
+        // FastAPI dict detail or string detail both need to be handled.
+        let detailText;
+        if (body && typeof body.detail === 'string') {
+            detailText = body.detail;
+        } else if (body && typeof body.detail === 'object' && body.detail?.detail) {
+            detailText = String(body.detail.detail);
+        } else if (body && body.detail) {
+            try { detailText = JSON.stringify(body.detail); } catch { detailText = ''; }
+        }
+        const msg = detailText || `HTTP ${res.status}`;
+        // Fill in retry-after from header if the body didn't carry it.
+        if (body && body.retry_after_seconds == null) {
+            const ra = res.headers.get('Retry-After');
+            if (ra) body.retry_after_seconds = Number(ra);
+        }
+        throw new ApiError(msg, { status: res.status, body, url });
+    }
+
     async function fetchJSON(url) {
         const res = await fetch(url);
         if (!res.ok) {
             if (res.status === 404) return null;
-            throw new Error(`HTTP ${res.status}`);
+            await _throwForStatus(res, url);
         }
         return res.json();
     }
@@ -147,8 +286,7 @@
             body: JSON.stringify(data),
         });
         if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.detail || `HTTP ${res.status}`);
+            await _throwForStatus(res, url);
         }
         return res.json();
     }
@@ -160,8 +298,7 @@
             body: JSON.stringify(data),
         });
         if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.detail || `HTTP ${res.status}`);
+            await _throwForStatus(res, url);
         }
         return res.json();
     }
@@ -169,8 +306,7 @@
     async function deleteJSON(url) {
         const res = await fetch(url, { method: 'DELETE' });
         if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.detail || `HTTP ${res.status}`);
+            await _throwForStatus(res, url);
         }
         return res.json();
     }
@@ -403,6 +539,7 @@
         events:    loadEvents,
         analysis:  loadAnalysisNotes,
         digest:    loadDigest,
+        inbox:     () => loadInbox(),
     };
 
     window.switchTab = switchTab;
@@ -414,6 +551,13 @@
             l.setAttribute('aria-selected', isActive ? 'true' : 'false');
         });
         $$('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'tab-' + name));
+        // Phase 9L: stop the operator-panel status poller whenever the
+        // user leaves Settings, so we're not burning a poll every 4s
+        // when the panel isn't visible.  Safe to call even when the
+        // poller isn't running.
+        if (name !== 'settings' && typeof _opStopStatusPolling === 'function') {
+            _opStopStatusPolling();
+        }
         if (!tabLoaded[name] && tabLoaders[name]) {
             tabLoaded[name] = true;
             tabLoaders[name]();
@@ -447,6 +591,404 @@
     }
 
     // ================================================================
+    // Phase 9G — Portfolio Intelligence Overview (top of Holdings tab)
+    // ================================================================
+    const _POSTURE_STYLE = {
+        strong_negative: { label: 'Elevated risk',        cls: 'posture-strong-negative', dot: 'red'    },
+        mildly_negative: { label: 'Mildly negative',      cls: 'posture-mild-negative',   dot: 'orange' },
+        mixed:           { label: 'Mixed',                cls: 'posture-mixed',           dot: 'yellow' },
+        constructive:    { label: 'Constructive',         cls: 'posture-constructive',    dot: 'green'  },
+        strong_positive: { label: 'Strongly constructive',cls: 'posture-strong-positive', dot: 'green'  },
+        insufficient_data: { label: 'Not enough data',    cls: 'posture-insufficient',    dot: 'gray'   },
+    };
+
+    function _directionArrow(direction) {
+        const d = (direction || '').toLowerCase();
+        if (d === 'up')   return '&#8593;';  // ↑
+        if (d === 'down') return '&#8595;';  // ↓
+        if (d === 'unclear' || d === 'unknown' || d === '') return '&middot;';
+        return esc(d);
+    }
+
+    function _freshnessChip(freshness) {
+        if (!freshness || !freshness.last_event_fetched_at) {
+            return `<span class="intel-chip intel-chip-stale" title="No news collected yet">No news yet</span>`;
+        }
+        const mins = freshness.stale_minutes;
+        if (mins == null) {
+            return `<span class="intel-chip intel-chip-stale" title="Unknown freshness">Freshness unknown</span>`;
+        }
+        const fresh = !!freshness.is_fresh;
+        const label = mins < 60
+            ? `${mins}m ago`
+            : mins < 60 * 24
+                ? `${Math.floor(mins / 60)}h ago`
+                : `${Math.floor(mins / 1440)}d ago`;
+        return `<span class="intel-chip ${fresh ? '' : 'intel-chip-stale'}" title="Last event collected">Updated ${label}</span>`;
+    }
+
+    function _alertBadge(alerts) {
+        if (!alerts || !alerts.total) {
+            return `<span class="intel-chip" title="No active alerts">&#9679; 0 alerts</span>`;
+        }
+        const parts = [];
+        if (alerts.critical) parts.push(`<span class="sev-dot sev-dot-critical"></span>${alerts.critical} critical`);
+        if (alerts.high)     parts.push(`<span class="sev-dot sev-dot-high"></span>${alerts.high} high`);
+        if (alerts.warning)  parts.push(`<span class="sev-dot sev-dot-warning"></span>${alerts.warning} warn`);
+        const cls = alerts.critical || alerts.high ? 'intel-chip intel-chip-alert' : 'intel-chip';
+        const body = parts.length ? parts.join(' &middot; ') : `${alerts.total} active`;
+        return `<span class="${cls}" title="Unacknowledged alerts">${body}</span>`;
+    }
+
+    // Phase 9N — action priority to CSS class mapping
+    const _ACTION_PRIORITY_STYLE = {
+        high:   { cls: 'intel-action-high',   label: 'High'   },
+        medium: { cls: 'intel-action-medium', label: 'Medium' },
+        low:    { cls: 'intel-action-low',    label: 'Low'    },
+    };
+
+    // Phase 9O — evidence ref categorisation (mirrors the backend
+    // ``src/intelligence/traceability.group_evidence_refs`` vocabulary
+    // so we don't round-trip for every action card).
+    const _REF_CATEGORY_ORDER = [
+        ['factor:',           'factors'],
+        ['alert:',            'alerts'],
+        ['rel:',              'relationships'],
+        ['holding:',          'holdings'],
+        ['ticker:',           'tickers'],
+        ['related:',          'related'],
+        ['note:',             'notes'],
+        ['attention:',        'attention'],
+        ['repeat_neg:',       'repeat_negative'],
+        ['holdings:',         'counts'],
+        ['distinct_factors=', 'counts'],
+        ['stale_minutes=',    'freshness'],
+        ['reconcile.',        'maintenance'],
+        ['backfill.',         'maintenance'],
+        ['manual_edit',       'maintenance'],
+    ];
+    const _REF_CATEGORY_LABEL = {
+        factors: 'Factors', alerts: 'Alerts', relationships: 'Relationships',
+        holdings: 'Holdings', tickers: 'Tickers', related: 'Related',
+        notes: 'Notes', attention: 'Attention', repeat_negative: 'Repeat negatives',
+        counts: 'Counts', freshness: 'Freshness', maintenance: 'Maintenance',
+        other: 'Other',
+    };
+
+    function _groupEvidenceRefs(refs) {
+        const out = {};
+        for (const r of (refs || [])) {
+            if (typeof r !== 'string' || !r) continue;
+            let category = 'other';
+            for (const [prefix, name] of _REF_CATEGORY_ORDER) {
+                if (r.startsWith(prefix)) { category = name; break; }
+            }
+            (out[category] = out[category] || []).push(r);
+        }
+        return out;
+    }
+
+    function _renderEvidenceRefsChips(refs, { maxInline = 3, className = 'evidence-refs' } = {}) {
+        // Compact one-line "Grounded in" chip row.  Used under
+        // recommended action rows and on alert cards.  Truncates to
+        // ``maxInline`` visible chips + a "+N more" indicator.
+        const list = Array.isArray(refs) ? refs.filter(r => typeof r === 'string' && r) : [];
+        if (!list.length) return '';
+        const visible = list.slice(0, maxInline);
+        const extra = list.length - visible.length;
+        const chips = visible.map(r => `<span class="evidence-ref-chip" title="${esc(r)}">${esc(r)}</span>`).join('');
+        const more = extra > 0 ? `<span class="evidence-ref-more" title="${esc(list.slice(maxInline).join(', '))}">+${extra} more</span>` : '';
+        return `<div class="${esc(className)}"><span class="evidence-refs-label">Grounded in:</span>${chips}${more}</div>`;
+    }
+
+    //: Phase 9Q — render a single evidence ref chip, with a
+    //: clickable affordance when a nav target is available.  Shared
+    //: by both the flat and grouped evidence renderers so the two
+    //: forms stay visually identical.
+    function _renderSingleEvidenceChip(ref, navTarget) {
+        if (navTarget && typeof navTarget === 'object' && navTarget.surface) {
+            return `<button type="button" class="evidence-ref-chip evidence-ref-clickable" data-nav-jump="1" data-nav-target="${escAttr(JSON.stringify(navTarget))}" title="${esc(ref)}">${esc(ref)}</button>`;
+        }
+        return `<span class="evidence-ref-chip" title="${esc(ref)}">${esc(ref)}</span>`;
+    }
+
+    function _renderEvidenceRefsGrouped(refs, { heading = 'Grounded in', targets = null } = {}) {
+        // Longer grouped form used by the event detail modal.  When
+        // refs span multiple categories we render one line per
+        // category; when they're all in one or two categories we fall
+        // back to the compact flat chip row.
+        //
+        // Phase 9Q — an optional ``targets`` parallel array (same
+        // ordering as ``refs``) turns chips into clickable deep
+        // links when a nav target is present.
+        const list = Array.isArray(refs) ? refs.filter(r => typeof r === 'string' && r) : [];
+        if (!list.length) return '';
+        // Build a ref→nav_target lookup from the parallel targets list
+        const navByRef = {};
+        if (Array.isArray(targets)) {
+            for (const t of targets) {
+                if (t && typeof t === 'object' && typeof t.ref === 'string') {
+                    navByRef[t.ref] = t.nav_target || null;
+                }
+            }
+        }
+        const groups = _groupEvidenceRefs(list);
+        const keys = Object.keys(groups);
+        if (keys.length <= 1) {
+            return `
+                <div class="evidence-refs evidence-refs-grouped">
+                    <span class="evidence-refs-label">${esc(heading)}:</span>
+                    ${list.map(r => _renderSingleEvidenceChip(r, navByRef[r])).join('')}
+                </div>`;
+        }
+        const rows = Object.entries(groups).map(([cat, refsInCat]) => `
+            <div class="evidence-ref-group" data-category="${esc(cat)}">
+                <span class="evidence-ref-group-label">${esc(_REF_CATEGORY_LABEL[cat] || cat)}:</span>
+                ${refsInCat.map(r => _renderSingleEvidenceChip(r, navByRef[r])).join('')}
+            </div>
+        `).join('');
+        return `
+            <div class="evidence-refs evidence-refs-grouped">
+                <span class="evidence-refs-label">${esc(heading)}:</span>
+                <div class="evidence-ref-groups">${rows}</div>
+            </div>`;
+    }
+
+    function _renderRecommendedActions(actions, hiddenCount) {
+        // Compact "Recommended Actions" zone for the Phase 9G
+        // intelligence overview card.  Up to 3 items, honest empty
+        // state, grounded-only (every action comes from the Phase 9N
+        // backend builder).
+        //
+        // Phase 9T — ``hiddenCount`` is the number of handled/dismissed
+        // actions suppressed by the action-state filter.  The list
+        // only contains VISIBLE actions.  Each action row carries a
+        // dismiss button that calls the ``/api/v1/actions/set-state``
+        // endpoint.
+        const list = Array.isArray(actions) ? actions : [];
+        const hc = typeof hiddenCount === 'number' ? hiddenCount : 0;
+        if (!list.length && !hc) {
+            return `
+                <div class="intel-actions-block" id="intel-actions-zone">
+                    <div class="intel-block-label">Recommended actions</div>
+                    <div class="intel-actions-empty">
+                        No immediate actions from current signals.
+                    </div>
+                </div>`;
+        }
+        if (!list.length && hc > 0) {
+            return `
+                <div class="intel-actions-block" id="intel-actions-zone">
+                    <div class="intel-block-label">Recommended actions</div>
+                    <div class="intel-actions-empty">
+                        All actions handled.
+                    </div>
+                    <div class="intel-actions-hidden-footer text-xs text-muted">
+                        ${hc} handled action${hc !== 1 ? 's' : ''} hidden
+                    </div>
+                </div>`;
+        }
+        const top = list.slice(0, 3);
+        const items = top.map(a => {
+            const style = _ACTION_PRIORITY_STYLE[a.priority] || _ACTION_PRIORITY_STYLE.low;
+            const tickers = (a.related_tickers || []).slice(0, 4);
+            const tickerPills = tickers.length
+                ? `<div class="intel-action-tickers">${tickers.map(t => `<span class="ticker-badge">${esc(t)}</span>`).join('')}</div>`
+                : '';
+            const refsRow = _renderEvidenceRefsChips(a.rationale_refs, {
+                maxInline: 3, className: 'intel-action-refs evidence-refs',
+            });
+            const nav = a.nav_target && typeof a.nav_target === 'object' && a.nav_target.surface
+                ? a.nav_target
+                : null;
+            const navBtn = nav
+                ? `<button type="button" class="intel-action-jump" data-nav-jump="1">${esc(nav.label || 'Open')} &rarr;</button>`
+                : '';
+            const navDataAttr = nav ? `data-nav-target="${escAttr(JSON.stringify(nav))}"` : '';
+            // Phase 9T — dismiss button.  The fingerprint is stashed
+            // on the row so the click handler can send it to the API.
+            const fp = a.fingerprint || '';
+            const dismissBtn = `<button type="button" class="btn btn-ghost btn-sm intel-action-dismiss" data-action-key="${esc(a.key || '')}" data-action-fp="${esc(fp)}" title="Dismiss this action">Dismiss</button>`;
+            return `
+                <div class="intel-action-row intel-action-${esc(a.priority || 'low')}" data-action-key="${esc(a.key || '')}" data-action-fp="${esc(fp)}" ${navDataAttr}>
+                    <div class="intel-action-main">
+                        <span class="intel-action-priority ${style.cls}">${esc(style.label)}</span>
+                        <div class="intel-action-title">${esc(a.title || '')}</div>
+                        <span class="intel-action-dismiss-spacer"></span>
+                        ${dismissBtn}
+                    </div>
+                    <div class="intel-action-body">${esc(a.description || '')}</div>
+                    ${tickerPills}
+                    ${refsRow}
+                    ${navBtn ? `<div class="intel-action-nav">${navBtn}</div>` : ''}
+                </div>`;
+        }).join('');
+        const hiddenFooter = hc > 0
+            ? `<div class="intel-actions-hidden-footer text-xs text-muted">${hc} handled action${hc !== 1 ? 's' : ''} hidden</div>`
+            : '';
+        return `
+            <div class="intel-actions-block" id="intel-actions-zone">
+                <div class="intel-block-label">Recommended actions</div>
+                <div class="intel-actions-list">${items}</div>
+                ${hiddenFooter}
+            </div>`;
+    }
+
+    // Phase 9T — action state helpers (dismiss, read-all, refresh)
+    async function _dismissAction(actionKey, fingerprint) {
+        if (!actionKey) return;
+        try {
+            await postJSON(API.actionsSetState, {
+                portfolio_id: _activePortfolioId,
+                action_key: actionKey,
+                state: 'dismissed',
+                fingerprint: fingerprint || '',
+            });
+            // Refresh the overview to reflect the change
+            if (typeof loadIntelligenceOverview === 'function') loadIntelligenceOverview();
+            // Also refresh the inbox badge since action items may vanish
+            if (typeof refreshInboxBadgeOnly === 'function') refreshInboxBadgeOnly();
+        } catch (e) {
+            if (typeof showToast === 'function') showToast('Dismiss failed: ' + e.message, 'error');
+        }
+    }
+
+    // Click delegation for action dismiss buttons (inside the overview card)
+    document.addEventListener('click', (ev) => {
+        const dismissBtn = ev.target.closest('.intel-action-dismiss');
+        if (dismissBtn) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            _dismissAction(
+                dismissBtn.dataset.actionKey,
+                dismissBtn.dataset.actionFp,
+            );
+            return;
+        }
+    });
+
+    function renderIntelligenceOverview(data) {
+        const el = $('#intelligence-overview');
+        if (!el) return;
+        if (!data) { el.innerHTML = ''; return; }
+
+        const postureKey = data.posture || 'insufficient_data';
+        const posture = _POSTURE_STYLE[postureKey] || _POSTURE_STYLE.insufficient_data;
+        const name = data.portfolio_name || data.portfolio_id || 'Portfolio';
+
+        const factors = (data.top_factors || []).slice(0, 4);
+        const rels = (data.top_relationships || []).slice(0, 3);
+        const attention = data.holdings_under_attention || [];
+        // Phase 9T — use effective actions (pre-filtered by action state)
+        // when available; fall back to the raw summary actions for
+        // backward compat.
+        const actions = data._effective_actions || data.recommended_actions || [];
+        const hiddenCount = typeof data._hidden_action_count === 'number' ? data._hidden_action_count : 0;
+
+        // Phase 9V — when factors come from classified MacroFactorEvents
+        // (source='classified', no holdings), show event count instead
+        // of holding count and use "observed" arrow style.
+        const isClassifiedFactors = factors.length > 0 && factors[0].source === 'classified';
+        const factorSectionLabel = isClassifiedFactors ? 'Observed macro signals' : 'Top factor pressures';
+        const factorsHtml = factors.length
+            ? factors.map(f => {
+                const hasHoldings = (f.holdings || []).length > 0;
+                const countLabel = hasHoldings
+                    ? `${f.holdings.length} holding${f.holdings.length === 1 ? '' : 's'}`
+                    : (f.event_count ? `${f.event_count} event${f.event_count === 1 ? '' : 's'}` : '');
+                return `
+                <span class="intel-factor-pill" title="${esc(f.factor)} max relevance ${(f.max_relevance ?? 0).toFixed(2)}">
+                    <strong>${esc(f.label || f.factor)}</strong>
+                    <span class="intel-factor-arrow">${_directionArrow(f.direction)}</span>
+                    <span class="text-xs text-muted">${countLabel}</span>
+                </span>`;
+            }).join('')
+            : `<span class="text-sm text-muted">No macro signals detected yet.</span>`;
+
+        const relsHtml = rels.length
+            ? rels.map(r => `
+                <span class="intel-rel-pill" title="${esc(r.relationship_type)} link via ${esc(r.ticker)}">
+                    <strong>${esc(r.ticker)}</strong>
+                    <span class="intel-rel-arrow">&rarr;</span>
+                    ${esc(r.related_entity || r.relationship_type)}
+                    <span class="text-xs text-muted">(${esc(r.relationship_type)})</span>
+                </span>`).join('')
+            : `<span class="text-sm text-muted">No relationship touchpoints.</span>`;
+
+        const attentionHtml = attention.length
+            ? `<div class="intel-attention">
+                   <span class="intel-attention-label">Needs attention:</span>
+                   ${attention.slice(0, 6).map(t => `<span class="ticker-badge ticker-badge-warn">${esc(t)}</span>`).join('')}
+               </div>`
+            : '';
+
+        const trustHealth = data.intelligence_health || {};
+        const healthBits = [];
+        if (trustHealth.factor_links != null)       healthBits.push(`${trustHealth.factor_links} factor links`);
+        if (trustHealth.relationship_links != null) healthBits.push(`${trustHealth.relationship_links} relationship links`);
+        if (trustHealth.analysis_notes_7d != null)  healthBits.push(`${trustHealth.analysis_notes_7d} analyses (7d)`);
+        const healthLine = healthBits.length
+            ? `<div class="intel-health" title="Deterministic intelligence artefacts">${healthBits.join(' &middot; ')}</div>`
+            : '';
+
+        const recentEvents = data.recent_events_count_24h || 0;
+
+        el.innerHTML = `
+            <div class="intel-overview-card">
+                <div class="intel-overview-header">
+                    <div class="intel-posture">
+                        <span class="dot ${posture.dot}"></span>
+                        <div>
+                            <div class="intel-posture-label ${posture.cls}">${esc(posture.label)}</div>
+                            <div class="intel-posture-reason" title="${esc(data.posture_reason || '')}">${esc(data.posture_reason || '')}</div>
+                        </div>
+                    </div>
+                    <div class="intel-overview-meta">
+                        <span class="text-sm text-muted">${esc(name)}</span>
+                        ${_alertBadge(data.alerts)}
+                        ${_freshnessChip(data.freshness)}
+                        <span class="intel-chip" title="Events linked to your holdings in the last 24h">${recentEvents} event${recentEvents === 1 ? '' : 's'} (24h)</span>
+                    </div>
+                </div>
+                <div class="intel-overview-grid">
+                    <div class="intel-block">
+                        <div class="intel-block-label">${esc(factorSectionLabel)}</div>
+                        <div class="intel-pill-row">${factorsHtml}</div>
+                    </div>
+                    <div class="intel-block">
+                        <div class="intel-block-label">Relationship touchpoints</div>
+                        <div class="intel-pill-row">${relsHtml}</div>
+                    </div>
+                </div>
+                ${attentionHtml}
+                ${_renderRecommendedActions(actions, hiddenCount)}
+                ${healthLine}
+            </div>`;
+    }
+
+    async function loadIntelligenceOverview() {
+        const el = $('#intelligence-overview');
+        if (!el) return;
+        try {
+            // Phase 9T — fetch summary + effective actions in parallel.
+            // The effective-actions endpoint returns only VISIBLE
+            // actions (filtered by the fingerprint-aware state table).
+            const [data, effectiveResp] = await Promise.all([
+                fetchJSON(_pq(API.intelligenceSummary)),
+                fetchJSON(`${API.actionsEffective}?portfolio_id=${encodeURIComponent(_activePortfolioId)}`).catch(() => null),
+            ]);
+            if (data && effectiveResp && Array.isArray(effectiveResp.visible)) {
+                data._effective_actions = effectiveResp.visible;
+                data._hidden_action_count = effectiveResp.hidden_count || 0;
+            }
+            renderIntelligenceOverview(data);
+        } catch (e) {
+            // Non-fatal: the overview is a premium addition, not load-blocking.
+            el.innerHTML = '';
+        }
+    }
+
+    // ================================================================
     // Holdings Tab
     // ================================================================
     let allHoldings = [];
@@ -455,6 +997,9 @@
         const summaryEl = $('#holdings-summary');
         const tableEl = $('#holdings-table');
         if (!tableEl) { console.error('holdings-table element not found'); return; }
+        // Kick off the premium intelligence overview in parallel — it's
+        // portfolio-scoped and grounded in deterministic data only.
+        loadIntelligenceOverview();
         // Show skeleton while loading (only on first load)
         if (!allHoldings.length && tableEl.querySelector('.spinner')) {
             tableEl.innerHTML = renderSkeleton(6);
@@ -614,7 +1159,7 @@
                 <th class="num sortable" data-sort="_mv">Market Value</th><th class="num sortable" data-sort="_wt">Allocation</th><th class="num sortable" data-sort="_pnl">P&L</th><th class="num sortable" data-sort="_pnl_pct">P&L %</th>
                 <th style="width:70px;"></th>
             </tr></thead>
-            <tbody>${enriched.map(h => `<tr>
+            <tbody>${enriched.map(h => `<tr data-holding-id="${esc(h.id)}" data-ticker="${esc(h.ticker)}">
                 <td><a href="javascript:void(0)" class="font-semibold text-mono" onclick="openHoldingDetail('${esc(h.id)}')" style="cursor:pointer">${esc(h.ticker)}</a></td>
                 <td>${esc(h.name || h.company_name || '\u2014')}</td>
                 <td>${h.sector ? `<span class="badge badge-muted">${esc(titleCase(h.sector))}</span>` : '<span class="text-muted">\u2014</span>'}</td>
@@ -973,6 +1518,20 @@
         }
     }
 
+    function renderFactorTagsMini(tags) {
+        if (!Array.isArray(tags) || !tags.length) return '';
+        // Cap at 3 tags per row to keep the table tight
+        const shown = tags.slice(0, 3);
+        const overflow = tags.length - shown.length;
+        const chips = shown.map(t => {
+            const dir = (t.direction || 'unknown').toLowerCase();
+            const arrow = dir === 'up' ? '\u2191' : dir === 'down' ? '\u2193' : '\u2022';
+            return `<span class="factor-tag-mini direction-${esc(dir)}" title="${esc(t.label || t.key)} (${esc(t.direction || 'unknown')}, ${esc(t.magnitude || 'unknown')})">${arrow} ${esc(t.label || t.key)}</span>`;
+        }).join('');
+        const more = overflow > 0 ? `<span class="factor-tag-mini" title="${overflow} more">+${overflow}</span>` : '';
+        return `<span class="factor-tag-list-mini">${chips}${more}</span>`;
+    }
+
     function renderEventsTable(list) {
         const el = $('#events-table');
         if (!list.length) {
@@ -987,17 +1546,274 @@
                 <th class="sortable" data-sort="title">Title</th>
                 <th class="sortable" data-sort="event_type">Type</th>
                 <th class="sortable" data-sort="materiality">Materiality</th>
+                <th>Holdings</th>
                 <th>Source</th>
                 <th class="sortable" data-sort="published_at">Published</th>
             </tr></thead>
-            <tbody>${list.map(e => `<tr>
-                <td><a href="${esc(e.url || '#')}" target="_blank" rel="noopener">${esc(e.title || 'Untitled')}</a></td>
-                <td>${e.event_type ? `<span class="badge badge-muted">${esc(titleCase(e.event_type))}</span>` : '<span class="text-muted">\u2014</span>'}</td>
-                <td>${e.materiality && e.materiality !== 'unscored' ? `<span class="badge badge-${e.materiality === 'critical' ? 'critical' : e.materiality === 'high' ? 'high' : 'info'}">${esc(e.materiality)}</span>` : '<span class="text-muted">unscored</span>'}</td>
-                <td class="text-sm text-muted">${esc(e.source_id || '\u2014')}</td>
-                <td class="text-sm text-muted">${formatDate(e.published_at)}</td>
-            </tr>`).join('')}</tbody></table></div>`;
+            <tbody>${list.map(e => {
+                const tags = renderFactorTagsMini(e.factor_tags || []);
+                const tickerCount = e.linked_ticker_count || 0;
+                return `<tr class="events-row-clickable" data-event-id="${esc(e.id)}">
+                    <td><span class="event-row-title">${esc(e.title || 'Untitled')}</span>${tags}</td>
+                    <td>${e.event_type ? `<span class="badge badge-muted">${esc(titleCase(e.event_type))}</span>` : '<span class="text-muted">\u2014</span>'}</td>
+                    <td>${e.materiality && e.materiality !== 'unscored' ? `<span class="badge badge-${e.materiality === 'critical' ? 'critical' : e.materiality === 'high' ? 'high' : 'info'}">${esc(e.materiality)}</span>` : '<span class="text-muted">unscored</span>'}</td>
+                    <td class="text-sm text-muted">${tickerCount ? `${tickerCount} \uFF0F ${tickerCount === 1 ? 'holding' : 'holdings'}` : '<span class="text-muted">\u2014</span>'}</td>
+                    <td class="text-sm text-muted">${esc(e.source_name || '\u2014')}</td>
+                    <td class="text-sm text-muted">${formatDate(e.published_at)}</td>
+                </tr>`;
+            }).join('')}</tbody></table></div>`;
     }
+
+    // ================================================================
+    // Phase 9B — Event Detail Modal
+    // ================================================================
+
+    function _renderChainCard(chain) {
+        if (!chain || typeof chain !== 'object') return '';
+        const origin = chain.origin || 'unknown';
+        const originLabel = ({
+            deterministic_factor: 'Deterministic factor',
+            direct_match: 'Direct match',
+            llm_screen: 'LLM screen',
+            unknown: 'Unknown'
+        })[origin] || origin;
+
+        // Flow: event → channel → holding → effect
+        const flowSteps = [];
+        flowSteps.push('<span class="chain-step">event</span>');
+        if (chain.channel_label || chain.channel) {
+            flowSteps.push('<span class="chain-arrow">\u2192</span>');
+            flowSteps.push(`<span class="chain-step">${esc(chain.channel_label || chain.channel)}${chain.factor_direction ? ` ${chain.factor_direction === 'up' ? '\u2191' : chain.factor_direction === 'down' ? '\u2193' : ''}` : ''}</span>`);
+        }
+        if (chain.holding_ticker) {
+            flowSteps.push('<span class="chain-arrow">\u2192</span>');
+            flowSteps.push(`<span class="chain-step">${esc(chain.holding_ticker)}</span>`);
+        }
+        if (chain.effect_direction && chain.effect_direction !== 'unclear') {
+            flowSteps.push('<span class="chain-arrow">\u2192</span>');
+            flowSteps.push(`<span class="chain-step">${esc(chain.effect_direction)}</span>`);
+        }
+
+        const metrics = [];
+        if (chain.effect_confidence != null) {
+            const pct = Math.round(chain.effect_confidence * 100);
+            metrics.push(`<span>Relevance: <strong>${pct}%</strong></span>`);
+        }
+        if (chain.factor_confidence != null) {
+            const pct = Math.round(chain.factor_confidence * 100);
+            metrics.push(`<span>Factor confidence: <strong>${pct}%</strong></span>`);
+        }
+        if (chain.sensitivity_value != null) {
+            const sv = Number(chain.sensitivity_value).toFixed(2);
+            const src = chain.sensitivity_source ? ` (${esc(chain.sensitivity_source)})` : '';
+            metrics.push(`<span>Sensitivity: <strong>${sv}${src}</strong></span>`);
+        }
+        if (chain.factor_magnitude && chain.factor_magnitude !== 'unknown') {
+            metrics.push(`<span>Magnitude: <strong>${esc(chain.factor_magnitude)}</strong></span>`);
+        }
+
+        const rationale = Array.isArray(chain.rationale) && chain.rationale.length
+            ? `<ul class="chain-rationale">${chain.rationale.map(r => `<li>${esc(r)}</li>`).join('')}</ul>`
+            : '';
+
+        return `
+            <div class="chain-card">
+                <div class="chain-card-header">
+                    <span class="chain-summary">${esc(chain.summary || '')}</span>
+                    <span class="chain-origin-badge chain-origin-${esc(origin)}">${esc(originLabel)}</span>
+                </div>
+                <div class="chain-flow">${flowSteps.join('')}</div>
+                ${metrics.length ? `<div class="chain-metrics">${metrics.join('')}</div>` : ''}
+                ${rationale}
+            </div>
+        `;
+    }
+
+    function _renderFactorTags(tags) {
+        if (!Array.isArray(tags) || !tags.length) {
+            return '<span class="empty-inline">No deterministic factor tags for this event.</span>';
+        }
+        return `<div class="event-factor-tags">${tags.map(t => {
+            const dir = (t.direction || 'unknown').toLowerCase();
+            const arrow = dir === 'up' ? '\u2191' : dir === 'down' ? '\u2193' : '\u2022';
+            const conf = t.confidence != null ? ` \u00B7 ${Math.round(t.confidence * 100)}%` : '';
+            return `<span class="factor-tag direction-${esc(dir)}"><span class="factor-arrow">${arrow}</span> ${esc(t.label || t.key)} <span style="opacity:0.7">(${esc(t.magnitude || 'unknown')}${conf})</span></span>`;
+        }).join('')}</div>`;
+    }
+
+    function _renderAffectedHoldings(rows) {
+        if (!Array.isArray(rows) || !rows.length) {
+            return '<span class="empty-inline">No portfolio holdings linked to this event.</span>';
+        }
+        return `<div class="affected-holdings-list">${rows.map(h => {
+            const pidBadge = h.portfolio_id ? `<span class="pid" title="Portfolio">${esc(h.portfolio_id)}</span>` : '';
+            const weight = h.weight_pct != null ? `${Number(h.weight_pct).toFixed(1)}%` : '\u2014';
+            const rel = h.max_relevance != null ? `${Math.round(h.max_relevance * 100)}%` : '\u2014';
+            const types = (h.link_types || []).map(t => `<span class="badge badge-muted" style="font-size:0.66rem;">${esc(t.replace(/_/g, ' '))}</span>`).join(' ');
+            return `<div class="affected-holding-row">
+                <div style="flex:1;">
+                    <span class="ticker">${esc(h.ticker)}</span>
+                    ${pidBadge}
+                    <div style="margin-top:0.15rem;display:flex;gap:0.35rem;flex-wrap:wrap;">${types}</div>
+                </div>
+                <div class="text-sm text-muted" style="text-align:right;">
+                    <div>Weight: <strong style="color:var(--foreground);">${weight}</strong></div>
+                    <div>Relevance: <strong style="color:var(--foreground);">${rel}</strong></div>
+                    ${h.sector ? `<div style="font-size:0.66rem;opacity:0.7;">${esc(h.sector)}</div>` : ''}
+                </div>
+            </div>`;
+        }).join('')}</div>`;
+    }
+
+    function _renderRelatedAnalyses(rows) {
+        if (!Array.isArray(rows) || !rows.length) {
+            return '<span class="empty-inline">No analysis notes reference this event yet.</span>';
+        }
+        return rows.map(n => {
+            const materiality = n.materiality ? ` \u00B7 <span class="badge badge-${n.materiality === 'critical' ? 'critical' : n.materiality === 'important' ? 'high' : 'info'}">${esc(n.materiality)}</span>` : '';
+            const ticker = n.ticker ? `<strong class="text-mono">${esc(n.ticker)}</strong> \u00B7 ` : '';
+            return `<div class="related-row">
+                <div class="row-title">${ticker}${esc((n.note_type || '').replace(/_/g, ' '))}${materiality}</div>
+                <div class="text-sm" style="margin-top:0.2rem;">${esc(n.summary || '')}</div>
+                <div class="row-meta">${formatDate(n.created_at)}</div>
+            </div>`;
+        }).join('');
+    }
+
+    function _renderRelatedAlerts(rows) {
+        if (!Array.isArray(rows) || !rows.length) {
+            return '<span class="empty-inline">No alerts reference this event.</span>';
+        }
+        return rows.map(a => {
+            const sev = (a.severity || 'info').toLowerCase();
+            const ack = a.acknowledged ? '<span class="badge badge-muted">acknowledged</span>' : '';
+            return `<div class="related-row">
+                <div class="row-title">${severityBadge(a.severity)} ${esc(a.title || '')} ${ack}</div>
+                <div class="row-meta">${esc(a.alert_type || '')}${a.portfolio_id ? ` \u00B7 portfolio ${esc(a.portfolio_id)}` : ''} \u00B7 ${formatDate(a.created_at)}</div>
+            </div>`;
+        }).join('');
+    }
+
+    function _renderEventDetail(detail) {
+        const metaBits = [];
+        if (detail.event_type) metaBits.push(`<span><strong>Type:</strong> ${esc(titleCase(detail.event_type))}</span>`);
+        if (detail.source_name) metaBits.push(`<span><strong>Source:</strong> ${esc(detail.source_name)}</span>`);
+        if (detail.published_at) metaBits.push(`<span><strong>Published:</strong> ${formatDate(detail.published_at)}</span>`);
+        if (detail.materiality && detail.materiality !== 'unscored') metaBits.push(`<span><strong>Materiality:</strong> ${esc(detail.materiality)}</span>`);
+
+        const summaryBlock = detail.summary
+            ? `<div class="event-detail-summary">${esc(detail.summary)}</div>`
+            : '<span class="empty-inline">No summary available.</span>';
+
+        const urlLink = detail.url
+            ? `<div style="margin-top:0.5rem;"><a href="${esc(detail.url)}" target="_blank" rel="noopener" class="text-sm">Open source \u2197</a></div>`
+            : '';
+
+        const chains = (detail.links || [])
+            .map(l => l.chain)
+            .filter(Boolean);
+
+        // Phase 9N — grounded explanation block (why it matters +
+        // suggested action).  Only rendered when the backend
+        // produced honest evidence; otherwise the block is silent.
+        const why = detail.why_it_matters;
+        const action = detail.suggested_action;
+        // Phase 9O — group the grounded refs by category (factors,
+        // holdings, notes, etc.) for a cleaner readback.
+        // Phase 9Q — pass through the parallel ``explanation_grounded_in_targets``
+        // so known-navigable refs render as clickable buttons.
+        const groundedRefs = (detail.explanation_grounded_in || []);
+        const groundedTargets = detail.explanation_grounded_in_targets || null;
+        const groundedBlock = groundedRefs.length
+            ? _renderEvidenceRefsGrouped(groundedRefs, {
+                  heading: 'Grounded in',
+                  targets: groundedTargets,
+              })
+            : '';
+        const explanationBlock = (why || action || groundedRefs.length) ? `
+            <div class="event-detail-group event-why-block">
+                <h4>Why Axion flagged this</h4>
+                ${why ? `<p class="event-why-text">${esc(why)}</p>` : ''}
+                ${action ? `<div class="event-why-action"><strong>Suggested next step:</strong> ${esc(action)}</div>` : ''}
+                ${groundedBlock}
+            </div>
+        ` : '';
+
+        return `
+            <div class="event-detail-group">
+                <div class="event-detail-meta">${metaBits.join('')}</div>
+                ${summaryBlock}
+                ${urlLink}
+            </div>
+            ${explanationBlock}
+            <div class="event-detail-group">
+                <h4>Factor Tags</h4>
+                ${_renderFactorTags(detail.factor_tags)}
+            </div>
+            <div class="event-detail-group">
+                <h4>Affected Holdings</h4>
+                ${_renderAffectedHoldings(detail.affected_holdings)}
+            </div>
+            <div class="event-detail-group">
+                <h4>Causal Chains (${chains.length})</h4>
+                ${chains.length
+                    ? chains.map(_renderChainCard).join('')
+                    : '<span class="empty-inline">No causal chains for this event.</span>'}
+            </div>
+            <div class="event-detail-group">
+                <h4>Related Analyses</h4>
+                ${_renderRelatedAnalyses(detail.related_analyses)}
+            </div>
+            <div class="event-detail-group">
+                <h4>Related Alerts</h4>
+                ${_renderRelatedAlerts(detail.related_alerts)}
+            </div>
+        `;
+    }
+
+    window.openEventDetail = async function (eventId) {
+        if (!eventId) return;
+        const modal = $('#event-detail-modal');
+        const body = $('#event-detail-body');
+        const titleEl = $('#event-detail-title');
+        if (!modal || !body) return;
+        body.innerHTML = '<div class="spinner">Loading event detail...</div>';
+        if (titleEl) titleEl.textContent = 'Event';
+        modal.showModal();
+
+        // Phase 9R — wire the copy-link button to the current event.
+        const copyBtn = $('#event-detail-copy-link');
+        if (copyBtn) {
+            copyBtn.onclick = () => {
+                _copyDeepLink({
+                    surface: 'events',
+                    portfolio_id: _activePortfolioId,
+                    entity_type: 'event',
+                    entity_id: eventId,
+                    subtab: 'events',
+                    open_modal: true,
+                    highlight_key: 'event:' + eventId,
+                });
+            };
+        }
+
+        try {
+            const data = await fetchJSON(
+                API.eventById(eventId) + '?portfolio_id=' + encodeURIComponent(_activePortfolioId)
+            );
+            // fetchJSON returns null on 404 — handle that as a clean
+            // "not found" state instead of crashing on `data.title`.
+            if (!data) {
+                if (titleEl) titleEl.textContent = 'Event not found';
+                body.innerHTML = '<span class="empty-inline">This event no longer exists or could not be loaded.</span>';
+                return;
+            }
+            if (titleEl) titleEl.textContent = data.title || 'Event';
+            body.innerHTML = _renderEventDetail(data);
+        } catch (e) {
+            body.innerHTML = renderError('event detail: ' + (e && e.message ? e.message : 'unknown error'));
+        }
+    };
 
     function filterEvents(query) {
         const q = query.toLowerCase();
@@ -1088,6 +1904,134 @@
         return esc(String(parsed));
     }
 
+    // Phase 9G: premium digest reader.  Reads the Phase 9E grounded
+    // JSON shape directly (headline, portfolio_assessment, risk_flags,
+    // holdings_requiring_attention, key_developments, factor_touchpoints)
+    // and renders it as a skim-friendly hierarchy.  Falls back to the
+    // legacy sections shape if the body doesn't look grounded.
+    function _parseGroundedDigest(data) {
+        if (!data) return null;
+        // The API route flattens the inner JSON into `sections` where
+        // each section carries the ORIGINAL key as title and the
+        // stringified value as content.  We rehydrate the Phase 9E
+        // shape from that flat form.
+        const out = {};
+        for (const s of (data.sections || [])) {
+            const key = (s.title || '').toLowerCase().replace(/\s+/g, '_');
+            let value = s.content;
+            if (typeof value === 'string') {
+                try { value = JSON.parse(value); } catch (_e) { /* keep as string */ }
+            }
+            out[key] = value;
+        }
+        return out;
+    }
+
+    function _renderGroundedDigest(data, grounded) {
+        const headline = grounded.headline || data.summary || data.content || 'Intelligence digest';
+        const assessment = grounded.portfolio_assessment || '';
+        const risk_flags = Array.isArray(grounded.risk_flags) ? grounded.risk_flags : [];
+        const attention = Array.isArray(grounded.holdings_requiring_attention) ? grounded.holdings_requiring_attention : [];
+        const key_devs = Array.isArray(grounded.key_developments) ? grounded.key_developments : [];
+        const market = grounded.market_context || '';
+        const action_items = Array.isArray(grounded.action_items) ? grounded.action_items : [];
+
+        const riskHtml = risk_flags.length
+            ? `<div class="card digest-card digest-risk-flags">
+                   <h3>Risk flags</h3>
+                   <ul class="digest-list">
+                       ${risk_flags.map(f => `<li>${esc(String(f))}</li>`).join('')}
+                   </ul>
+               </div>`
+            : '';
+
+        const attentionHtml = attention.length
+            ? `<div class="card digest-card digest-attention">
+                   <h3>Holdings needing attention</h3>
+                   <div class="digest-attention-row">
+                       ${attention.map(t => `<span class="ticker-badge ticker-badge-warn">${esc(String(t))}</span>`).join('')}
+                   </div>
+               </div>`
+            : '';
+
+        const developmentsHtml = key_devs.length
+            ? `<div class="card digest-card digest-developments">
+                   <h3>Key developments</h3>
+                   <ul class="digest-list">
+                       ${key_devs.map(d => `<li>${esc(String(d))}</li>`).join('')}
+                   </ul>
+               </div>`
+            : '';
+
+        const actionsHtml = action_items.length
+            ? `<div class="card digest-card digest-actions">
+                   <h3>Suggested actions</h3>
+                   <ul class="digest-list">
+                       ${action_items.map(a => `<li>${esc(String(a))}</li>`).join('')}
+                   </ul>
+               </div>`
+            : '';
+
+        const marketHtml = (market && !market.toLowerCase().includes('deterministic fallback'))
+            ? `<div class="card digest-card digest-market">
+                   <h3>Market context</h3>
+                   <p class="digest-content">${esc(market)}</p>
+               </div>`
+            : '';
+
+        // Phase 9O — compact trust footer.  The digest already
+        // carries ``event_count``, ``alert_count``, and
+        // ``holding_count`` from the backend; we just render them as
+        // a single grounded line so operators can see at a glance
+        // what this digest was compiled from.
+        const trustBits = [];
+        if (data.event_count != null && data.event_count > 0) {
+            trustBits.push(`${data.event_count} event${data.event_count === 1 ? '' : 's'}`);
+        }
+        if (data.alert_count != null && data.alert_count > 0) {
+            trustBits.push(`${data.alert_count} alert${data.alert_count === 1 ? '' : 's'}`);
+        }
+        if (data.holding_count != null && data.holding_count > 0) {
+            trustBits.push(`${data.holding_count} holding${data.holding_count === 1 ? '' : 's'}`);
+        }
+        const trustHtml = trustBits.length
+            ? `<div class="digest-trust-footer">
+                   <span class="digest-trust-label">Based on</span>
+                   <span class="digest-trust-body">${trustBits.join(' · ')}</span>
+                   <span class="digest-trust-hint text-xs text-muted">from current signals</span>
+               </div>`
+            : '';
+
+        return `
+            <div class="digest-meta">
+                <span class="badge badge-primary">${esc(data.digest_type || 'daily')}</span>
+                <span class="text-sm text-muted">${formatDateShort(data.period_start)} — ${formatDateShort(data.period_end)}</span>
+                ${data.event_count != null ? `<span class="badge badge-info">${data.event_count} events</span>` : ''}
+                ${data.alert_count != null ? `<span class="badge badge-warning">${data.alert_count} alerts</span>` : ''}
+            </div>
+            <div class="card digest-card digest-headline">
+                <h2 class="digest-headline-text">${esc(String(headline))}</h2>
+                ${assessment ? `<p class="digest-content">${esc(String(assessment))}</p>` : ''}
+            </div>
+            ${riskHtml}
+            ${attentionHtml}
+            ${developmentsHtml}
+            ${actionsHtml}
+            ${marketHtml}
+            ${trustHtml}`;
+    }
+
+    function _hasGroundedFields(grounded) {
+        if (!grounded) return false;
+        return (
+            grounded.headline != null
+            || grounded.portfolio_assessment != null
+            || Array.isArray(grounded.risk_flags)
+            || Array.isArray(grounded.holdings_requiring_attention)
+            || Array.isArray(grounded.key_developments)
+        );
+    }
+
     async function loadDigest() {
         const el = $('#digest-content');
         try {
@@ -1099,6 +2043,13 @@
                 });
                 return;
             }
+            const grounded = _parseGroundedDigest(data);
+            if (_hasGroundedFields(grounded)) {
+                el.innerHTML = _renderGroundedDigest(data, grounded);
+                return;
+            }
+            // Legacy fallback — preserve the pre-9G renderer for any
+            // unknown / old digest shapes so older rows still display.
             const sections = data.sections || [];
             el.innerHTML = `
                 <div class="digest-meta">
@@ -1121,24 +2072,117 @@
     // ================================================================
     // Alerts Tab
     // ================================================================
+
+    // Phase 9W — severity filter mapping for server-side queries.
+    // The ``list_alerts`` route accepts a single ``severity`` string
+    // but our UI has compound options like "critical_high".  We expand
+    // these to multiple calls or use the broader single-value match.
+    // For simplicity, compound filters are expanded client-side after
+    // a "no severity filter" server fetch (compound values don't map
+    // 1-to-1 to the backend's single-value severity param).
+    function _filterAlertsBySeverity(alerts, filterVal) {
+        if (!filterVal || filterVal === 'all') return alerts;
+        const sets = {
+            'critical':      new Set(['critical']),
+            'critical_high': new Set(['critical', 'high']),
+            'high':          new Set(['critical', 'high']),
+            'warning':       new Set(['critical', 'high', 'warning', 'medium']),
+            'info':          new Set(['info', 'low']),
+        };
+        const allowed = sets[filterVal];
+        if (!allowed) return alerts;
+        return alerts.filter(a => allowed.has((a.severity || '').toLowerCase()));
+    }
+
     async function loadAlerts() {
         const el = $('#alerts-content');
         try {
-            const data = await fetchJSON(_pq(API.alertsActive));
-            const list = ensureArray(data, 'items', 'alerts');
+            // Phase 9W — server-backed alerts filtering.  Use the
+            // ``list_alerts`` route (``/api/v1/alerts``) which already
+            // supports ``severity`` + ``acknowledged`` query params,
+            // instead of the old ``/active`` route that was hard-coded
+            // to unacknowledged-only.
+            const sevFilterVal = document.querySelector('#alerts-severity-filter')?.value || '';
+            const ackFilterVal = document.querySelector('#alerts-ack-filter')?.value || '';
+
+            // Build the URL with server-side params
+            const params = new URLSearchParams({
+                portfolio_id: _activePortfolioId,
+                limit: '200',
+            });
+            // Map ack filter to the backend's ``acknowledged`` param
+            if (ackFilterVal === 'open') {
+                params.set('acknowledged', 'false');
+            } else if (ackFilterVal === 'ack') {
+                params.set('acknowledged', 'true');
+            }
+            // For single-value severity (critical, info), pass it
+            // to the backend directly.  For compound values
+            // (critical_high, warning), we'll filter client-side.
+            const singleSeverities = new Set(['critical', 'info']);
+            if (sevFilterVal && singleSeverities.has(sevFilterVal)) {
+                params.set('severity', sevFilterVal);
+            }
+
+            const data = await fetchJSON(`${API.alerts}?${params.toString()}`);
+            let list = ensureArray(data, 'items', 'alerts');
+
+            // Apply client-side severity filter for compound values
+            // that don't map to a single backend severity param.
+            if (sevFilterVal && !singleSeverities.has(sevFilterVal)) {
+                list = _filterAlertsBySeverity(list, sevFilterVal);
+            }
+
+            // Maintain severity-first ordering (Phase 9G)
+            const sevRank = {critical:0,high:1,warning:2,medium:2,info:3,low:3};
+            list.sort((a, b) => {
+                const ra = sevRank[(a.severity||'').toLowerCase()] ?? 9;
+                const rb = sevRank[(b.severity||'').toLowerCase()] ?? 9;
+                if (ra !== rb) return ra - rb;
+                return (b.created_at || '').localeCompare(a.created_at || '');
+            });
             if (!list.length) {
                 el.innerHTML = renderEmpty('check', 'No active alerts.', {
                     hint: 'Alerts appear when risks are detected in your portfolio.'
                 });
                 return;
             }
-            el.innerHTML = list.map(a => `
-                <div class="alert-card severity-${(a.severity || 'info').toLowerCase()}">
+            el.innerHTML = list.map(a => {
+                // Phase 9N — grounded per-alert next-step hint.  The
+                // backend fills ``suggested_action`` from the same
+                // pure helper shared by the intelligence summary;
+                // we just render it when present.
+                const suggestedAction = a.suggested_action
+                    ? `<div class="alert-suggested-action"><span class="alert-suggested-label">Next step:</span> ${esc(a.suggested_action)}</div>`
+                    : '';
+                // Phase 9Q — clickable evidence chips.  When the
+                // backend provides ``evidence_targets`` (parallel list
+                // of structured navigation targets), render each chip
+                // as a button that calls jumpToTarget; otherwise fall
+                // back to the Phase 9O static chip rendering.
+                const evidenceTargets = Array.isArray(a.evidence_targets) ? a.evidence_targets : [];
+                const evidenceChips = evidenceTargets.length
+                    ? `<div class="alert-evidence-refs evidence-refs">
+                           <span class="evidence-refs-label">Based on:</span>
+                           ${evidenceTargets.slice(0, 4).map(et => {
+                                const ref = et && et.ref || '';
+                                const nav = et && et.nav_target;
+                                if (nav) {
+                                    return `<button type="button" class="evidence-ref-chip evidence-ref-clickable" data-nav-jump="1" data-nav-target="${escAttr(JSON.stringify(nav))}" title="${esc(ref)}">${esc(ref)}</button>`;
+                                }
+                                return `<span class="evidence-ref-chip" title="${esc(ref)}">${esc(ref)}</span>`;
+                            }).join('')}
+                       </div>`
+                    : '';
+                return `
+                <div class="alert-card severity-${(a.severity || 'info').toLowerCase()}" data-alert-id="${esc(a.id)}">
                     <div class="flex justify-between items-center gap-2">
                         <div class="alert-title">${severityBadge(a.severity)} ${esc(titleCase(a.title))}</div>
                         ${!a.acknowledged ? `<button class="btn btn-sm btn-ghost btn-ack" data-alert-id="${esc(a.id)}">Acknowledge</button>` : ''}
                     </div>
                     <div class="text-sm text-muted mt-2">${esc(a.message?.replace(/_/g, ' '))}</div>
+                    ${suggestedAction}
+                    ${evidenceChips}
                     <div class="alert-meta">
                         <span class="text-xs text-muted">${timeAgo(a.created_at)}</span>
                         ${(a.related_holdings || []).length ? `<div class="alert-tickers">${a.related_holdings.map(hid => {
@@ -1146,11 +2190,665 @@
                             return h ? `<span class="ticker-badge">${esc(h.ticker)}</span>` : '';
                         }).filter(Boolean).join('')}</div>` : ''}
                     </div>
-                </div>`).join('');
+                </div>`;
+            }).join('');
         } catch (e) {
             el.innerHTML = renderError('alerts: ' + e.message);
         }
     }
+
+    // ================================================================
+    // Phase 9P — Notification Inbox
+    // ================================================================
+    //
+    // Reads /api/v1/notifications?portfolio_id=<active>, renders a
+    // sorted list of notification cards, wires up per-item mark-read,
+    // and drives a small unread badge on the Inbox sub-tab button.
+    // Triggered via subTabLoaders.inbox AND refreshed by the websocket
+    // dispatcher when a relevant alert / operator_action / event
+    // arrives.
+
+    const _INBOX_SOURCE_STYLE = {
+        alert:    { label: 'alert',    cls: 'inbox-src-alert'    },
+        digest:   { label: 'digest',   cls: 'inbox-src-digest'   },
+        operator: { label: 'operator', cls: 'inbox-src-operator' },
+        action:   { label: 'action',   cls: 'inbox-src-action'   },
+        event:    { label: 'event',    cls: 'inbox-src-event'    },
+    };
+
+    const _INBOX_PRIORITY_STYLE = {
+        high:   { cls: 'inbox-priority-high',   label: 'High'   },
+        medium: { cls: 'inbox-priority-medium', label: 'Medium' },
+        low:    { cls: 'inbox-priority-low',    label: 'Low'    },
+    };
+
+    // ================================================================
+    // Phase 9Q — Deep-link navigation engine
+    // ================================================================
+    //
+    // Single centralized dispatcher for all structured navigation
+    // targets produced by `src/intelligence/navigation.py`.  Every
+    // clickable "jump" affordance (inbox, recommended actions,
+    // evidence chips, operator recent actions) calls
+    // ``jumpToTarget(target)`` instead of hard-coding the surface.
+
+    //: Map a ``target.surface`` to the top-level tab name the dashboard
+    //: uses.  The operator target lands under Settings.
+    const _TARGET_SURFACE_TO_TAB = {
+        alerts:    'alerts',
+        digest:    'intelligence',
+        events:    'intelligence',
+        operator:  'settings',
+        portfolio: 'portfolio',
+    };
+
+    function _inboxJumpDescriptor(item) {
+        // Derive a compact "does this item have a jump?" descriptor
+        // from the Phase 9Q structured target.  Returns ``null`` if
+        // the backend didn't attach a target.
+        const t = item && item.action_target;
+        if (!t || typeof t !== 'object') return null;
+        if (!t.surface || !_TARGET_SURFACE_TO_TAB[t.surface]) return null;
+        return { target: t, label: t.label || item.action_label || 'Open' };
+    }
+
+    //: Surfaces that accept a sub-tab hint via ``loadSubTab``.  Only
+    //: Intelligence has sub-tabs today — if the target is operator,
+    //: we scroll to the matching anchor inside Settings instead.
+    const _SURFACES_WITH_SUBTABS = new Set(['intelligence']);
+
+    //: Lightweight temporary flash class applied via ``_highlightRowOnce``.
+    //: The CSS animation lasts ~1.8s and then the class removes itself.
+    const _NAV_HIGHLIGHT_CLASS = 'nav-highlight-flash';
+    const _NAV_HIGHLIGHT_MS = 1800;
+
+    function _highlightRowOnce(element) {
+        if (!element) return;
+        try {
+            element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        } catch (_e) {
+            // scrollIntoView isn't supported on detached / test nodes
+        }
+        element.classList.add(_NAV_HIGHLIGHT_CLASS);
+        setTimeout(() => {
+            try { element.classList.remove(_NAV_HIGHLIGHT_CLASS); }
+            catch (_e) { /* node gone */ }
+        }, _NAV_HIGHLIGHT_MS);
+    }
+
+    function _applyHighlight(target) {
+        // Map a highlight_key to a DOM node and flash it briefly.
+        // Keys use "<prefix>:<id>" form, mirroring the backend's
+        // navigation.target_for_* output.
+        //
+        // Phase 9R — extended with exact holding, factor-row, and
+        // relationship-row anchors:
+        //   alert:<id>          → [data-alert-id='<id>']
+        //   event:<id>          → [data-event-id='<id>']
+        //   audit:<id>          → [data-audit-id='<id>']
+        //   holding:<id>        → tr[data-holding-id='<id>']
+        //   ticker:<sym>        → tr[data-ticker='<sym>']
+        //   factor-row:<hid>:<f>→ tr[data-holding-id='<hid>'][data-factor='<f>']
+        //   rel-row:<rel_id>    → tr[data-rel-id='<rel_id>']
+        if (!target || !target.highlight_key) return;
+        const key = target.highlight_key;
+        const idx = key.indexOf(':');
+        if (idx < 0) return;
+        const prefix = key.slice(0, idx);
+        const rest = key.slice(idx + 1);
+        if (!prefix || !rest) return;
+        let selector = null;
+        if (prefix === 'alert') selector = `[data-alert-id="${CSS.escape(rest)}"]`;
+        else if (prefix === 'event') selector = `[data-event-id="${CSS.escape(rest)}"]`;
+        else if (prefix === 'audit') selector = `[data-audit-id="${CSS.escape(rest)}"]`;
+        else if (prefix === 'holding') selector = `tr[data-holding-id="${CSS.escape(rest)}"]`;
+        else if (prefix === 'ticker') selector = `tr[data-ticker="${CSS.escape(rest)}"]`;
+        else if (prefix === 'factor-row') {
+            // Format: factor-row:<holding_id>:<factor>
+            const sep = rest.indexOf(':');
+            if (sep >= 0) {
+                const hid = rest.slice(0, sep);
+                const fac = rest.slice(sep + 1);
+                selector = `tr[data-holding-id="${CSS.escape(hid)}"][data-factor="${CSS.escape(fac)}"]`;
+            }
+        } else if (prefix === 'rel-row') {
+            selector = `tr[data-rel-id="${CSS.escape(rest)}"]`;
+        }
+        else return;
+        // Defer to next tick so the destination surface has finished rendering
+        setTimeout(() => {
+            const el = document.querySelector(selector);
+            if (el) _highlightRowOnce(el);
+        }, 350);
+    }
+
+    function _applyMaintenanceAnchor(target) {
+        // Phase 9S — scroll + flash the exact reconcile or backfill
+        // action block inside the Maintenance Actions card.  The
+        // entity_type field carries the action name from the operator
+        // entry shaper (``holding_relationships`` for reconcile,
+        // ``intelligence_backfill`` for backfill).
+        const actionMap = {
+            'holding_relationships': 'reconcile',
+            'intelligence_backfill': 'backfill',
+        };
+        const actionName = actionMap[target.entity_type] || null;
+        if (!actionName) return;
+        setTimeout(() => {
+            const block = document.querySelector(
+                `[data-maintenance-action="${actionName}"]`,
+            );
+            if (block) _highlightRowOnce(block);
+        }, 400);
+    }
+
+    function _applyTargetFilter(target) {
+        // Phase 9U — apply filter hints from either the new ``filters``
+        // dict or the legacy single ``filter`` field.  Each surface
+        // is handled explicitly so unknown filter keys are a no-op.
+        if (!target) return;
+
+        // Build a merged filters map (new ``filters`` dict takes
+        // precedence; legacy ``filter`` is a fallback for the
+        // operator-factor surface).
+        const f = (target.filters && typeof target.filters === 'object')
+            ? { ...target.filters }
+            : {};
+        // Legacy compat: if ``filter`` is set but ``filters.factor``
+        // is not, promote it into the filters map for the factor
+        // surface.
+        if (target.filter && !f.factor && target.surface === 'operator' && target.subtab === 'factors') {
+            f.factor = target.filter;
+        }
+
+        // --- Operator factor table filter ---
+        if (target.surface === 'operator' && target.subtab === 'factors' && f.factor) {
+            const sel = document.querySelector('#op-factor-filter');
+            if (sel && sel.value !== f.factor) {
+                const hasOption = Array.from(sel.options).some(o => o.value === f.factor);
+                if (hasOption) {
+                    sel.value = f.factor;
+                    if (typeof loadOperatorFactorSensitivities === 'function') loadOperatorFactorSensitivities();
+                }
+            }
+        }
+
+        // --- Operator relationship source filter ---
+        if (target.surface === 'operator' && target.subtab === 'relationships' && f.source) {
+            const sel = document.querySelector('#op-rel-source-filter');
+            if (sel && sel.value !== f.source) {
+                const hasOption = Array.from(sel.options).some(o => o.value === f.source);
+                if (hasOption) {
+                    sel.value = f.source;
+                    if (typeof loadOperatorRelationships === 'function') loadOperatorRelationships();
+                }
+            }
+        }
+
+        // --- Alerts severity + acknowledged filters ---
+        if (target.surface === 'alerts') {
+            let needsReload = false;
+            if (f.severity) {
+                const sel = document.querySelector('#alerts-severity-filter');
+                if (sel) {
+                    const hasOption = Array.from(sel.options).some(o => o.value === f.severity);
+                    if (hasOption && sel.value !== f.severity) {
+                        sel.value = f.severity;
+                        needsReload = true;
+                    }
+                }
+            }
+            if (f.ack) {
+                const sel = document.querySelector('#alerts-ack-filter');
+                if (sel) {
+                    const hasOption = Array.from(sel.options).some(o => o.value === f.ack);
+                    if (hasOption && sel.value !== f.ack) {
+                        sel.value = f.ack;
+                        needsReload = true;
+                    }
+                }
+            }
+            if (needsReload && typeof loadAlerts === 'function') {
+                tabLoaded.alerts = true;
+                loadAlerts();
+            }
+        }
+
+        // --- Events search ---
+        if ((target.surface === 'events' || target.subtab === 'events') && f.search) {
+            const input = document.querySelector('#events-search');
+            if (input) {
+                input.value = f.search;
+                if (typeof filterEvents === 'function') filterEvents(f.search);
+            }
+        }
+    }
+
+    async function _switchPortfolioIfNeeded(target) {
+        if (!target || !target.portfolio_id) return false;
+        if (target.portfolio_id === _activePortfolioId) return false;
+        // Portfolio mismatch — make sure the target portfolio exists
+        // in the user's list before switching.  If not, we silently
+        // skip the switch and let the jump land on the current one
+        // (fail-safe; no cross-portfolio leakage).
+        const known = _portfolioList.some(p => p.id === target.portfolio_id);
+        if (!known) return false;
+        // Use the same side-effecty switch helper the selector uses.
+        const sel = document.querySelector('#portfolio-select');
+        if (sel) sel.value = target.portfolio_id;
+        window.switchPortfolio(target.portfolio_id);
+        return true;
+    }
+
+    window.jumpToTarget = async function jumpToTarget(target) {
+        // Single entry point for all Phase 9Q deep-link navigation.
+        // Safe to call with any value — a null / malformed target is
+        // a no-op, not a crash.
+        if (!target || typeof target !== 'object') return;
+        if (!target.surface || !_TARGET_SURFACE_TO_TAB[target.surface]) return;
+
+        // 1) Portfolio first — never surface another portfolio's data
+        await _switchPortfolioIfNeeded(target);
+
+        // 2) Switch to the top-level tab
+        const tab = _TARGET_SURFACE_TO_TAB[target.surface];
+        if (typeof switchTab === 'function') {
+            switchTab(tab);
+        }
+
+        // 3) Sub-tab hint (Intelligence → Events/Digest/etc.)
+        if (target.subtab && _SURFACES_WITH_SUBTABS.has(tab)) {
+            if (typeof loadSubTab === 'function') {
+                loadSubTab(tab, target.subtab);
+            }
+        }
+
+        // 4) Filter hint (Operator factor filter, etc.)
+        // Deferred so the destination panel has a chance to mount.
+        setTimeout(() => _applyTargetFilter(target), 200);
+
+        // 5) Modal / detail open
+        if (target.open_modal && target.entity_id) {
+            if (target.entity_type === 'event' && typeof window.openEventDetail === 'function') {
+                setTimeout(() => window.openEventDetail(target.entity_id), 300);
+            }
+            // Phase 9S — holding detail slide-out
+            if (target.entity_type === 'holding' && typeof window.openHoldingDetail === 'function') {
+                setTimeout(() => window.openHoldingDetail(target.entity_id), 350);
+            }
+        }
+
+        // 6) Highlight / scroll-into-view for the focused row
+        _applyHighlight(target);
+
+        // Phase 9S — exact maintenance sub-anchor scroll
+        if (target.surface === 'operator' && target.subtab === 'maintenance' && target.entity_type) {
+            _applyMaintenanceAnchor(target);
+        }
+
+        // 7) Phase 9R — write the target to the URL hash so the link
+        //    is shareable / reload-stable.  Deferred so the navigation
+        //    side-effects finish before the address bar updates.
+        setTimeout(() => _writeNavTargetToHash(target), 50);
+    };
+
+    // ================================================================
+    // Phase 9R — Shareable Deep Links (URL hash lifecycle)
+    // ================================================================
+
+    const _NAV_HASH_PREFIX = 'nav=';
+
+    function _encodeNavTarget(target) {
+        // Encode a structured target dict → URL-safe base64 JSON hash.
+        // Mirrors ``encode_nav_hash`` in ``src/intelligence/navigation.py``.
+        if (!target || typeof target !== 'object') return '';
+        const d = { ...target };
+        delete d.label;  // strip UI-only field
+        // Strip null/undefined values for compactness
+        for (const k of Object.keys(d)) {
+            if (d[k] === null || d[k] === undefined) delete d[k];
+        }
+        const json = JSON.stringify(d);
+        // Base64url encode (no native btoa in Node but browsers have it)
+        const b64 = btoa(unescape(encodeURIComponent(json)))
+            .replace(/\+/g, '-')
+            .replace(/\//g, '_')
+            .replace(/=+$/, '');
+        return '#' + _NAV_HASH_PREFIX + b64;
+    }
+
+    function _decodeNavTargetFromHash() {
+        // Parse the current location.hash into a target dict.
+        // Returns null if the hash is empty, malformed, or not a
+        // nav-target.  Mirrors ``decode_nav_hash`` in navigation.py.
+        const raw = location.hash ? location.hash.slice(1) : '';
+        if (!raw.startsWith(_NAV_HASH_PREFIX)) return null;
+        const b64 = raw.slice(_NAV_HASH_PREFIX.length);
+        if (!b64) return null;
+        // Re-add base64 padding
+        const padded = b64 + '==='.slice(0, (4 - (b64.length % 4)) % 4);
+        // Base64url → standard base64
+        const std = padded.replace(/-/g, '+').replace(/_/g, '/');
+        let json;
+        try {
+            json = decodeURIComponent(escape(atob(std)));
+        } catch (_e) {
+            return null;
+        }
+        let d;
+        try {
+            d = JSON.parse(json);
+        } catch (_e) {
+            return null;
+        }
+        if (!d || typeof d !== 'object' || !d.surface || !d.portfolio_id) return null;
+        if (!_TARGET_SURFACE_TO_TAB[d.surface]) return null;
+        return d;
+    }
+
+    // Phase 9S — history-aware navigation.  Track whether the current
+    // jump was initiated by a popstate event (browser back/forward) so
+    // we can suppress the history push and avoid an infinite loop.
+    let _navIsPopstateReplay = false;
+
+    function _writeNavTargetToHash(target) {
+        const h = _encodeNavTarget(target);
+        if (!h) return;
+        try {
+            if (_navIsPopstateReplay) {
+                // During back/forward replay we do NOT push a new entry —
+                // the browser already moved the cursor.  We replaceState
+                // so the hash stays visually consistent if the user
+                // later copies the URL.
+                history.replaceState(null, '', h);
+            } else {
+                // Normal jump — push a NEW history entry so the user can
+                // press back to return to the previous surface.
+                history.pushState(null, '', h);
+            }
+        } catch (_e) { /* sandboxed — ignore */ }
+    }
+
+    function _clearNavHash() {
+        try {
+            history.replaceState(null, '', location.pathname + location.search);
+        } catch (_e) { /* sandboxed — ignore */ }
+    }
+
+    // Phase 9S — popstate listener for browser back/forward.  When the
+    // user presses back/forward, the browser fires ``popstate`` and
+    // ``location.hash`` already reflects the target entry.  We decode
+    // and replay the jump with the recursive-push guard so the history
+    // cursor doesn't drift.
+    window.addEventListener('popstate', () => {
+        const target = _decodeNavTargetFromHash();
+        if (!target) {
+            // Back to a hashless URL → return to the default Portfolio tab.
+            if (typeof switchTab === 'function') switchTab('portfolio');
+            return;
+        }
+        _navIsPopstateReplay = true;
+        try {
+            if (typeof window.jumpToTarget === 'function') {
+                window.jumpToTarget(target);
+            }
+        } finally {
+            // Reset the flag AFTER the sync part of jumpToTarget finishes.
+            // The async parts (portfolio switch, deferred highlight) are
+            // fire-and-forget — they never push history because the flag
+            // is still true when their setTimeout callbacks fire.  We
+            // reset it on the NEXT macrotask so all deferred callbacks
+            // inside jumpToTarget see the flag as true.
+            setTimeout(() => { _navIsPopstateReplay = false; }, 500);
+        }
+    });
+
+    //: Consume the URL hash on initial page load (consume-once model).
+    //: If a valid nav target is found, execute the jump pipeline.
+    //: The jump pushes a new history entry via pushState so the initial
+    //: hashless state becomes the back-target.
+    let _initialNavConsumed = false;
+    function _consumeInitialNavHash() {
+        if (_initialNavConsumed) return;
+        _initialNavConsumed = true;
+        const target = _decodeNavTargetFromHash();
+        if (!target) return;
+        // Defer the jump slightly so tab loaders from the default
+        // bootstrap have a chance to mount DOM elements.
+        setTimeout(() => {
+            if (typeof window.jumpToTarget === 'function') {
+                window.jumpToTarget(target);
+            }
+        }, 150);
+    }
+
+    // Expose for testing
+    window._encodeNavTarget = _encodeNavTarget;
+    window._decodeNavTargetFromHash = _decodeNavTargetFromHash;
+
+    // ================================================================
+    // Phase 9R — Copy-link affordance
+    // ================================================================
+
+    async function _copyDeepLink(target) {
+        // Build the full absolute URL with the nav hash and copy it
+        // to the clipboard.  Shows a lightweight toast on success.
+        if (!target || typeof target !== 'object') return;
+        const hash = _encodeNavTarget(target);
+        if (!hash) return;
+        const url = location.origin + location.pathname + hash;
+        try {
+            await navigator.clipboard.writeText(url);
+            if (typeof showToast === 'function') {
+                showToast('Deep link copied to clipboard');
+            }
+        } catch (_e) {
+            // Clipboard write failed (sandboxed iframe, permissions) —
+            // fall back to a simple prompt the user can Ctrl+C from.
+            try { prompt('Copy this link:', url); }
+            catch (_ee) { /* headless / test — ignore */ }
+        }
+    }
+
+    // Expose for testing + inline onclick handlers
+    window._copyDeepLink = _copyDeepLink;
+
+    function _updateInboxBadge(summary) {
+        // Drives the unread counter next to the Inbox sub-tab label.
+        const badge = $('#inbox-unread-badge');
+        if (!badge) return;
+        const unread = (summary && typeof summary.unread === 'number') ? summary.unread : 0;
+        if (unread > 0) {
+            badge.textContent = String(unread > 99 ? '99+' : unread);
+            badge.hidden = false;
+        } else {
+            badge.textContent = '0';
+            badge.hidden = true;
+        }
+    }
+
+    function _renderInboxItems(items) {
+        const list = Array.isArray(items) ? items : [];
+        if (!list.length) {
+            return `<div class="inbox-empty card"><p class="text-sm text-muted">You're all caught up — no notifications right now.</p><p class="text-xs text-muted">Signals from alerts, digests, operator actions, and high-priority recommendations will appear here.</p></div>`;
+        }
+        return `<ul class="inbox-list">${list.map(item => {
+            const src = _INBOX_SOURCE_STYLE[item.source_type] || { label: item.source_type || 'item', cls: '' };
+            const pri = _INBOX_PRIORITY_STYLE[item.priority] || _INBOX_PRIORITY_STYLE.low;
+            const refs = (item.evidence_refs || []).slice(0, 3);
+            const refsRow = refs.length
+                ? `<div class="evidence-refs inbox-evidence-refs">
+                       <span class="evidence-refs-label">Grounded in:</span>
+                       ${refs.map(r => `<span class="evidence-ref-chip" title="${esc(r)}">${esc(r)}</span>`).join('')}
+                   </div>`
+                : '';
+            const jump = _inboxJumpDescriptor(item);
+            const jumpBtn = jump
+                ? `<button class="btn btn-ghost btn-sm inbox-jump-btn" data-nav-jump="1">${esc(jump.label)} &rarr;</button>`
+                : '';
+            // Phase 9Q — stash the structured target on the row so a
+            // single click delegator can invoke jumpToTarget without
+            // re-parsing strings.  JSON-safe, escaped via esc().
+            const targetJson = jump ? JSON.stringify(jump.target) : '';
+            const readBtn = item.unread
+                ? `<button class="btn btn-ghost btn-sm inbox-mark-read-btn" data-inbox-key="${esc(item.key)}" title="Mark read">Mark read</button>`
+                : `<span class="inbox-read-chip text-xs text-muted" title="Marked read">&#10003; Read</span>`;
+            // Phase 9R — compact copy-link button for shareable deep links
+            const copyBtn = jump
+                ? `<button type="button" class="btn btn-ghost btn-sm copy-link-btn inbox-copy-link-btn" title="Copy deep link" data-copy-target="${escAttr(targetJson)}">&#128279;</button>`
+                : '';
+            return `
+                <li class="inbox-item ${item.unread ? 'inbox-item-unread' : 'inbox-item-read'} inbox-priority-${esc(item.priority || 'low')}" data-inbox-key="${esc(item.key)}" data-source-type="${esc(item.source_type || '')}" ${targetJson ? `data-nav-target="${escAttr(targetJson)}"` : ''}>
+                    <div class="inbox-item-header">
+                        <span class="inbox-source-badge ${src.cls}">${esc(src.label)}</span>
+                        <span class="inbox-priority-pill ${pri.cls}">${esc(pri.label)}</span>
+                        <span class="inbox-timestamp text-xs text-muted">${timeAgo(item.timestamp) || formatDate(item.timestamp)}</span>
+                        <span class="inbox-spacer"></span>
+                        ${copyBtn}
+                        ${readBtn}
+                    </div>
+                    <div class="inbox-item-title">${esc(item.title || '')}</div>
+                    ${item.body ? `<div class="inbox-item-body text-sm text-muted">${esc(item.body)}</div>` : ''}
+                    ${refsRow}
+                    ${jumpBtn ? `<div class="inbox-item-actions">${jumpBtn}</div>` : ''}
+                </li>
+            `;
+        }).join('')}</ul>`;
+    }
+
+    function _renderInboxSummary(summary) {
+        if (!summary) return '';
+        const parts = [];
+        if (summary.unread != null) {
+            parts.push(`<span class="inbox-summary-unread"><strong>${summary.unread}</strong> unread</span>`);
+        }
+        if (summary.total != null) {
+            parts.push(`<span class="inbox-summary-total text-xs text-muted">${summary.total} total</span>`);
+        }
+        const bs = summary.by_source || {};
+        const bySrcParts = Object.keys(bs).map(k => `${bs[k]} ${k}`).join(' · ');
+        if (bySrcParts) {
+            parts.push(`<span class="inbox-summary-bysource text-xs text-muted">${esc(bySrcParts)}</span>`);
+        }
+        return `<div class="inbox-summary">${parts.join(' ')}</div>`;
+    }
+
+    async function loadInbox() {
+        const el = $('#inbox-content');
+        if (!el) return;
+        const pid = encodeURIComponent(_activePortfolioId);
+        try {
+            const data = await fetchJSON(`${API.notificationsInbox}?portfolio_id=${pid}`);
+            const items = (data && Array.isArray(data.items)) ? data.items : [];
+            const summary = (data && data.summary) || { total: 0, unread: 0 };
+            el.innerHTML = _renderInboxSummary(summary) + _renderInboxItems(items);
+            _updateInboxBadge(summary);
+        } catch (e) {
+            el.innerHTML = `<div class="card"><p class="text-sm text-danger">Could not load inbox: ${esc(e.message || 'unknown error')}</p></div>`;
+        }
+    }
+
+    async function markInboxItemRead(key) {
+        if (!key) return;
+        try {
+            await postJSON(API.notificationsMarkRead, {
+                key,
+                portfolio_id: _activePortfolioId,
+            });
+            await loadInbox();
+        } catch (e) {
+            showToast('Mark read failed: ' + e.message, 'error');
+        }
+    }
+
+    async function markAllInboxRead() {
+        try {
+            const resp = await postJSON(API.notificationsMarkAllRead, {
+                portfolio_id: _activePortfolioId,
+            });
+            const n = (resp && typeof resp.marked === 'number') ? resp.marked : 0;
+            showToast(n > 0 ? `Marked ${n} notification${n === 1 ? '' : 's'} read` : 'Nothing to mark read');
+            await loadInbox();
+        } catch (e) {
+            showToast('Mark all read failed: ' + e.message, 'error');
+        }
+    }
+
+    async function refreshInboxBadgeOnly() {
+        // Lightweight header-only refresh used when the inbox panel is
+        // not currently visible.  Hits the same endpoint but only
+        // updates the unread counter so the sub-tab badge stays in
+        // sync without rebuilding the list.
+        const pid = encodeURIComponent(_activePortfolioId);
+        try {
+            const data = await fetchJSON(`${API.notificationsInbox}?portfolio_id=${pid}`);
+            _updateInboxBadge(data && data.summary);
+        } catch (_e) {
+            // Silent — the badge just stays stale until the panel
+            // reloads.  No toast; this runs on background events.
+        }
+    }
+
+    // Phase 9Q — single click delegator for mark-read + deep-link
+    // jumps.  A ``data-nav-target`` JSON attribute on any ancestor
+    // element carries the structured target; a ``data-nav-jump="1"``
+    // or ``.evidence-ref-chip[data-nav-jump]`` child triggers the
+    // dispatcher.  This replaces the Phase 9P string-parsing version.
+    function _dispatchNavFromEvent(ev) {
+        // Phase 9R — copy-link buttons
+        const copyBtn = ev.target.closest('.copy-link-btn[data-copy-target]');
+        if (copyBtn) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            try {
+                const target = JSON.parse(copyBtn.getAttribute('data-copy-target'));
+                _copyDeepLink(target);
+            } catch (_e) { /* malformed — ignore */ }
+            return true;
+        }
+        const markBtn = ev.target.closest('.inbox-mark-read-btn');
+        if (markBtn) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            markInboxItemRead(markBtn.dataset.inboxKey);
+            return true;
+        }
+        const jumpBtn = ev.target.closest('[data-nav-jump="1"]');
+        if (jumpBtn) {
+            ev.preventDefault();
+            ev.stopPropagation();
+            // Walk up to find the nearest element carrying the target
+            const host = jumpBtn.closest('[data-nav-target]') || jumpBtn;
+            const raw = host.getAttribute('data-nav-target');
+            if (!raw) return true;
+            let target;
+            try {
+                target = JSON.parse(raw);
+            } catch (_e) {
+                return true;  // malformed — silently ignore
+            }
+            if (typeof window.jumpToTarget === 'function') {
+                window.jumpToTarget(target);
+            }
+            return true;
+        }
+        return false;
+    }
+
+    document.addEventListener('click', _dispatchNavFromEvent);
+
+    // Keyboard activation for role="button" elements (operator
+    // recent rows, clickable evidence chips).  Mirrors the standard
+    // behaviour browsers give to actual <button> elements.
+    document.addEventListener('keydown', (ev) => {
+        if (ev.key !== 'Enter' && ev.key !== ' ') return;
+        const target = ev.target.closest('[data-nav-jump="1"]');
+        if (!target) return;
+        // Avoid double-firing if the element is a native button/link
+        // (the browser already emits a click event for Space/Enter).
+        if (target.tagName === 'BUTTON' || target.tagName === 'A') return;
+        _dispatchNavFromEvent(ev);
+    });
 
     // ================================================================
     // Audit Tab
@@ -1778,10 +3476,16 @@
         transcript.scrollTop = transcript.scrollHeight;
 
         try {
+            // Phase 9E: include the active portfolio so the backend
+            // can scope holdings, alerts, events, and factor /
+            // relationship touchpoints to exactly this portfolio.
             const res = await fetch('/api/v1/chat', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ query }),
+                body: JSON.stringify({
+                    query,
+                    portfolio_id: getActivePortfolioId(),
+                }),
             });
 
             loadDiv.remove();
@@ -2424,13 +4128,1075 @@
         });
     };
 
-    // Patch the tab loader so Settings loads API key status + health + sources
+    // ================================================================
+    // Phase 9I — Operator panel (factor overrides, relationships,
+    //                           reconcile, backfill)
+    // ================================================================
+    //
+    // Everything in this block is a thin UI on top of the Phase 9H
+    // /api/v1/operator/* endpoints.  The panel is portfolio-scoped via
+    // _pq() so switching portfolios automatically refreshes what the
+    // operator sees.  Source-lane protection (seed/default/ai_inferred
+    // are read-only) is enforced server-side AND mirrored in the UI
+    // so the buttons that would 409 are never rendered.
+
+    const _OP_SOURCE_STYLE = {
+        manual:       { label: 'manual',      cls: 'op-src-manual',   editable: true  },
+        seed:         { label: 'seed',        cls: 'op-src-seed',     editable: false },
+        ai_inferred:  { label: 'ai-inferred', cls: 'op-src-ai',       editable: false },
+        default:      { label: 'default',     cls: 'op-src-default',  editable: false },
+        zero:         { label: 'zero',        cls: 'op-src-zero',     editable: false },
+    };
+
+    function _opSourceBadge(source) {
+        const style = _OP_SOURCE_STYLE[source] || { label: source || 'unknown', cls: 'op-src-default' };
+        return `<span class="op-source-badge ${style.cls}">${esc(style.label)}</span>`;
+    }
+
+    let _opFactorTaxonomyCache = null;
+    let _opHoldingsCache = [];
+    let _opFactorRowsCache = [];
+    let _opRelRowsCache = [];
+
+    async function _opLoadFactorTaxonomy() {
+        if (_opFactorTaxonomyCache) return _opFactorTaxonomyCache;
+        try {
+            const rows = await fetchJSON(API.opFactorTaxonomy);
+            _opFactorTaxonomyCache = Array.isArray(rows) ? rows : [];
+        } catch (e) {
+            _opFactorTaxonomyCache = [];
+        }
+        return _opFactorTaxonomyCache;
+    }
+
+    // Phase 9N — compute a grounded "next step" hint from the stats
+    // returned by a reconcile / backfill / manual-edit action.  Pure
+    // function, mirrors the backend ``build_operator_maintenance_action``
+    // contract on the client side so we don't have to round-trip the
+    // server for a one-line text.
+    function _opMaintenanceHint(action, stats, manualEditType) {
+        if (action === 'reconcile' && stats) {
+            const changed = (stats.created || 0) + (stats.updated || 0);
+            const pruned = stats.pruned || 0;
+            if (changed === 0 && pruned === 0) return null;
+            return `Consider running backfill to apply these ${changed + pruned} seed change${changed + pruned !== 1 ? 's' : ''} to recent events.`;
+        }
+        if (action === 'backfill' && stats) {
+            const linksAdded = stats.links_added || 0;
+            const mfeAdded = stats.mfe_added || 0;
+            const failed = stats.events_failed || 0;
+            if (linksAdded === 0 && mfeAdded === 0 && failed === 0) {
+                return 'No new links landed — historical data was already consistent.';
+            }
+            if (failed > 0) {
+                return `${failed} event${failed !== 1 ? 's' : ''} failed — inspect the audit log before retrying.`;
+            }
+            return `Open the intelligence overview to see the updated posture (${linksAdded} new link${linksAdded !== 1 ? 's' : ''}, ${mfeAdded} factor row${mfeAdded !== 1 ? 's' : ''}).`;
+        }
+        if (action === 'manual_edit') {
+            return 'Run backfill to apply this to recent events (7-day window).';
+        }
+        return null;
+    }
+
+    function _opShowLastResult(title, body, tone, nextStep) {
+        const el = $('#op-last-result');
+        if (!el) return;
+        el.className = 'op-last-result op-last-result-' + (tone || 'info');
+        // Phase 9L: include a local timestamp + audit-trail hint on
+        // every "ok" result so the operator has visible proof the
+        // action was recorded.  Busy / error states skip the hint.
+        //
+        // Phase 9N: optional ``nextStep`` line renders as a subtle
+        // "Next step" row above the footer — grounded in real stats
+        // returned by the action, not invented.
+        const now = new Date();
+        const timestamp = now.toLocaleTimeString(undefined, {
+            hour: '2-digit', minute: '2-digit', second: '2-digit',
+        });
+        const wantsAuditHint = tone === 'ok';
+        const footer = wantsAuditHint
+            ? `<div class="op-last-result-footer">
+                   <span>${esc(timestamp)}</span>
+                   <span class="op-audit-hint" title="Every operator action is written to the audit log">
+                       &#10003; Saved with audit trail
+                   </span>
+               </div>`
+            : `<div class="op-last-result-footer">
+                   <span>${esc(timestamp)}</span>
+               </div>`;
+        const nextStepBlock = nextStep
+            ? `<div class="op-last-result-next-step"><span class="op-next-step-label">Next step:</span> ${esc(nextStep)}</div>`
+            : '';
+        el.innerHTML =
+            `<strong>${esc(title)}</strong>`
+            + `<div class="text-xs op-last-result-body">${body}</div>`
+            + nextStepBlock
+            + footer;
+        el.hidden = false;
+    }
+
+    // Phase 9L — tiny helper to surface 429 rate-limit responses in
+    // a friendly toast.  Mentions the bucket + retry timing when the
+    // server provides them (see src/api/middleware.py :: _classify_request).
+    // Deliberately throttled so a burst of 429s doesn't spam the user:
+    // one toast per second window, per bucket.
+    const _rateLimitToastWindowMs = 4000;
+    const _rateLimitLastToast = { _default: 0 };
+    function _surfaceRateLimitToast(err) {
+        const now = Date.now();
+        const key = err.bucket || '_default';
+        if (now - (_rateLimitLastToast[key] || 0) < _rateLimitToastWindowMs) {
+            return;  // throttled
+        }
+        _rateLimitLastToast[key] = now;
+        const retryBit = err.retryAfter ? ` — retry in ~${err.retryAfter}s` : '';
+        const bucketBit = err.bucket ? ` [${err.bucket}]` : '';
+        const limitBit = err.limitPerMinute ? ` (max ${err.limitPerMinute}/min)` : '';
+        showToast(
+            `Rate limit reached${bucketBit}${limitBit}${retryBit}`,
+            'warning',
+        );
+    }
+
+    // ---- Factor sensitivities ------------------------------------
+
+    async function loadOperatorFactorSensitivities() {
+        const el = $('#op-factor-table');
+        if (!el) return;
+        el.innerHTML = '<div class="spinner">Loading factor sensitivities...</div>';
+
+        const factorFilter = $('#op-factor-filter')?.value || '';
+        const params = new URLSearchParams({ portfolio_id: _activePortfolioId });
+        if (factorFilter) params.set('factor', factorFilter);
+
+        try {
+            const rows = await fetchJSON(`${API.opFactorSensitivities}?${params.toString()}`);
+            _opFactorRowsCache = Array.isArray(rows) ? rows : [];
+            renderOperatorFactorTable(_opFactorRowsCache);
+        } catch (e) {
+            el.innerHTML = renderError('factor sensitivities: ' + e.message);
+        }
+    }
+
+    function renderOperatorFactorTable(rows) {
+        const el = $('#op-factor-table');
+        if (!el) return;
+        if (!rows.length) {
+            el.innerHTML = `<div class="empty-state op-empty"><p class="text-sm text-muted">No holdings in this portfolio — add a holding first.</p></div>`;
+            return;
+        }
+
+        const body = rows.map(r => {
+            const style = _OP_SOURCE_STYLE[r.source] || _OP_SOURCE_STYLE.default;
+            const canEdit = true; // every row is editable (create / update / delete override)
+            const editLabel = r.source === 'manual' ? 'Edit' : 'Override';
+            const deleteBtn = r.source === 'manual'
+                ? `<button class="btn-icon btn-icon-danger" data-op="op-factor-delete" data-id="${esc(r.override_id || '')}" title="Delete override">&#10005;</button>`
+                : '';
+            // Phase 9O — provenance hint.  Manual rows get a subtle
+            // "edited <time ago>" line under the timestamp; sector/
+            // zero defaults get a "default" hint instead so the
+            // operator can distinguish a deliberate default from a
+            // missing row at a glance.
+            let provenance = '';
+            if (r.source === 'manual' && r.updated_at) {
+                provenance = `<div class="op-provenance op-provenance-manual" title="Manual override">edited ${esc(timeAgo(r.updated_at) || '')}</div>`;
+            } else if (r.source === 'default') {
+                provenance = `<div class="op-provenance op-provenance-default" title="Sector default">sector default</div>`;
+            } else if (r.source === 'zero') {
+                provenance = `<div class="op-provenance op-provenance-default" title="No prior">no prior</div>`;
+            }
+            return `
+                <tr data-holding-id="${esc(r.holding_id)}" data-factor="${esc(r.factor)}" data-source="${esc(r.source || '')}">
+                    <td class="text-mono">${esc(r.ticker)}</td>
+                    <td>${esc(r.factor_label || r.factor)}</td>
+                    <td class="num">${Number(r.effective_value).toFixed(2)}</td>
+                    <td>${_opSourceBadge(r.source)}${provenance}</td>
+                    <td class="num">${r.override_value != null ? Number(r.override_value).toFixed(2) : '<span class="text-muted">—</span>'}</td>
+                    <td class="text-xs text-muted">${r.updated_at ? formatDate(r.updated_at) : '—'}</td>
+                    <td>
+                        <button class="btn-icon" data-op="op-factor-edit" data-holding-id="${esc(r.holding_id)}" data-factor="${esc(r.factor)}" title="${editLabel} override">&#9998;</button>
+                        ${deleteBtn}
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        el.innerHTML = `
+            <div class="table-wrap">
+                <table class="data-table op-factor-table">
+                    <thead><tr>
+                        <th>Ticker</th><th>Factor</th><th class="num">Effective</th><th>Source</th><th class="num">Override</th><th>Updated</th><th style="width:70px;"></th>
+                    </tr></thead>
+                    <tbody>${body}</tbody>
+                </table>
+            </div>`;
+    }
+
+    async function _opOpenFactorModal(holdingId, factor) {
+        const row = _opFactorRowsCache.find(r => r.holding_id === holdingId && r.factor === factor);
+        if (!row) { showToast('Row not found', 'error'); return; }
+
+        $('#op-factor-modal-title').textContent = row.source === 'manual'
+            ? `Edit override · ${row.ticker}`
+            : `New override · ${row.ticker}`;
+        $('#op-factor-modal-holding').textContent = `${row.ticker} · ${row.holding_id.slice(0, 8)}…`;
+        $('#op-factor-modal-factor').textContent = `${row.factor_label || row.factor} (${row.factor})`;
+        $('#op-factor-sensitivity').value = row.override_value != null
+            ? Number(row.override_value).toFixed(2)
+            : Number(row.effective_value).toFixed(2);
+        $('#op-factor-reason').value = '';
+        $('#op-factor-modal-current').innerHTML = row.source === 'manual'
+            ? `Currently overriding the ${row.sector || 'sector'} default. Effective value: <code>${Number(row.effective_value).toFixed(2)}</code>.`
+            : `No override yet. The propagator currently uses the <code>${row.source}</code> value <code>${Number(row.effective_value).toFixed(2)}</code>.`;
+
+        const deleteBtn = $('#op-factor-delete-btn');
+        if (row.source === 'manual' && row.override_id) {
+            deleteBtn.style.display = '';
+            deleteBtn.onclick = async () => {
+                if (!confirm(`Delete manual override for ${row.ticker} · ${row.factor}? The system will fall back to the sector default.`)) return;
+                try {
+                    await deleteJSON(`${API.opFactorOverrideById(row.override_id)}?reason=${encodeURIComponent($('#op-factor-reason').value || 'ui delete')}`);
+                    $('#op-factor-modal').close();
+                    showToast(`Override cleared for ${row.ticker}/${row.factor}`);
+                    _opShowLastResult(
+                        'Override deleted',
+                        `${esc(row.ticker)} · ${esc(row.factor)} reverted to ${esc(row.source === 'manual' ? 'default' : row.source)} value.`,
+                        'ok',
+                    );
+                    await loadOperatorFactorSensitivities();
+                    loadOperatorRecentActions();
+                } catch (e) {
+                    showToast('Delete failed: ' + e.message, 'error');
+                }
+            };
+        } else {
+            deleteBtn.style.display = 'none';
+            deleteBtn.onclick = null;
+        }
+
+        $('#op-factor-save-btn').onclick = async () => {
+            const sensitivity = Number($('#op-factor-sensitivity').value);
+            if (!Number.isFinite(sensitivity) || sensitivity < -1 || sensitivity > 1) {
+                showToast('Sensitivity must be between -1.0 and 1.0', 'error');
+                return;
+            }
+            try {
+                const result = await postJSON(API.opFactorOverrides, {
+                    holding_id: row.holding_id,
+                    factor: row.factor,
+                    sensitivity,
+                    reason: $('#op-factor-reason').value || null,
+                });
+                $('#op-factor-modal').close();
+                showToast(`Override saved for ${row.ticker}/${row.factor}`);
+                _opShowLastResult(
+                    'Override saved',
+                    `${esc(row.ticker)} · ${esc(row.factor)} = <code>${Number(result.sensitivity).toFixed(2)}</code> (source <code>${esc(result.source)}</code>)`,
+                    'ok',
+                    _opMaintenanceHint('manual_edit'),
+                );
+                await loadOperatorFactorSensitivities();
+                loadOperatorRecentActions();  // Phase 9O — refresh readback
+            } catch (e) {
+                showToast('Save failed: ' + e.message, 'error');
+            }
+        };
+
+        $('#op-factor-modal').showModal();
+    }
+
+    async function _opDeleteFactorOverride(overrideId) {
+        if (!overrideId) return;
+        if (!confirm('Delete this manual factor override? The system will fall back to the sector default.')) return;
+        try {
+            await deleteJSON(`${API.opFactorOverrideById(overrideId)}?reason=${encodeURIComponent('ui quick delete')}`);
+            showToast('Override deleted');
+            _opShowLastResult('Override deleted', `override <code>${esc(overrideId.slice(0, 8))}…</code> removed`, 'ok');
+            await loadOperatorFactorSensitivities();
+            loadOperatorRecentActions();  // Phase 9O — refresh readback
+        } catch (e) {
+            showToast('Delete failed: ' + e.message, 'error');
+        }
+    }
+
+    // ---- Relationships -------------------------------------------
+
+    async function loadOperatorRelationships() {
+        const el = $('#op-rel-table');
+        if (!el) return;
+        el.innerHTML = '<div class="spinner">Loading relationships...</div>';
+
+        const sourceFilter = $('#op-rel-source-filter')?.value || '';
+        const params = new URLSearchParams({ portfolio_id: _activePortfolioId });
+        if (sourceFilter) params.set('source', sourceFilter);
+
+        try {
+            const rows = await fetchJSON(`${API.opRelationships}?${params.toString()}`);
+            _opRelRowsCache = Array.isArray(rows) ? rows : [];
+            renderOperatorRelationshipTable(_opRelRowsCache);
+        } catch (e) {
+            el.innerHTML = renderError('relationships: ' + e.message);
+        }
+    }
+
+    function renderOperatorRelationshipTable(rows) {
+        const el = $('#op-rel-table');
+        if (!el) return;
+        if (!rows.length) {
+            el.innerHTML = `
+                <div class="empty-state op-empty">
+                    <p class="text-sm text-muted">
+                        No relationship rows for this portfolio. Seed rows come from
+                        <code>config/relationships.yaml</code> — add one there and run
+                        Reconcile, or add a manual row here.
+                    </p>
+                </div>`;
+            return;
+        }
+
+        const body = rows.map(r => {
+            const editable = r.source === 'manual';
+            const relatedCell = r.related_ticker
+                ? `<span class="text-mono">${esc(r.related_ticker)}</span>${r.related_name ? ` <span class="text-xs text-muted">${esc(r.related_name)}</span>` : ''}`
+                : r.related_entity_key
+                    ? `<span class="text-mono text-xs">${esc(r.related_entity_key)}</span>${r.related_name ? ` <span class="text-xs text-muted">${esc(r.related_name)}</span>` : ''}`
+                    : `<span class="text-muted">—</span>`;
+            const actions = editable
+                ? `
+                    <button class="btn-icon" data-op="op-rel-edit" data-id="${esc(r.id)}" title="Edit manual row">&#9998;</button>
+                    <button class="btn-icon btn-icon-danger" data-op="op-rel-delete" data-id="${esc(r.id)}" title="Delete manual row">&#10005;</button>
+                `
+                : `<span class="op-rel-locked" title="Non-manual rows are read-only">&#128274;</span>`;
+            // Phase 9O — provenance hint.  Seed rows read-only with
+            // a "YAML-backed" micro-label; manual rows show a
+            // "edited <time ago>" line so the operator can tell at a
+            // glance which rows they own.
+            let provenance = '';
+            if (r.source === 'manual' && r.updated_at) {
+                provenance = `<div class="op-provenance op-provenance-manual" title="Manual entry">edited ${esc(timeAgo(r.updated_at) || '')}</div>`;
+            } else if (r.source === 'seed') {
+                provenance = `<div class="op-provenance op-provenance-seed" title="Loaded from config/relationships.yaml">YAML-backed</div>`;
+            } else if (r.source === 'ai_inferred') {
+                provenance = `<div class="op-provenance op-provenance-ai" title="Inferred by a Phase 9E agent">agent-inferred</div>`;
+            }
+            return `
+                <tr data-rel-id="${esc(r.id)}" data-source="${esc(r.source || '')}">
+                    <td class="text-mono">${esc(r.ticker)}</td>
+                    <td class="text-xs text-muted">${esc(r.portfolio_id)}</td>
+                    <td><span class="badge badge-muted">${esc(r.relationship_type)}</span></td>
+                    <td>${relatedCell}</td>
+                    <td class="num">${Number(r.strength).toFixed(2)}</td>
+                    <td>${_opSourceBadge(r.source)}${provenance}</td>
+                    <td class="text-xs text-muted">${r.updated_at ? formatDate(r.updated_at) : '—'}</td>
+                    <td>${actions}</td>
+                </tr>
+            `;
+        }).join('');
+
+        el.innerHTML = `
+            <div class="table-wrap">
+                <table class="data-table op-rel-table">
+                    <thead><tr>
+                        <th>Holding</th><th>Portfolio</th><th>Type</th><th>Related</th><th class="num">Strength</th><th>Source</th><th>Updated</th><th style="width:80px;"></th>
+                    </tr></thead>
+                    <tbody>${body}</tbody>
+                </table>
+            </div>`;
+    }
+
+    function _opOpenRelModal(mode, existing) {
+        $('#op-rel-modal-title').textContent = mode === 'edit' ? 'Edit Manual Relationship' : 'Add Manual Relationship';
+
+        const sel = $('#op-rel-holding');
+        sel.innerHTML = (_opHoldingsCache || [])
+            .map(h => `<option value="${esc(h.id)}">${esc(h.ticker)}</option>`)
+            .join('');
+
+        if (mode === 'edit' && existing) {
+            // In edit mode, holding + relationship_type + identity tuple are immutable
+            sel.value = existing.holding_id;
+            sel.disabled = true;
+            $('#op-rel-type').value = existing.relationship_type;
+            $('#op-rel-type').disabled = true;
+            $('#op-rel-related-ticker').value = existing.related_ticker || '';
+            $('#op-rel-related-ticker').disabled = true;
+            $('#op-rel-related-entity-key').value = existing.related_entity_key || '';
+            $('#op-rel-related-entity-key').disabled = true;
+            $('#op-rel-related-name').value = existing.related_name || '';
+            $('#op-rel-strength').value = Number(existing.strength || 0.5).toFixed(2);
+            $('#op-rel-description').value = existing.description || '';
+            $('#op-rel-reason').value = '';
+        } else {
+            sel.disabled = false;
+            $('#op-rel-type').disabled = false;
+            $('#op-rel-type').value = 'supplier';
+            $('#op-rel-related-ticker').disabled = false;
+            $('#op-rel-related-ticker').value = '';
+            $('#op-rel-related-entity-key').disabled = false;
+            $('#op-rel-related-entity-key').value = '';
+            $('#op-rel-related-name').value = '';
+            $('#op-rel-strength').value = '0.50';
+            $('#op-rel-description').value = '';
+            $('#op-rel-reason').value = '';
+        }
+
+        $('#op-rel-save-btn').onclick = async () => {
+            const body = {
+                holding_id: sel.value,
+                relationship_type: $('#op-rel-type').value,
+                related_ticker: ($('#op-rel-related-ticker').value || '').trim() || null,
+                related_entity_key: ($('#op-rel-related-entity-key').value || '').trim() || null,
+                related_name: ($('#op-rel-related-name').value || '').trim() || null,
+                strength: Number($('#op-rel-strength').value),
+                description: ($('#op-rel-description').value || '').trim() || null,
+                reason: ($('#op-rel-reason').value || '').trim() || null,
+            };
+            if (!body.related_ticker && !body.related_entity_key) {
+                showToast('Provide related_ticker or related_entity_key', 'error');
+                return;
+            }
+            if (!Number.isFinite(body.strength) || body.strength < 0 || body.strength > 1) {
+                showToast('Strength must be between 0.0 and 1.0', 'error');
+                return;
+            }
+            try {
+                if (mode === 'edit' && existing) {
+                    await putJSON(API.opRelationshipById(existing.id), {
+                        strength: body.strength,
+                        related_name: body.related_name,
+                        description: body.description,
+                        reason: body.reason,
+                    });
+                    _opShowLastResult(
+                        'Relationship updated',
+                        `manual row <code>${esc(existing.id.slice(0, 8))}…</code> updated`,
+                        'ok',
+                        _opMaintenanceHint('manual_edit'),
+                    );
+                } else {
+                    const created = await postJSON(API.opRelationships, body);
+                    _opShowLastResult(
+                        'Manual relationship created',
+                        `${esc(created.ticker)} &rarr; ${esc(created.related_ticker || created.related_entity_key || '')} (<code>${esc(created.relationship_type)}</code>)`,
+                        'ok',
+                        _opMaintenanceHint('manual_edit'),
+                    );
+                }
+                $('#op-rel-modal').close();
+                showToast('Relationship saved');
+                await loadOperatorRelationships();
+                loadOperatorRecentActions();
+            } catch (e) {
+                showToast('Save failed: ' + e.message, 'error');
+            }
+        };
+
+        $('#op-rel-modal').showModal();
+    }
+
+    async function _opDeleteRelationship(relId) {
+        const row = _opRelRowsCache.find(r => r.id === relId);
+        if (!row) return;
+        if (row.source !== 'manual') {
+            showToast(`Cannot delete ${row.source} rows. Only manual rows are editable here.`, 'error');
+            return;
+        }
+        const label = row.related_ticker || row.related_entity_key || row.relationship_type;
+        if (!confirm(`Delete manual relationship ${row.ticker} → ${label}? This cannot be undone.`)) return;
+        try {
+            await deleteJSON(`${API.opRelationshipById(relId)}?reason=${encodeURIComponent('ui delete')}`);
+            showToast('Relationship deleted');
+            _opShowLastResult('Manual relationship deleted', `${esc(row.ticker)} &rarr; ${esc(label)} removed`, 'ok');
+            await loadOperatorRelationships();
+            loadOperatorRecentActions();
+        } catch (e) {
+            showToast('Delete failed: ' + e.message, 'error');
+        }
+    }
+
+    // ---- Phase 9L — Live action status, busy buttons, 409/429 UX ---
+
+    // Action-chip labels + styling.  The server-reported lock state
+    // (from /api/v1/operator/actions/status) feeds directly into this
+    // table.  The "locally running" state is a UI-only superset — it
+    // triggers instantly on button click so the user sees immediate
+    // feedback even before the first status poll fires.
+    const _OP_CHIP_STYLE = {
+        idle:       { label: 'Idle',     cls: 'op-action-chip-idle' },
+        running:    { label: 'Running…', cls: 'op-action-chip-running' },
+        unknown:    { label: 'Unknown',  cls: 'op-action-chip-idle' },
+    };
+
+    // Local in-flight flags so a single click immediately disables
+    // the button AND flips the chip without waiting for the next
+    // status poll response.  The poller confirms / corrects these.
+    let _opReconcileLocalRunning = false;
+    let _opBackfillLocalRunning = false;
+
+    // Server-reported in-flight state (last poll result).  Cached so
+    // the DOM renderer can merge it with the local state without a
+    // network round-trip per click.
+    let _opReconcileServerRunning = false;
+    let _opBackfillServerRunning = false;
+
+    // Status poller lifecycle — set while the Settings tab is active.
+    let _opStatusTimer = null;
+    const _OP_STATUS_POLL_MS = 4000;
+
+    function _opIsReconcileRunning() {
+        return _opReconcileLocalRunning || _opReconcileServerRunning;
+    }
+    function _opIsBackfillRunning() {
+        return _opBackfillLocalRunning || _opBackfillServerRunning;
+    }
+
+    function _opUpdateActionChipUI() {
+        const reconcileRunning = _opIsReconcileRunning();
+        const backfillRunning = _opIsBackfillRunning();
+
+        const recChip = $('#op-reconcile-chip');
+        if (recChip) {
+            const s = reconcileRunning ? _OP_CHIP_STYLE.running : _OP_CHIP_STYLE.idle;
+            recChip.className = 'op-action-chip ' + s.cls;
+            const label = recChip.querySelector('.op-action-chip-label');
+            if (label) label.textContent = s.label;
+        }
+        const bfChip = $('#op-backfill-chip');
+        if (bfChip) {
+            const s = backfillRunning ? _OP_CHIP_STYLE.running : _OP_CHIP_STYLE.idle;
+            bfChip.className = 'op-action-chip ' + s.cls;
+            const label = bfChip.querySelector('.op-action-chip-label');
+            if (label) label.textContent = s.label;
+        }
+
+        const recBtn = $('#op-reconcile-btn');
+        if (recBtn) {
+            if (reconcileRunning) {
+                recBtn.disabled = true;
+                recBtn.classList.add('op-btn-busy');
+                recBtn.textContent = 'Running…';
+            } else {
+                recBtn.disabled = false;
+                recBtn.classList.remove('op-btn-busy');
+                recBtn.textContent = 'Run Reconcile';
+            }
+        }
+        const bfBtn = $('#op-backfill-btn');
+        if (bfBtn) {
+            if (backfillRunning) {
+                bfBtn.disabled = true;
+                bfBtn.classList.add('op-btn-busy');
+                bfBtn.textContent = 'Running…';
+            } else {
+                bfBtn.disabled = false;
+                bfBtn.classList.remove('op-btn-busy');
+                bfBtn.textContent = 'Run Backfill';
+            }
+        }
+    }
+
+    async function _opPollActionsStatus() {
+        try {
+            const data = await fetchJSON(API.opActionsStatus);
+            if (!data) return;
+            _opReconcileServerRunning = !!(data.reconcile && data.reconcile.in_progress);
+            _opBackfillServerRunning = !!(data.backfill && data.backfill.in_progress);
+        } catch (_e) {
+            // Swallow poll errors — the chip falls back to "Idle" via
+            // the local flags and the next successful poll corrects it.
+            _opReconcileServerRunning = false;
+            _opBackfillServerRunning = false;
+        }
+        _opUpdateActionChipUI();
+    }
+
+    function _opStartStatusPolling() {
+        if (_opStatusTimer != null) return;  // already polling
+        _opPollActionsStatus();               // fire one immediately
+        _opStatusTimer = setInterval(_opPollActionsStatus, _OP_STATUS_POLL_MS);
+    }
+
+    function _opStopStatusPolling() {
+        if (_opStatusTimer != null) {
+            clearInterval(_opStatusTimer);
+            _opStatusTimer = null;
+        }
+    }
+
+    // ---- Reconcile + Backfill (refactored) ------------------------
+
+    async function _opRunReconcile() {
+        const statusLine = $('#op-reconcile-status');
+        const prune = $('#op-reconcile-prune')?.checked ?? true;
+
+        // Local guard: don't even submit if the chip already says running.
+        // The click might have landed before the button's disabled state
+        // propagated.
+        if (_opIsReconcileRunning()) {
+            _opShowLastResult(
+                'Reconcile already running',
+                'Wait for the current reconcile to finish before starting another.',
+                'busy',
+            );
+            return;
+        }
+
+        if (prune && !confirm('Run seed reconcile with prune enabled?\n\nThis removes seed rows no longer in config/relationships.yaml.\nManual and AI-inferred rows are NOT touched.')) {
+            return;
+        }
+
+        _opReconcileLocalRunning = true;
+        _opUpdateActionChipUI();
+        if (statusLine) statusLine.textContent = '';
+
+        try {
+            const resp = await postJSON(`${API.opRelationshipsReconcile}?prune=${prune}`, {});
+            const s = resp.stats || {};
+            if (statusLine) {
+                statusLine.textContent = `created ${s.created || 0} · updated ${s.updated || 0} · unchanged ${s.unchanged || 0} · pruned ${s.pruned || 0} · skipped ${s.skipped_no_holding || 0}`;
+            }
+            _opShowLastResult(
+                'Reconcile complete',
+                `loaded=${s.seed_rows_loaded || 0} created=${s.created || 0} updated=${s.updated || 0} unchanged=${s.unchanged || 0} pruned=${s.pruned || 0} skipped_no_holding=${s.skipped_no_holding || 0} skipped_manual_row=${s.skipped_manual_row || 0}`,
+                'ok',
+                _opMaintenanceHint('reconcile', s),
+            );
+            await loadOperatorRelationships();
+            loadOperatorRecentActions();
+        } catch (e) {
+            _opHandleOperatorError(e, 'reconcile', statusLine);
+        } finally {
+            _opReconcileLocalRunning = false;
+            // Re-poll immediately so the server view refreshes BEFORE
+            // the button state is restored — prevents a gap where the
+            // user could click again while the lock is still held.
+            await _opPollActionsStatus();
+        }
+    }
+
+    async function _opRunBackfill() {
+        const statusLine = $('#op-backfill-status');
+        const window_days = parseInt($('#op-backfill-window')?.value || '7', 10);
+        const max_events = parseInt($('#op-backfill-max')?.value || '200', 10);
+
+        if (_opIsBackfillRunning()) {
+            _opShowLastResult(
+                'Backfill already running',
+                'Wait for the current backfill to finish before starting another.',
+                'busy',
+            );
+            return;
+        }
+
+        if (!confirm(`Replay the deterministic link pipeline over the last ${window_days} day(s), up to ${max_events} events?\n\nSafe to run — idempotent and bounded.`)) {
+            return;
+        }
+
+        _opBackfillLocalRunning = true;
+        _opUpdateActionChipUI();
+        if (statusLine) statusLine.textContent = '';
+
+        try {
+            const resp = await postJSON(API.opBackfill, {
+                window_days,
+                max_events,
+                reason: 'ui backfill',
+            });
+            const s = resp.stats || {};
+            if (statusLine) {
+                statusLine.textContent = `scanned ${s.events_scanned || 0} · replayed ${s.events_replayed || 0} · links+${s.links_added || 0} · mfe+${s.mfe_added || 0}`;
+            }
+            _opShowLastResult(
+                'Backfill complete',
+                `window=${s.window_days || window_days}d scanned=${s.events_scanned || 0} replayed=${s.events_replayed || 0} failed=${s.events_failed || 0} links_added=${s.links_added || 0} mfe_added=${s.mfe_added || 0}`,
+                'ok',
+                _opMaintenanceHint('backfill', s),
+            );
+            await loadOperatorFactorSensitivities();
+            loadOperatorRecentActions();
+        } catch (e) {
+            _opHandleOperatorError(e, 'backfill', statusLine);
+        } finally {
+            _opBackfillLocalRunning = false;
+            await _opPollActionsStatus();
+        }
+    }
+
+    // Centralised error handler for reconcile / backfill actions.
+    // Phase 9L: tell apart three cases and render each honestly:
+    //   1. 409 "in progress"  → friendly busy state (not red)
+    //   2. 429 rate limit     → friendly throttle state + retry hint
+    //   3. anything else      → generic failure (unchanged behaviour)
+    function _opHandleOperatorError(e, actionLabel, statusLine) {
+        const actionTitle = actionLabel === 'reconcile' ? 'Reconcile' : 'Backfill';
+
+        if (e && e.isInProgress) {
+            // Server says the lock is already held.  Mirror the state
+            // into the local flag so the chip stays "Running…" until
+            // the next poll reports idle.
+            if (actionLabel === 'reconcile') {
+                _opReconcileServerRunning = true;
+            } else {
+                _opBackfillServerRunning = true;
+            }
+            _opUpdateActionChipUI();
+            if (statusLine) statusLine.textContent = '';
+            _opShowLastResult(
+                `${actionTitle} already running`,
+                esc(e.message || 'An instance is already running — wait for it to finish.'),
+                'busy',
+            );
+            return;
+        }
+
+        if (e && e.isRateLimit) {
+            if (statusLine) statusLine.textContent = '';
+            const retryMsg = e.retryAfter
+                ? ` Retry in ~${e.retryAfter}s.`
+                : '';
+            _opShowLastResult(
+                `${actionTitle} rate-limited`,
+                `The API rate limit for <code>${esc(e.bucket || 'mutation')}</code> (${esc(String(e.limitPerMinute || '?'))}/min) was exceeded.${retryMsg}`,
+                'busy',
+            );
+            _surfaceRateLimitToast(e);
+            return;
+        }
+
+        // Generic failure — preserve the pre-9L behaviour.
+        if (statusLine) statusLine.textContent = '';
+        _opShowLastResult(
+            `${actionTitle} failed`,
+            esc(e && e.message ? e.message : String(e)),
+            'err',
+        );
+        showToast(`${actionTitle} failed: ${e && e.message ? e.message : String(e)}`, 'error');
+    }
+
+    // ---- Phase 9O — Recent operator actions readback ---------------
+    //
+    // Reads /api/v1/audit/recent (a thin shaping wrapper over the
+    // existing audit_log table) and renders the top 10 operator-owned
+    // mutations + maintenance runs as a compact list under the
+    // Maintenance Actions card.  Every row is grounded in real audit
+    // data — no local client memory, no synthesis.
+
+    const _OP_RECENT_ENTITY_CLASS = {
+        holding_factor_sensitivity: 'op-recent-entity-factor',
+        holding_relationship:       'op-recent-entity-rel',
+        holding_relationships:      'op-recent-entity-reconcile',
+        intelligence_backfill:      'op-recent-entity-backfill',
+    };
+
+    function _renderOperatorRecentActions(entries) {
+        const el = $('#op-recent-actions');
+        if (!el) return;
+        const list = Array.isArray(entries) ? entries : [];
+        if (!list.length) {
+            el.innerHTML = `<div class="op-recent-empty text-sm text-muted">No recent operator actions yet. Mutations will appear here as you use the panel.</div>`;
+            return;
+        }
+        el.innerHTML = `<ul class="op-recent-list">${
+            list.map(e => {
+                const entityCls = _OP_RECENT_ENTITY_CLASS[e.entity_type] || 'op-recent-entity-default';
+                const label = e.entity_type_label || e.entity_type || 'action';
+                const reason = e.reason
+                    ? `<div class="op-recent-reason"><span class="op-recent-reason-label">Reason:</span> ${esc(e.reason)}</div>`
+                    : '';
+                const portfolioChip = e.portfolio_id
+                    ? `<span class="op-recent-portfolio" title="Portfolio-scoped change">${esc(e.portfolio_id)}</span>`
+                    : '';
+                // Phase 9Q — attach the structured nav target emitted
+                // by the audit recent route so clicking the row jumps
+                // to the matching operator sub-section (factors /
+                // relationships / maintenance).
+                const nav = e.nav_target && typeof e.nav_target === 'object' && e.nav_target.surface
+                    ? e.nav_target
+                    : null;
+                const navAttr = nav ? `data-nav-target="${escAttr(JSON.stringify(nav))}"` : '';
+                const jumpAttr = nav ? `data-nav-jump="1"` : '';
+                const cursorCls = nav ? 'op-recent-row-clickable' : '';
+                return `
+                    <li class="op-recent-row ${cursorCls}" data-entity-type="${esc(e.entity_type || '')}" data-action="${esc(e.action || '')}" data-audit-id="${esc(e.id || '')}" ${navAttr} ${jumpAttr} ${nav ? 'tabindex="0" role="button"' : ''}>
+                        <div class="op-recent-header">
+                            <span class="op-recent-time text-xs text-muted">${formatDate(e.timestamp)}</span>
+                            <span class="op-recent-entity ${entityCls}">${esc(label)}</span>
+                            ${portfolioChip}
+                        </div>
+                        <div class="op-recent-title">${esc(e.title || '')}</div>
+                        <div class="op-recent-summary text-sm text-muted">${esc(e.summary || '')}</div>
+                        ${reason}
+                    </li>
+                `;
+            }).join('')
+        }</ul>`;
+    }
+
+    async function loadOperatorRecentActions() {
+        const el = $('#op-recent-actions');
+        if (!el) return;
+        const portfolioId = _activePortfolioId;
+        try {
+            const url = `${API.auditRecent}?limit=10${portfolioId ? `&portfolio_id=${encodeURIComponent(portfolioId)}` : ''}`;
+            const data = await fetchJSON(url);
+            const list = Array.isArray(data) ? data : (data?.items || []);
+            _renderOperatorRecentActions(list);
+        } catch (e) {
+            el.innerHTML = `<div class="op-recent-error text-sm text-danger">Could not load recent actions: ${esc(e.message || 'unknown error')}</div>`;
+        }
+    }
+
+    // ---- Operator panel entry point ------------------------------
+
+    async function loadOperatorPanel() {
+        // Portfolio identity banner
+        const pidEl = $('#op-active-portfolio');
+        if (pidEl) {
+            const portfolioName = (_portfolioList.find(p => p.id === _activePortfolioId) || {}).name || _activePortfolioId;
+            pidEl.textContent = `${portfolioName} (${_activePortfolioId})`;
+        }
+
+        // Factor filter options — populated from taxonomy once per session
+        const factorSel = $('#op-factor-filter');
+        if (factorSel && factorSel.options.length <= 1) {
+            const taxonomy = await _opLoadFactorTaxonomy();
+            taxonomy.forEach(f => {
+                const opt = document.createElement('option');
+                opt.value = f.key;
+                opt.textContent = f.label;
+                factorSel.appendChild(opt);
+            });
+        }
+
+        // Holdings cache — used to populate the manual relationship modal
+        try {
+            const holdings = await fetchJSON(_pq(API.holdings));
+            _opHoldingsCache = Array.isArray(holdings) ? holdings : (holdings?.items || []);
+        } catch (e) {
+            _opHoldingsCache = [];
+        }
+
+        // Load tables in parallel
+        loadOperatorFactorSensitivities();
+        loadOperatorRelationships();
+        // Phase 9O — compact recent operator actions readback (audit
+        // row shaping).  Fire-and-forget so a slow audit query can't
+        // block the rest of the panel.
+        loadOperatorRecentActions();
+
+        // Phase 9L: start the action-status poller so the chips / button
+        // states track the server's reconcile + backfill lock state.
+        // The poller is stopped by ``switchTab`` when the user leaves
+        // the Settings tab (see below) so we're not burning a poll
+        // every 4s in the background when the panel isn't visible.
+        _opStartStatusPolling();
+    }
+
+    // Event delegation for the operator tables (single listener keeps
+    // DOM event cost low and survives table re-renders)
+    document.addEventListener('click', (ev) => {
+        const target = ev.target.closest('[data-op]');
+        if (!target) return;
+        const op = target.dataset.op;
+        if (op === 'op-factor-edit') {
+            _opOpenFactorModal(target.dataset.holdingId, target.dataset.factor);
+        } else if (op === 'op-factor-delete') {
+            _opDeleteFactorOverride(target.dataset.id);
+        } else if (op === 'op-rel-edit') {
+            const row = _opRelRowsCache.find(r => r.id === target.dataset.id);
+            if (row) _opOpenRelModal('edit', row);
+        } else if (op === 'op-rel-delete') {
+            _opDeleteRelationship(target.dataset.id);
+        }
+    });
+
+    // Wire static control handlers once
+    document.addEventListener('DOMContentLoaded', () => {
+        $('#op-factor-refresh')?.addEventListener('click', () => loadOperatorFactorSensitivities());
+        $('#op-factor-filter')?.addEventListener('change', () => loadOperatorFactorSensitivities());
+        $('#op-rel-refresh')?.addEventListener('click', () => loadOperatorRelationships());
+        $('#op-rel-source-filter')?.addEventListener('change', () => loadOperatorRelationships());
+        $('#op-rel-add')?.addEventListener('click', () => _opOpenRelModal('create', null));
+        $('#op-reconcile-btn')?.addEventListener('click', () => _opRunReconcile());
+        $('#op-backfill-btn')?.addEventListener('click', () => _opRunBackfill());
+        // Phase 9O — recent operator actions manual refresh
+        $('#op-recent-refresh')?.addEventListener('click', () => loadOperatorRecentActions());
+    });
+
+    // Patch the tab loader so Settings loads API key status + health + sources + operator
     tabLoaders.settings = function () {
         loadSettings();
         loadApiKeyStatus();
         loadHealth();
         loadSources();
+        loadOperatorPanel();
+        loadSavedViews();
     };
+
+    // ================================================================
+    // Phase 9U — Saved Analytical Views
+    // ================================================================
+
+    function _captureCurrentViewPayload() {
+        // Build a NavigationTarget-compatible payload from the current
+        // dashboard state (active tab + sub-tab + filters).
+        const activeTabLink = document.querySelector('.tab-link.active');
+        const tab = activeTabLink ? activeTabLink.dataset.tab : 'portfolio';
+
+        // Map top-level tab → surface
+        const tabToSurface = {
+            portfolio: 'portfolio',
+            intelligence: 'events',  // default intelligence surface
+            alerts: 'alerts',
+            settings: 'operator',
+        };
+        let surface = tabToSurface[tab] || 'portfolio';
+        let subtab = null;
+
+        // Check for active intelligence sub-tab
+        if (tab === 'intelligence') {
+            const activeSub = document.querySelector('#tab-intelligence .sub-tab.active');
+            if (activeSub) {
+                subtab = activeSub.dataset.subtab;
+                if (subtab === 'digest') surface = 'digest';
+                else surface = 'events';
+            }
+        }
+
+        // Collect approved filters
+        const filters = {};
+        if (surface === 'alerts') {
+            // Phase 9V/9W — capture active severity + acknowledged filters
+            const sv = document.querySelector('#alerts-severity-filter')?.value;
+            if (sv) filters.severity = sv;
+            const ak = document.querySelector('#alerts-ack-filter')?.value;
+            if (ak) filters.ack = ak;
+        }
+        if (surface === 'operator') {
+            const ff = document.querySelector('#op-factor-filter')?.value;
+            if (ff) filters.factor = ff;
+            const rs = document.querySelector('#op-rel-source-filter')?.value;
+            if (rs) filters.source = rs;
+            subtab = ff ? 'factors' : (rs ? 'relationships' : null);
+        }
+        if (surface === 'events' || subtab === 'events') {
+            const es = document.querySelector('#events-search')?.value;
+            if (es) filters.search = es;
+        }
+
+        const payload = {
+            surface,
+            portfolio_id: _activePortfolioId,
+        };
+        if (subtab) payload.subtab = subtab;
+        if (Object.keys(filters).length) payload.filters = filters;
+        return payload;
+    }
+
+    async function loadSavedViews() {
+        const el = document.querySelector('#saved-views-list');
+        if (!el) return;
+        try {
+            const views = await fetchJSON(
+                `${API.savedViews}?portfolio_id=${encodeURIComponent(_activePortfolioId)}`
+            );
+            const list = Array.isArray(views) ? views : [];
+            if (!list.length) {
+                el.innerHTML = '<div class="text-sm text-muted" style="padding:0.5rem;">No saved views yet. Navigate to a filtered surface and click "Save current view".</div>';
+                return;
+            }
+            el.innerHTML = `<ul class="saved-views-list">${list.map(v => {
+                let payloadJson = '';
+                try { payloadJson = JSON.stringify(v.payload); } catch (_) {}
+                return `
+                    <li class="saved-view-row" data-view-id="${esc(v.id)}">
+                        <div class="saved-view-header">
+                            <span class="saved-view-name">${esc(v.name)}</span>
+                            <span class="text-xs text-muted">${timeAgo(v.updated_at)}</span>
+                        </div>
+                        <div class="saved-view-description text-xs text-muted">${esc(v.description || v.surface || '')}</div>
+                        <div class="saved-view-actions">
+                            <button class="btn btn-ghost btn-sm saved-view-restore" data-nav-target="${escAttr(payloadJson)}" data-nav-jump="1">Restore</button>
+                            <button class="btn btn-ghost btn-sm copy-link-btn saved-view-copy" data-copy-target="${escAttr(payloadJson)}" title="Copy shareable link">&#128279;</button>
+                            <button class="btn btn-ghost btn-sm saved-view-delete" data-view-id="${esc(v.id)}" data-view-name="${esc(v.name)}">Delete</button>
+                        </div>
+                    </li>
+                `;
+            }).join('')}</ul>`;
+        } catch (e) {
+            el.innerHTML = `<div class="text-sm text-danger">Could not load saved views: ${esc(e.message)}</div>`;
+        }
+    }
+
+    // Phase 9W — build a compact auto-suggested name from the current
+    // view state so operators don't have to type from scratch.
+    function _autoSuggestViewName(payload) {
+        // Mirror the backend's ``describe_view`` logic in a tiny
+        // client-side form so the prompt pre-fills a reasonable name.
+        const surfaceLabels = {
+            alerts:'Alerts', digest:'Digest', events:'Events',
+            operator:'Operator', portfolio:'Portfolio',
+        };
+        const label = surfaceLabels[payload.surface] || payload.surface || '';
+        const parts = [label];
+        const f = payload.filters || {};
+        const sevLabels = {
+            '':'All','all':'All','critical':'Critical',
+            'critical_high':'Critical+High','high':'High+',
+            'warning':'Warning+','info':'Info',
+        };
+        const ackLabels = {'open':'Open','ack':'Acked','':'All'};
+        if (f.severity) parts.push(sevLabels[f.severity] || f.severity);
+        if (f.ack && f.ack !== 'open') parts.push(ackLabels[f.ack] || f.ack);
+        if (f.factor) parts.push(f.factor);
+        if (f.source) parts.push(f.source);
+        if (f.search) parts.push('search: ' + f.search);
+        return parts.join(' · ');
+    }
+
+    async function _saveCurrentView() {
+        const payload = _captureCurrentViewPayload();
+        const suggested = _autoSuggestViewName(payload);
+        const name = prompt('Name this view:', suggested);
+        if (!name || !name.trim()) return;
+        try {
+            await postJSON(API.savedViews, {
+                portfolio_id: _activePortfolioId,
+                name: name.trim(),
+                surface: payload.surface,
+                payload,
+            });
+            showToast(`View "${name.trim()}" saved`);
+            loadSavedViews();
+        } catch (e) {
+            showToast('Save failed: ' + e.message, 'error');
+        }
+    }
+
+    async function _deleteSavedView(viewId, viewName) {
+        if (!confirm(`Delete saved view "${viewName}"?`)) return;
+        try {
+            await deleteJSON(
+                `${API.savedViews}/${viewId}?portfolio_id=${encodeURIComponent(_activePortfolioId)}`
+            );
+            showToast(`View "${viewName}" deleted`);
+            loadSavedViews();
+        } catch (e) {
+            showToast('Delete failed: ' + e.message, 'error');
+        }
+    }
+
+    // Click delegation for saved view buttons
+    document.addEventListener('click', (ev) => {
+        const deleteBtn = ev.target.closest('.saved-view-delete');
+        if (deleteBtn) {
+            ev.preventDefault();
+            _deleteSavedView(deleteBtn.dataset.viewId, deleteBtn.dataset.viewName || 'this view');
+            return;
+        }
+    });
 
     // Update the placeholder based on selected provider
     function updateKeyPlaceholder(role) {
@@ -2486,6 +5252,21 @@
         panel.classList.add('open');
         overlay.classList.add('open');
         body.innerHTML = '<div class="spinner">Loading...</div>';
+
+        // Phase 9S — wire the copy-link button to the current holding
+        const copyBtn = $('#holding-detail-copy-link');
+        if (copyBtn) {
+            copyBtn.onclick = () => {
+                _copyDeepLink({
+                    surface: 'portfolio',
+                    portfolio_id: _activePortfolioId,
+                    entity_type: 'holding',
+                    entity_id: holdingId,
+                    open_modal: true,
+                    highlight_key: 'holding:' + holdingId,
+                });
+            };
+        }
 
         const h = allHoldings.find(x => x.id === holdingId);
         if (!h) {
@@ -2587,7 +5368,272 @@
     };
 
     // ================================================================
-    // WebSocket Real-Time Updates
+    // Phase 9M — Live update dispatcher
+    // ================================================================
+    //
+    // Single central routing function for every websocket payload
+    // Axion receives.  The rules:
+    //
+    //   1. Parse defensively — malformed JSON, missing fields, and
+    //      unknown message types are all no-ops (logged at debug
+    //      level only, never user-visible).
+    //   2. Honour a "modal open" guard — if any <dialog> is open OR
+    //      any operator form has an active edit context, we DEFER
+    //      refreshes for the affected surface and record a pending
+    //      refresh that fires when the modal closes.
+    //   3. Scope refreshes to the ACTIVE tab whenever possible — a
+    //      user on the Holdings tab doesn't need the Events subtab
+    //      re-fetching in the background.
+    //   4. Portfolio-safety: refreshes check the incoming message's
+    //      ``portfolio_id`` (when present) against the active one
+    //      and skip cross-portfolio refreshes.
+    //   5. Drive operator status refreshes via the Phase 9L poller
+    //      — on an ``operator_action`` event, fire an immediate
+    //      ``_opPollActionsStatus()`` without removing the 4-second
+    //      polling fallback.
+    //
+    // Refresh rules (explicit):
+    //
+    //   alert{portfolio_id=ACTIVE}
+    //     → if tab=alerts && no modal    → refreshTab('alerts')
+    //     → if tab=portfolio && no modal → loadIntelligenceOverview()
+    //     → if tab=portfolio && modal    → defer
+    //
+    //   event{linked_holding_count>0}
+    //     → if tab=intelligence && subtab=events && no modal
+    //         → refreshTab('events')
+    //     → if tab=portfolio && no modal
+    //         → loadIntelligenceOverview()
+    //
+    //   operator_action{action, state}
+    //     → if tab=settings
+    //         → _opPollActionsStatus()  (immediate, bypasses 4s wait)
+    //     → if tab=settings && state==='finished' && no modal
+    //         → also refresh operator factor + relationship tables
+    //           (they may have drifted during the run)
+    //
+    //   holding_update
+    //     → if tab=portfolio && subtab=holdings && no modal
+    //         → refreshTab('holdings')
+    //
+    //   agent_complete
+    //     → friendly toast
+    //     → if tab=health, refreshTab('health')
+    //
+    //   ping / unknown → ignored silently
+    //
+    // Pending-refresh deferral: if the modal guard blocks a refresh,
+    // the surface key is added to ``_wsPendingRefreshes``.  When the
+    // next dialog closes, we flush the pending set.
+
+    const _wsPendingRefreshes = new Set();
+    let _wsConnected = false;
+
+    function _wsAnyModalOpen() {
+        // Any <dialog open> OR a detail panel in the slide-out state
+        // counts as "user is mid-workflow — don't clobber them".
+        const hasOpenDialog = document.querySelector('dialog[open]') != null;
+        const slidePanel = document.querySelector('.detail-panel.open');
+        return hasOpenDialog || slidePanel != null;
+    }
+
+    function _wsMessageIsForActivePortfolio(msg) {
+        // Messages without a portfolio_id are treated as global and
+        // always allowed (e.g. operator_action, agent_complete).
+        if (!msg || msg.portfolio_id == null) return true;
+        return String(msg.portfolio_id) === String(_activePortfolioId);
+    }
+
+    function _wsActiveTab() {
+        return $('.tab-link.active')?.dataset.tab || null;
+    }
+
+    function _wsActiveSubtab(parent) {
+        const parentPanel = document.getElementById('tab-' + parent);
+        if (!parentPanel) return null;
+        return parentPanel.querySelector('.sub-tab.active')?.dataset.subtab || null;
+    }
+
+    function _wsQueueOrRun(surfaceKey, fn) {
+        // If a modal is open, defer.  Otherwise run immediately.
+        if (_wsAnyModalOpen()) {
+            _wsPendingRefreshes.add(surfaceKey);
+            return false;
+        }
+        try { fn(); } catch (_e) { /* non-fatal */ }
+        return true;
+    }
+
+    function _wsFlushPendingRefreshes() {
+        if (_wsAnyModalOpen()) return;  // still blocked
+        if (_wsPendingRefreshes.size === 0) return;
+        const keys = Array.from(_wsPendingRefreshes);
+        _wsPendingRefreshes.clear();
+        for (const key of keys) {
+            try {
+                if (key === 'alerts' && _wsActiveTab() === 'alerts') {
+                    refreshTab('alerts');
+                } else if (key === 'events' && _wsActiveTab() === 'intelligence' && _wsActiveSubtab('intelligence') === 'events') {
+                    refreshTab('events');
+                } else if (key === 'intelligence-overview' && _wsActiveTab() === 'portfolio') {
+                    if (typeof loadIntelligenceOverview === 'function') loadIntelligenceOverview();
+                } else if (key === 'holdings' && _wsActiveTab() === 'portfolio' && _wsActiveSubtab('portfolio') === 'holdings') {
+                    refreshTab('holdings');
+                } else if (key === 'operator-tables' && _wsActiveTab() === 'settings') {
+                    if (typeof loadOperatorFactorSensitivities === 'function') loadOperatorFactorSensitivities();
+                    if (typeof loadOperatorRelationships === 'function') loadOperatorRelationships();
+                }
+            } catch (_e) { /* non-fatal */ }
+        }
+    }
+
+    // Flush pending refreshes whenever a dialog closes, so deferred
+    // updates land without requiring a manual refresh click.  We use
+    // capture-phase so we catch the close event on any dialog.
+    document.addEventListener('close', (ev) => {
+        if (ev.target && ev.target.tagName === 'DIALOG') {
+            // Let the dialog fully close before flushing
+            setTimeout(_wsFlushPendingRefreshes, 50);
+        }
+    }, true);
+
+    function _wsHandleAlert(msg) {
+        if (!_wsMessageIsForActivePortfolio(msg)) return;
+        const active = _wsActiveTab();
+        if (active === 'alerts') {
+            _wsQueueOrRun('alerts', () => refreshTab('alerts'));
+        }
+        if (active === 'portfolio') {
+            _wsQueueOrRun('intelligence-overview', () => {
+                if (typeof loadIntelligenceOverview === 'function') loadIntelligenceOverview();
+            });
+        }
+        // Phase 9P — Inbox refresh.  If the Inbox sub-tab is visible
+        // we re-render the full list; otherwise we only refresh the
+        // unread badge so the sub-tab counter stays accurate.
+        if (active === 'intelligence' && _wsActiveSubtab('intelligence') === 'inbox') {
+            _wsQueueOrRun('inbox', () => {
+                if (typeof loadInbox === 'function') loadInbox();
+            });
+        } else {
+            if (typeof refreshInboxBadgeOnly === 'function') refreshInboxBadgeOnly();
+        }
+        // Desktop notification (opt-in, respects the user's settings)
+        try {
+            const s = getSettings();
+            if (s.desktopNotif && typeof Notification !== 'undefined' && Notification.permission === 'granted') {
+                new Notification('Axion Alert', {
+                    body: msg.title || 'New alert',
+                    icon: '/dashboard/favicon.ico',
+                });
+            }
+        } catch (_e) { /* non-fatal */ }
+    }
+
+    function _wsHandleEvent(msg) {
+        // Only events that linked to at least one holding are
+        // broadcast, so every event message is already relevance-
+        // filtered.  Still scope by active tab.
+        const active = _wsActiveTab();
+        if (active === 'intelligence' && _wsActiveSubtab('intelligence') === 'events') {
+            _wsQueueOrRun('events', () => refreshTab('events'));
+        }
+        if (active === 'portfolio') {
+            _wsQueueOrRun('intelligence-overview', () => {
+                if (typeof loadIntelligenceOverview === 'function') loadIntelligenceOverview();
+            });
+        }
+        // Phase 9P — Inbox badge refresh for meaningful events.  The
+        // inbox itself only surfaces events indirectly via alerts or
+        // recommended actions, so we never need to do a full rebuild
+        // on an event message; just keep the badge in sync.
+        if (typeof refreshInboxBadgeOnly === 'function') refreshInboxBadgeOnly();
+    }
+
+    function _wsHandleOperatorAction(msg) {
+        // Phase 9P — refresh the inbox when a relevant operator
+        // action finishes, regardless of which tab is active.  This
+        // runs BEFORE the settings-scoped early return so every
+        // operator mutation updates the inbox unread badge.
+        if (msg.state === 'finished') {
+            const active = _wsActiveTab();
+            if (active === 'intelligence' && _wsActiveSubtab('intelligence') === 'inbox') {
+                _wsQueueOrRun('inbox', () => {
+                    if (typeof loadInbox === 'function') loadInbox();
+                });
+            } else if (typeof refreshInboxBadgeOnly === 'function') {
+                refreshInboxBadgeOnly();
+            }
+        }
+
+        // The operator panel's Phase 9L status poller owns the lock
+        // state.  Receiving an operator_action event is a signal to
+        // refresh IMMEDIATELY instead of waiting for the next 4-second
+        // interval.  Safe to call even if the poller isn't active —
+        // _opPollActionsStatus() is idempotent.
+        if (_wsActiveTab() !== 'settings') return;
+        if (typeof _opPollActionsStatus === 'function') {
+            _opPollActionsStatus();
+        }
+        // When the action finishes, the operator tables may have
+        // drifted (e.g. reconcile added/removed seed rows).  Only
+        // refresh them if no modal is open — we never want to
+        // clobber a mid-edit override form.
+        if (msg.state === 'finished') {
+            _wsQueueOrRun('operator-tables', () => {
+                if (typeof loadOperatorFactorSensitivities === 'function') loadOperatorFactorSensitivities();
+                if (typeof loadOperatorRelationships === 'function') loadOperatorRelationships();
+            });
+        }
+    }
+
+    function _wsHandleAgentComplete(msg) {
+        try {
+            showToast(`${msg.agent || 'Agent'} completed`);
+        } catch (_e) { /* non-fatal */ }
+        if (_wsActiveTab() === 'settings') {
+            // The health card under Settings carries the agent status
+            if (typeof loadHealth === 'function') loadHealth();
+        }
+    }
+
+    function _wsHandleHoldingUpdate(_msg) {
+        if (_wsActiveTab() !== 'portfolio') return;
+        const sub = _wsActiveSubtab('portfolio');
+        if (sub === 'holdings') {
+            _wsQueueOrRun('holdings', () => refreshTab('holdings'));
+        } else if (sub === 'exposures') {
+            _wsQueueOrRun('exposures', () => refreshTab('exposures'));
+        }
+    }
+
+    // The single entry point for every websocket payload.  Exposed
+    // on the window object so E2E tests + the reconnect loop can
+    // reach it without grepping the closure.
+    function _wsDispatch(msg) {
+        if (!msg || typeof msg !== 'object') return;
+        const t = msg.type;
+        if (typeof t !== 'string') return;
+        switch (t) {
+            case 'ping':                       return;
+            case 'alert':                      return _wsHandleAlert(msg);
+            case 'event':                      return _wsHandleEvent(msg);
+            case 'operator_action':            return _wsHandleOperatorAction(msg);
+            case 'agent_complete':             return _wsHandleAgentComplete(msg);
+            case 'holding_update':             return _wsHandleHoldingUpdate(msg);
+            default:
+                // Unknown message type — log at debug for developer
+                // visibility, but never bubble to the user.
+                if (window.console && console.debug) {
+                    console.debug('[ws] ignoring unknown message type:', t);
+                }
+                return;
+        }
+    }
+    window._wsDispatch = _wsDispatch;
+
+    // ================================================================
+    // WebSocket Real-Time Updates (transport + reconnect loop)
     // ================================================================
     function connectWebSocket() {
         const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -2597,34 +5643,25 @@
             ws = new WebSocket(wsUrl);
         } catch { return; }
 
+        ws.onopen = () => { _wsConnected = true; };
+
         ws.onmessage = (event) => {
+            let msg;
             try {
-                const msg = JSON.parse(event.data);
-                if (msg.type === 'alert') {
-                    // (sidebar removed)
-                    if ($('.tab-link.active')?.dataset.tab === 'alerts') refreshTab('alerts');
-                    const s = getSettings();
-                    if (s.desktopNotif && Notification.permission === 'granted') {
-                        new Notification('Axion Alert', { body: msg.title || 'New alert', icon: '/dashboard/favicon.ico' });
-                    }
-                } else if (msg.type === 'agent_complete') {
-                    showToast(`${msg.agent || 'Agent'} completed`);
-                    const active = $('.tab-link.active')?.dataset.tab;
-                    if (active === 'health') refreshTab('health');
-                } else if (msg.type === 'event') {
-                    if ($('.tab-link.active')?.dataset.tab === 'events') refreshTab('events');
-                } else if (msg.type === 'holding_update') {
-                    refreshTab('holdings');
-                    refreshTab('exposures');
-                }
-            } catch {}
+                msg = JSON.parse(event.data);
+            } catch (_e) {
+                return;  // malformed — silently ignore
+            }
+            _wsDispatch(msg);
         };
 
         ws.onclose = () => {
+            _wsConnected = false;
             setTimeout(connectWebSocket, 5000);
         };
 
         ws.onerror = () => {
+            _wsConnected = false;
             ws.close();
         };
     }
@@ -2690,6 +5727,43 @@
             });
         }
 
+        // Phase 9P — inbox refresh + mark-all controls
+        const inboxRefreshBtn = $('#inbox-refresh-btn');
+        if (inboxRefreshBtn) {
+            inboxRefreshBtn.addEventListener('click', () => loadInbox());
+        }
+        const inboxMarkAllBtn = $('#inbox-mark-all-read-btn');
+        if (inboxMarkAllBtn) {
+            inboxMarkAllBtn.addEventListener('click', () => markAllInboxRead());
+        }
+        // Refresh the unread badge once on startup so it's accurate
+        // before the operator even opens the Inbox sub-tab.
+        setTimeout(() => {
+            if (typeof refreshInboxBadgeOnly === 'function') refreshInboxBadgeOnly();
+        }, 600);
+
+        // Phase 9V/9W — alerts severity + acknowledged filters
+        const sevFilter = $('#alerts-severity-filter');
+        if (sevFilter) {
+            sevFilter.addEventListener('change', () => {
+                tabLoaded.alerts = true;
+                loadAlerts();
+            });
+        }
+        const ackFilter = $('#alerts-ack-filter');
+        if (ackFilter) {
+            ackFilter.addEventListener('change', () => {
+                tabLoaded.alerts = true;
+                loadAlerts();
+            });
+        }
+
+        // Phase 9U — saved views controls
+        const saveViewBtn = $('#save-current-view-btn');
+        if (saveViewBtn) saveViewBtn.addEventListener('click', () => _saveCurrentView());
+        const refreshViewsBtn = $('#saved-views-refresh');
+        if (refreshViewsBtn) refreshViewsBtn.addEventListener('click', () => loadSavedViews());
+
         // Events search
         const eventsSearch = $('#events-search');
         if (eventsSearch) {
@@ -2732,6 +5806,16 @@
             }
         });
 
+        // Phase 9B — open event detail modal when clicking an event row
+        document.addEventListener('click', (e) => {
+            const row = e.target.closest('.events-row-clickable');
+            if (!row) return;
+            // Ignore clicks inside anchors/buttons — those have their own semantics.
+            if (e.target.closest('a,button')) return;
+            const eid = row.dataset.eventId;
+            if (eid) window.openEventDetail(eid);
+        });
+
         // Alert acknowledge via event delegation
         const alertsContent = $('#alerts-content');
         if (alertsContent) {
@@ -2770,8 +5854,14 @@
         const savedSettings = getSettings();
         const defaultTab = savedSettings.defaultTab || 'portfolio';
 
-        // Load portfolio selector then default tab
-        _loadPortfolioSelector().then(() => switchTab(defaultTab));
+        // Load portfolio selector then default tab.
+        // Phase 9R — after the default tab loads, consume any URL
+        // hash deep-link so a shared/bookmarked link restores the
+        // exact navigation state from a cold page load.
+        _loadPortfolioSelector().then(() => {
+            switchTab(defaultTab);
+            _consumeInitialNavHash();
+        });
 
         // Apply refresh interval from settings
         applySettings(savedSettings);

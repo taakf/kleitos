@@ -21,7 +21,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_session
 from src.llm.client import call_llm_text, is_llm_available
-from src.llm.context import AXION_SYSTEM_PROMPT, AxionContext, assemble_context
+from src.llm.grounded import (
+    assemble_chat_context,
+    build_chat_system_prompt,
+    render_deterministic_chat_answer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +36,16 @@ router = APIRouter(prefix="/api/v1", tags=["chat"])
 # Request / Response models
 # ---------------------------------------------------------------------------
 class ChatRequest(BaseModel):
-    """User query to the Axion command center."""
+    """User query to the Axion command center.
+
+    Phase 9E: ``portfolio_id`` is now a first-class field so the
+    assembler can scope holdings, alerts, events, and analysis notes
+    to exactly the active portfolio.  Defaults to ``"default"`` for
+    backward compatibility with pre-9E clients.
+    """
     query: str
     scope: str = "portfolio"  # future: could be "holding:NVDA", etc.
+    portfolio_id: str = "default"
 
 
 class ChatResponse(BaseModel):
@@ -119,18 +130,27 @@ async def chat_query(
             warnings=["Empty query"],
         )
 
-    # Assemble context from live database
-    ctx = await assemble_context(session)
+    # Phase 9E: assemble a portfolio-scoped grounded context.  Every
+    # downstream list (holdings, alerts, events, factor touchpoints,
+    # relationship touchpoints, analysis highlights) is filtered to
+    # the active portfolio so cross-portfolio leakage is structurally
+    # impossible.
+    ctx = await assemble_chat_context(
+        session, portfolio_id=req.portfolio_id or "default",
+    )
 
     # Check for safe action triggers
     actions = await _try_action_trigger(query.lower(), session)
 
     # Data refs for the response
     data_refs = {
+        "portfolio_id": ctx.portfolio_id,
         "holdings_count": ctx.holding_count,
-        "alerts_count": len(ctx.alerts),
-        "events_count": len(ctx.events),
-        "analysis_count": len(ctx.analysis_notes),
+        "alerts_count": len(ctx.active_alerts),
+        "events_count": len(ctx.recent_events),
+        "analysis_count": len(ctx.analysis_highlights),
+        "factor_touchpoints_count": len(ctx.factor_touchpoints),
+        "relationship_touchpoints_count": len(ctx.relationship_touchpoints),
         "total_value": ctx.total_value,
     }
 
@@ -138,7 +158,7 @@ async def chat_query(
 
     # Try LLM-powered response
     if ctx.llm_available:
-        system = AXION_SYSTEM_PROMPT.format(context=ctx.to_prompt_block())
+        system = build_chat_system_prompt(ctx)
 
         # If actions were triggered, append that info
         if actions:
@@ -156,43 +176,28 @@ async def chat_query(
                 answer=answer,
                 mode="ai-enhanced",
                 provider=ctx.provider,
-                context_summary=ctx.to_summary_line(),
+                context_summary=ctx.summary_line(),
                 data_refs=data_refs,
                 actions_taken=actions,
             )
         else:
-            # LLM returned an error or empty — fall through to rule-based
             if answer and answer.startswith("[Axion]"):
                 warnings.append("AI provider temporarily unavailable — showing portfolio summary instead.")
             else:
                 warnings.append("AI provider returned an empty response.")
 
-    # Rule-based fallback: build a helpful structured response
-    answer_parts = []
+    # Phase 9E: deterministic fallback built from the grounded
+    # context.  Carries factor + relationship touchpoints so the
+    # fallback feels authoritative rather than empty.
+    answer = render_deterministic_chat_answer(ctx, query)
 
     if actions:
-        answer_parts.append(
-            "**Actions triggered:** " + ", ".join(a.replace("_", " ").title() for a in actions)
+        answer = (
+            "**Actions triggered:** "
+            + ", ".join(a.replace("_", " ").title() for a in actions)
+            + "\n\n"
+            + answer
         )
-
-    answer_parts.append(f"**Portfolio:** {ctx.holding_count} holdings, ${ctx.total_value:,.0f} total value")
-
-    if ctx.alerts:
-        answer_parts.append(f"\n**Active Alerts ({len(ctx.alerts)}):**")
-        for a in ctx.alerts[:5]:
-            answer_parts.append(f"  - [{a['severity']}] {a['title']}")
-
-    if ctx.analysis_notes:
-        answer_parts.append(f"\n**Recent Analysis ({len(ctx.analysis_notes)} notes):**")
-        for n in ctx.analysis_notes[:5]:
-            answer_parts.append(
-                f"  - {n['ticker']}: {n['direction']}/{n['materiality']}"
-            )
-
-    if ctx.events:
-        answer_parts.append(f"\n**Recent Events ({len(ctx.events)}):**")
-        for e in ctx.events[:5]:
-            answer_parts.append(f"  - {e['title'][:60]}")
 
     if not ctx.llm_available:
         warnings.append(
@@ -201,10 +206,10 @@ async def chat_query(
         )
 
     return ChatResponse(
-        answer="\n".join(answer_parts),
+        answer=answer,
         mode="rule-based",
         provider=None,
-        context_summary=ctx.to_summary_line(),
+        context_summary=ctx.summary_line(),
         data_refs=data_refs,
         actions_taken=actions,
         warnings=warnings,

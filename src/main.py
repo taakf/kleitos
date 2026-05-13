@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from pathlib import Path
 
 from src.api.routes import (
+    action_state,
     agents,
     alerts,
     analysis,
@@ -22,8 +23,12 @@ from src.api.routes import (
     events,
     export,
     health,
+    intelligence,
+    notifications,
+    operator,
     portfolio,
     portfolios,
+    saved_views,
     settings,
     sources,
     ws,
@@ -95,6 +100,24 @@ async def lifespan(app: FastAPI):
                 logger.info("All %d configured source(s) already present in database.", len(existing_ids))
     except Exception as e:
         logger.warning("Source sync from YAML failed (non-fatal): %s", e)
+
+    # Phase 9D corrective pass: reconcile the repo-managed
+    # relationship seed registry into ``holding_relationships`` so
+    # the live runtime path can use deterministic relationships out
+    # of the box.  Idempotent; safe to run on every boot; preserves
+    # manual and ai_inferred rows untouched.
+    try:
+        from src.intelligence.relationships.reconciler import (
+            reconcile_seed_relationships,
+        )
+        stats = await reconcile_seed_relationships()
+        logger.info(
+            "Relationship seed reconcile complete: %s", stats.as_dict(),
+        )
+    except Exception as e:
+        logger.warning(
+            "Relationship seed reconcile failed (non-fatal): %s", e,
+        )
 
     # Check LLM availability
     api_key = settings.anthropic_api_key.get_secret_value()
@@ -234,6 +257,11 @@ app.include_router(export.router)
 app.include_router(settings.router)
 app.include_router(ws.router)
 app.include_router(chat.router)
+app.include_router(intelligence.router)
+app.include_router(operator.router)
+app.include_router(notifications.router)
+app.include_router(action_state.router)
+app.include_router(saved_views.router)
 
 # OpenClaw bridge
 try:

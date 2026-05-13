@@ -21,8 +21,10 @@ from src.database.models import (
     Event,
     EventLink,
     Holding,
+    MacroFactorEvent,
     Security,
 )
+from src.intelligence.factors.taxonomy import get_factor as get_factor_definition
 
 from .base import BaseAgent
 
@@ -178,6 +180,7 @@ class AnalysisAgent(BaseAgent):
         "event_links",
         "coverage_reports",
         "analysis_notes",
+        "macro_factor_events",
     ]
     write_permissions: ClassVar[list[str]] = [
         "analysis_notes",
@@ -303,8 +306,30 @@ class AnalysisAgent(BaseAgent):
     # NOT trigger individual impact analysis notes.
     _MIN_ANALYSIS_RELEVANCE = 0.5
 
+    # Phase 9A corrective pass: ``macro_factor`` links are deterministic
+    # factor-driven impact hypotheses that already carry a full causal
+    # chain in ``EventLink.details_json``.  They MUST be excluded from
+    # the per-event LLM analysis pass regardless of their relevance
+    # score, because:
+    #   1. Re-narrating them via LLM is redundant with the stored
+    #      rationale.
+    #   2. At the honest emission floor (0.25), default-sector-prior
+    #      links would otherwise flood analysis if they ever crossed
+    #      the generic 0.5 gate (they don't today, but a future
+    #      manual-override row or formula change could).
+    #   3. Factor signals are surfaced via a dedicated deterministic
+    #      touchpoint path in ``generate_digest`` below, so analysts
+    #      still see them — just not as LLM-generated per-event notes.
+    _ANALYSIS_EXCLUDED_LINK_TYPES: tuple[str, ...] = ("macro_factor",)
+
     async def _get_linked_holdings(self, event_id: str) -> list[dict[str, Any]]:
-        """Return holdings linked to *event_id* with sufficient relevance for analysis."""
+        """Return holdings linked to *event_id* with sufficient relevance for analysis.
+
+        Type-aware: deterministic factor links are excluded here and
+        handled by the digest factor-touchpoint path instead, so they
+        do not consume LLM per-event analysis budget or produce
+        redundant narratives.
+        """
         self._check_permission("event_links", "read")
         self._check_permission("holdings", "read")
 
@@ -314,6 +339,7 @@ class AnalysisAgent(BaseAgent):
                 .join(EventLink, EventLink.link_target == Holding.id)
                 .where(EventLink.event_id == event_id)
                 .where(EventLink.relevance_score >= self._MIN_ANALYSIS_RELEVANCE)
+                .where(EventLink.link_type.notin_(self._ANALYSIS_EXCLUDED_LINK_TYPES))
             )
             rows = (await session.execute(stmt)).scalars().all()
 
@@ -352,20 +378,64 @@ class AnalysisAgent(BaseAgent):
         event: dict[str, Any],
         holding: dict[str, Any],
     ) -> dict[str, Any]:
-        """Run LLM analysis (or rule-based fallback) for one event-holding pair and persist the note."""
+        """Run LLM analysis (or deterministic fallback) for one event-holding
+        pair and persist the note.
+
+        Phase 9E: the LLM path is now grounded in the deterministic causal
+        chains + factor tags computed upstream.  The fallback path is
+        upgraded from a keyword-based heuristic to a chain-grounded
+        deterministic renderer so a missing LLM never drops us to a
+        weaker answer than the factor pipeline already produced.
+        """
         sec_info = await self._get_security_info(holding["ticker"])
 
-        # Try LLM first, fall back to keyword-based analysis
+        # Build the grounded context ONCE — it is the shared input for
+        # both the LLM call and the deterministic fallback.  If it
+        # cannot be assembled (missing holding/event), fall through
+        # to the legacy rule-based path so the agent still produces
+        # a note.
         from src.llm.client import is_llm_available
+        from src.llm.grounded import (
+            GroundedEventContext,
+            assemble_event_context,
+            build_event_analysis_prompt,
+            render_deterministic_explanation,
+        )
 
-        if is_llm_available():
-            analysis = await self._call_analysis_llm(event, holding, sec_info)
+        grounded_ctx: GroundedEventContext | None = None
+        try:
+            async with self._get_db() as session:
+                grounded_ctx = await assemble_event_context(
+                    session, event_id=event["id"], holding_id=holding["id"],
+                )
+        except Exception as exc:
+            logger.warning(
+                "Failed to assemble grounded context for event=%s holding=%s: %s",
+                event.get("id"), holding.get("id"), exc,
+            )
+
+        if grounded_ctx is not None and is_llm_available():
+            analysis = await self._call_analysis_llm(
+                event, holding, sec_info, grounded_ctx=grounded_ctx,
+            )
             prompt_hash = getattr(self, "_last_prompt_hash", None)
+        elif grounded_ctx is not None:
+            analysis = render_deterministic_explanation(grounded_ctx)
+            prompt_hash = "deterministic_fallback"
+            logger.info(
+                "Used deterministic chain-grounded fallback for %s "
+                "(LLM unavailable)",
+                holding["ticker"],
+            )
         else:
             from src.agents.fallbacks import rule_based_analysis
             analysis = rule_based_analysis(event, holding)
             prompt_hash = "rule_based"
-            logger.info("Used rule-based analysis fallback for %s (LLM unavailable)", holding["ticker"])
+            logger.info(
+                "Used legacy rule-based analysis fallback for %s "
+                "(grounded context unavailable)",
+                holding["ticker"],
+            )
 
         # Persist
         self._check_permission("analysis_notes", "write")
@@ -390,6 +460,10 @@ class AnalysisAgent(BaseAgent):
                 "long_term_outlook": analysis.get("long_term_outlook"),
                 "key_factors": analysis.get("key_factors", []),
                 "recommended_actions": analysis.get("recommended_actions", []),
+                # Phase 9E: persist the uncertainty note so event detail
+                # can surface it verbatim.  Only present on grounded
+                # LLM and deterministic-fallback paths.
+                "uncertainty_note": analysis.get("uncertainty_note"),
                 "source_event_url": event.get("url"),
             }),
             materiality=analysis.get("materiality", "watch"),
@@ -443,22 +517,43 @@ class AnalysisAgent(BaseAgent):
         event: dict[str, Any],
         holding: dict[str, Any],
         sec_info: dict[str, Any],
+        *,
+        grounded_ctx=None,
     ) -> dict[str, Any]:
-        """Send the analysis prompt to the LLM and return parsed JSON."""
+        """Send the analysis prompt to the LLM and return parsed JSON.
+
+        Phase 9E: when a :class:`GroundedEventContext` is supplied the
+        prompt is built via ``build_event_analysis_prompt`` so the
+        LLM sees the deterministic factor tags + causal chains as
+        ground truth.  On LLM failure the method returns the
+        deterministic-chain explanation rather than the old empty
+        stub, so downstream persistence still gets a meaningful
+        answer.
+        """
         import hashlib
         from src.llm.client import call_llm_json
-
-        prompt = _get_analysis_prompt(ANALYSIS_PROMPT).format(
-            event_title=event.get("title", ""),
-            event_type=event.get("event_type", ""),
-            event_summary=event.get("summary", ""),
-            published_at=event.get("published_at", ""),
-            event_url=event.get("url", ""),
-            ticker=holding["ticker"],
-            sector=sec_info["sector"],
-            geography=sec_info["geography"],
-            themes=", ".join(sec_info["themes"]) if sec_info["themes"] else "N/A",
+        from src.llm.grounded import (
+            build_event_analysis_prompt,
+            render_deterministic_explanation,
         )
+
+        if grounded_ctx is not None:
+            prompt = build_event_analysis_prompt(grounded_ctx)
+        else:
+            # Legacy path: no grounded context was built.  Preserved for
+            # defensive fallback — exercised only if the pre-fetch in
+            # _analyse_single raised an exception.
+            prompt = _get_analysis_prompt(ANALYSIS_PROMPT).format(
+                event_title=event.get("title", ""),
+                event_type=event.get("event_type", ""),
+                event_summary=event.get("summary", ""),
+                published_at=event.get("published_at", ""),
+                event_url=event.get("url", ""),
+                ticker=holding["ticker"],
+                sector=sec_info["sector"],
+                geography=sec_info["geography"],
+                themes=", ".join(sec_info["themes"]) if sec_info["themes"] else "N/A",
+            )
 
         # Store prompt hash for reproducibility auditing
         self._last_prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()[:16]
@@ -469,9 +564,13 @@ class AnalysisAgent(BaseAgent):
             return result
         except Exception as exc:
             logger.error("LLM analysis failed for %s: %s", holding["ticker"], exc)
-            # Return safe defaults so the pipeline doesn't break
+            # Phase 9E: prefer the deterministic explanation over the
+            # old empty stub so the note persists a real summary even
+            # on LLM error.
+            if grounded_ctx is not None:
+                return render_deterministic_explanation(grounded_ctx)
             return {
-                "impact_direction": "neutral",
+                "impact_direction": "unclear",
                 "impact_magnitude": "low",
                 "short_term_outlook": f"LLM analysis unavailable: {exc}",
                 "long_term_outlook": "Retry later.",
@@ -489,35 +588,265 @@ class AnalysisAgent(BaseAgent):
         ----------
         period:
             ``"daily"``, ``"weekly"``, or ``"monthly"``.
+
+        Phase 9A corrective pass: this path now ALSO fetches
+        deterministic macro-factor touchpoints (from
+        ``MacroFactorEvent`` and ``EventLink(link_type="macro_factor")``)
+        and injects them into the digest content under
+        ``macro_factor_touchpoints``.  This is how default-sector-prior
+        factor intelligence reaches the user without ever passing
+        through the LLM per-event analysis pipeline.
         """
         await self._log_run_start(parameters={"period": period})
 
         try:
             notes = await self._fetch_recent_notes(period)
+            factor_touchpoints = await self._fetch_macro_factor_touchpoints(period)
 
-            if not notes:
-                summary = {"period": period, "digest_id": None, "note_count": 0}
+            # Permit factor-only digests: if notes is empty but factor
+            # touchpoints exist, still produce a digest so downstream
+            # consumers see the deterministic signal.
+            if not notes and not factor_touchpoints:
+                summary = {
+                    "period": period,
+                    "digest_id": None,
+                    "note_count": 0,
+                    "factor_touchpoints": 0,
+                }
                 await self._log_run_complete(result_summary=summary)
                 return summary
 
-            # Try LLM first, fall back to rule-based digest
+            # Phase 9E: build the grounded digest context once and
+            # use it for both the LLM prompt and the deterministic
+            # fallback.  The context carries factor touchpoints as
+            # first-class ground truth so the LLM cannot invent
+            # factors and the fallback is a real structured summary
+            # rather than an empty stub.
             from src.llm.client import is_llm_available
+            from src.llm.grounded import (
+                GroundedDigestContext,
+                render_deterministic_digest,
+            )
 
-            if is_llm_available():
-                digest_content = await self._call_digest_llm(notes, period)
+            grounded_digest = GroundedDigestContext(
+                period=period,
+                portfolio_id=self._portfolio_id,
+                notes=notes,
+                factor_touchpoints=factor_touchpoints,
+            )
+
+            if notes and is_llm_available():
+                digest_content = await self._call_digest_llm(
+                    notes, period, grounded_ctx=grounded_digest,
+                )
+            elif notes or factor_touchpoints:
+                digest_content = render_deterministic_digest(grounded_digest)
+                logger.info(
+                    "Used deterministic grounded digest fallback "
+                    "(period=%s notes=%d touchpoints=%d)",
+                    period, len(notes), len(factor_touchpoints),
+                )
             else:
-                from src.agents.fallbacks import rule_based_digest
-                digest_content = rule_based_digest(notes, period)
-                logger.info("Used rule-based digest fallback for period=%s (LLM unavailable)", period)
+                # Should never reach here because of the early return
+                # above when both are empty, but keep a safe default
+                # for belt-and-suspenders.
+                digest_content = render_deterministic_digest(grounded_digest)
+
+            # Always attach the deterministic touchpoints as a
+            # first-class field so consumers (UI, chat, export) can
+            # render them without re-querying.
+            digest_content["macro_factor_touchpoints"] = factor_touchpoints
+
             digest_id = await self._persist_digest(period, notes, digest_content)
 
-            summary = {"period": period, "digest_id": digest_id, "note_count": len(notes)}
+            summary = {
+                "period": period,
+                "digest_id": digest_id,
+                "note_count": len(notes),
+                "factor_touchpoints": len(factor_touchpoints),
+            }
             await self._log_run_complete(result_summary=summary)
             return summary
 
         except Exception as exc:
             await self._log_run_error(exc)
             raise
+
+    async def _fetch_macro_factor_touchpoints(
+        self, period: str,
+    ) -> list[dict[str, Any]]:
+        """Fetch deterministic macro-factor touchpoints for the digest.
+
+        Returns a per-factor summary of:
+          * factor key + label (from the taxonomy)
+          * dominant direction (up / down / unknown / mixed)
+          * highest magnitude seen
+          * number of events and holdings touched IN THIS PORTFOLIO
+          * aggregate maximum link relevance (the strongest deterministic
+            signal observed for this portfolio)
+          * up to 3 example events and affected tickers
+
+        Everything is scoped to ``self._portfolio_id`` via the join
+        through ``Holding``, so two portfolios sharing the same event
+        get disjoint touchpoint lists.
+        """
+        self._check_permission("event_links", "read")
+        self._check_permission("macro_factor_events", "read")
+        self._check_permission("events", "read")
+        self._check_permission("holdings", "read")
+
+        days_map = {"daily": 1, "weekly": 7, "monthly": 30}
+        days = days_map.get(period, 1)
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+        async with self._get_db() as session:
+            # Join:
+            #   EventLink (macro_factor) -> Event (time window)
+            #                            -> Holding (portfolio scope)
+            #                            -> MacroFactorEvent (direction/
+            #                               magnitude/confidence pulled
+            #                               from the deterministic row)
+            link_stmt = (
+                select(
+                    EventLink.id,
+                    EventLink.impact_channel,
+                    EventLink.relevance_score,
+                    EventLink.details_json,
+                    Event.id,
+                    Event.title,
+                    Holding.id,
+                    Holding.ticker,
+                )
+                .join(Event, EventLink.event_id == Event.id)
+                .join(Holding, EventLink.link_target == Holding.id)
+                .where(
+                    EventLink.link_type == "macro_factor",
+                    Event.fetched_at >= cutoff,
+                    Holding.portfolio_id == self._portfolio_id,
+                )
+                .order_by(EventLink.relevance_score.desc())
+            )
+            rows = (await session.execute(link_stmt)).all()
+
+            # Pull the corresponding MacroFactorEvent rows so we get
+            # authoritative direction / magnitude / factor-level
+            # confidence (the EventLink score is the holding-level
+            # p_holding, which already folds sensitivity in).
+            event_ids = {row[4] for row in rows}
+            mfe_map: dict[tuple[str, str], MacroFactorEvent] = {}
+            if event_ids:
+                mfe_stmt = select(MacroFactorEvent).where(
+                    MacroFactorEvent.event_id.in_(event_ids)
+                )
+                for mfe in (await session.execute(mfe_stmt)).scalars().all():
+                    mfe_map[(mfe.event_id, mfe.factor)] = mfe
+
+        # Aggregate per factor.
+        per_factor: dict[str, dict[str, Any]] = {}
+        for (
+            link_id,
+            factor_key,
+            link_score,
+            details_raw,
+            event_id,
+            event_title,
+            holding_id,
+            ticker,
+        ) in rows:
+            if not factor_key:
+                continue
+            bucket = per_factor.setdefault(
+                factor_key,
+                {
+                    "factor": factor_key,
+                    "label": (
+                        get_factor_definition(factor_key).label
+                        if get_factor_definition(factor_key)
+                        else factor_key
+                    ),
+                    "directions": [],
+                    "magnitudes": [],
+                    "max_link_relevance": 0.0,
+                    "max_factor_confidence": 0.0,
+                    "event_ids": set(),
+                    "holding_ids": set(),
+                    "example_events": [],
+                    "example_tickers": [],
+                    "effect_directions": [],
+                },
+            )
+            mfe = mfe_map.get((event_id, factor_key))
+            if mfe:
+                bucket["directions"].append(mfe.direction)
+                bucket["magnitudes"].append(mfe.magnitude)
+                if mfe.confidence and mfe.confidence > bucket["max_factor_confidence"]:
+                    bucket["max_factor_confidence"] = float(mfe.confidence)
+            if link_score is not None and link_score > bucket["max_link_relevance"]:
+                bucket["max_link_relevance"] = float(link_score)
+            bucket["event_ids"].add(event_id)
+            bucket["holding_ids"].add(holding_id)
+            if len(bucket["example_events"]) < 3 and event_title:
+                bucket["example_events"].append({
+                    "id": event_id,
+                    "title": (event_title or "")[:200],
+                })
+            if ticker and ticker not in bucket["example_tickers"]:
+                bucket["example_tickers"].append(ticker)
+            # Pull the expected effect direction from details_json if
+            # present — this is the propagator's sign(sens)×direction.
+            if details_raw:
+                try:
+                    details = json.loads(details_raw)
+                    eff = (
+                        details.get("expected_effect", {}).get("direction")
+                        if isinstance(details, dict) else None
+                    )
+                    if eff:
+                        bucket["effect_directions"].append(eff)
+                except (json.JSONDecodeError, TypeError):
+                    pass
+
+        # Finalise: collapse lists to a deterministic summary.
+        def _dominant(values: list[str]) -> str:
+            if not values:
+                return "unknown"
+            counts: dict[str, int] = {}
+            for v in values:
+                counts[v] = counts.get(v, 0) + 1
+            best = max(counts.values())
+            winners = [k for k, c in counts.items() if c == best]
+            if len(winners) == 1:
+                return winners[0]
+            return "mixed"
+
+        _MAGNITUDE_ORDER = ("unknown", "minor", "moderate", "major", "extreme")
+
+        def _max_magnitude(values: list[str]) -> str:
+            if not values:
+                return "unknown"
+            idx = max(_MAGNITUDE_ORDER.index(v) for v in values if v in _MAGNITUDE_ORDER)
+            return _MAGNITUDE_ORDER[idx]
+
+        result: list[dict[str, Any]] = []
+        for b in per_factor.values():
+            result.append({
+                "factor": b["factor"],
+                "label": b["label"],
+                "factor_direction": _dominant(b["directions"]),
+                "expected_effect": _dominant(b["effect_directions"]),
+                "max_magnitude": _max_magnitude(b["magnitudes"]),
+                "max_factor_confidence": round(b["max_factor_confidence"], 4),
+                "max_link_relevance": round(b["max_link_relevance"], 4),
+                "event_count": len(b["event_ids"]),
+                "holding_count": len(b["holding_ids"]),
+                "affected_tickers": sorted(b["example_tickers"])[:10],
+                "example_events": b["example_events"],
+            })
+
+        # Deterministic ordering: strongest link relevance first, then
+        # alphabetical factor key for stability.
+        result.sort(key=lambda r: (-r["max_link_relevance"], r["factor"]))
+        return result
 
     async def _fetch_recent_notes(self, period: str) -> list[dict[str, Any]]:
         """Fetch analysis notes within the given period window, scoped to portfolio."""
@@ -561,21 +890,38 @@ class AnalysisAgent(BaseAgent):
         return results
 
     async def _call_digest_llm(
-        self, notes: list[dict[str, Any]], period: str
+        self,
+        notes: list[dict[str, Any]],
+        period: str,
+        *,
+        grounded_ctx=None,
     ) -> dict[str, Any]:
-        """Generate the digest via LLM."""
-        from src.llm.client import call_llm_json
+        """Generate the digest via LLM.
 
-        notes_text = "\n".join(
-            f"- [{n['ticker']}] {n['impact_direction']} / {n['impact_magnitude']} "
-            f"(materiality: {n.get('materiality', 'watch')}) | "
-            f"thesis={n.get('thesis_impact', '?')}, earnings={n.get('earnings_impact', '?')}, "
-            f"valuation={n.get('valuation_impact', '?')}, risk={n.get('risk_impact', '?')} | "
-            f"{n.get('short_term_outlook', 'N/A')}"
-            for n in notes
+        Phase 9E: when a ``GroundedDigestContext`` is supplied the
+        prompt is built via ``build_digest_prompt`` so the LLM sees
+        the deterministic factor touchpoints as part of the ground
+        truth.  On LLM failure the method returns the deterministic
+        grounded digest rather than an empty error stub.
+        """
+        from src.llm.client import call_llm_json
+        from src.llm.grounded import (
+            GroundedDigestContext,
+            build_digest_prompt,
+            render_deterministic_digest,
         )
 
-        prompt = DIGEST_PROMPT.format(period=period, notes_text=notes_text)
+        if grounded_ctx is None:
+            # Defensive fallback for any future caller that hasn't
+            # migrated to the grounded path yet.
+            grounded_ctx = GroundedDigestContext(
+                period=period,
+                portfolio_id=self._portfolio_id,
+                notes=notes,
+                factor_touchpoints=[],
+            )
+
+        prompt = build_digest_prompt(grounded_ctx)
 
         try:
             result = await call_llm_json(prompt)
@@ -583,13 +929,7 @@ class AnalysisAgent(BaseAgent):
             return result
         except Exception as exc:
             logger.error("LLM digest failed for period=%s: %s", period, exc)
-            return {
-                "headline": f"{period.capitalize()} digest (LLM unavailable)",
-                "key_developments": [f"LLM error: {exc}"],
-                "risk_flags": [],
-                "action_items": [],
-                "market_context": "LLM integration temporarily unavailable.",
-            }
+            return render_deterministic_digest(grounded_ctx)
 
     async def _persist_digest(
         self,

@@ -653,6 +653,223 @@ dialog::backdrop {
 .form-preview:empty { display: none; }
 .modal-body { padding: 0.5rem 0; line-height: 1.7; }
 
+/* Phase 9B — wider modal for the event detail inspection surface */
+dialog.modal-lg { max-width: 760px; }
+
+/* Phase 9B — event detail chain + groups */
+.event-detail-group { margin-top: 1.25rem; }
+.event-detail-group:first-child { margin-top: 0; }
+.event-detail-group h4 {
+    font-size: 0.72rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+    margin: 0 0 0.5rem 0;
+    padding-bottom: 0.3rem;
+    border-bottom: 1px solid var(--border);
+}
+.event-detail-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1rem;
+    font-size: 0.78rem;
+    color: var(--muted-fg);
+    margin-bottom: 0.5rem;
+}
+.event-detail-meta strong { color: var(--foreground); font-weight: 600; }
+.event-detail-summary {
+    font-size: 0.88rem;
+    line-height: 1.55;
+    color: var(--foreground);
+    padding: 0.6rem 0.8rem;
+    background: var(--surface);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+}
+.event-factor-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-top: 0.25rem;
+}
+.factor-tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    padding: 0.18rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    background: var(--primary-bg);
+    color: var(--primary);
+    border: 1px solid var(--border);
+}
+.factor-tag .factor-arrow {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    opacity: 0.8;
+}
+.factor-tag.direction-down { background: var(--warning-bg); color: var(--warning); }
+.factor-tag.direction-unknown { background: hsla(220,8%,50%,0.10); color: var(--muted-fg); }
+.factor-tag-list-mini {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+    margin-left: 0.35rem;
+    vertical-align: middle;
+}
+.factor-tag-mini {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.12rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.66rem;
+    font-weight: 600;
+    background: var(--primary-bg);
+    color: var(--primary);
+    border: 1px solid var(--border);
+}
+.factor-tag-mini.direction-down { background: var(--warning-bg); color: var(--warning); }
+
+/* Chain card: one per normalized link, rendered in the detail modal */
+.chain-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.7rem 0.85rem;
+    margin-bottom: 0.55rem;
+    background: var(--card);
+}
+.chain-card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.35rem;
+}
+.chain-origin-badge {
+    display: inline-block;
+    padding: 0.12rem 0.5rem;
+    font-size: 0.66rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-weight: 700;
+    border-radius: 999px;
+    background: var(--surface);
+    color: var(--muted-fg);
+    border: 1px solid var(--border);
+}
+.chain-origin-deterministic_factor {
+    background: var(--info-bg);
+    color: var(--info);
+}
+.chain-origin-direct_match {
+    background: var(--success-bg);
+    color: var(--success);
+}
+.chain-origin-llm_screen {
+    background: var(--warning-bg);
+    color: var(--warning);
+}
+.chain-summary {
+    font-size: 0.84rem;
+    color: var(--foreground);
+    line-height: 1.45;
+}
+.chain-flow {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.76rem;
+    font-family: var(--font-mono);
+    color: var(--muted-fg);
+    margin-top: 0.4rem;
+}
+.chain-flow .chain-step {
+    padding: 0.15rem 0.5rem;
+    background: var(--surface);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    color: var(--foreground);
+}
+.chain-flow .chain-arrow { opacity: 0.5; }
+.chain-rationale {
+    margin-top: 0.4rem;
+    padding-left: 1rem;
+    font-size: 0.76rem;
+    color: var(--muted-fg);
+    line-height: 1.5;
+}
+.chain-rationale li { margin-bottom: 0.15rem; }
+.chain-metrics {
+    display: flex;
+    gap: 0.8rem;
+    margin-top: 0.4rem;
+    font-size: 0.72rem;
+    color: var(--muted-fg);
+}
+.chain-metrics strong { color: var(--foreground); font-weight: 600; }
+
+/* Affected holdings list inside the detail modal */
+.affected-holdings-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+.affected-holding-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.4rem 0.6rem;
+    background: var(--surface);
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    font-size: 0.8rem;
+}
+.affected-holding-row .ticker {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    color: var(--primary);
+}
+.affected-holding-row .pid {
+    font-size: 0.68rem;
+    color: var(--muted-fg);
+    padding: 0.1rem 0.4rem;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    margin-left: 0.4rem;
+}
+.events-row-clickable { cursor: pointer; }
+.events-row-clickable:hover { background: var(--surface); }
+.event-row-title {
+    font-weight: 500;
+    color: var(--foreground);
+    margin-right: 0.4rem;
+}
+
+/* Related analysis / alerts rows */
+.related-row {
+    padding: 0.45rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-bottom: 0.35rem;
+    font-size: 0.8rem;
+    background: var(--card);
+}
+.related-row .row-title { font-weight: 600; color: var(--foreground); }
+.related-row .row-meta {
+    font-size: 0.7rem;
+    color: var(--muted-fg);
+    margin-top: 0.15rem;
+}
+.empty-inline {
+    font-size: 0.76rem;
+    color: var(--muted-fg);
+    font-style: italic;
+}
+
 /* ========== Row Actions ========== */
 .row-actions { display: flex; gap: 0.2rem; opacity: 0; transition: opacity 0.15s; }
 tr:hover .row-actions { opacity: 1; }
@@ -1450,3 +1667,1282 @@ th.sortable.sort-desc::after { content: '\25BC'; opacity: 0.8; color: var(--prim
     background: none; border: none; color: var(--foreground); cursor: pointer;
 }
 .action-menu-items button:hover { background: hsla(220,10%,50%,0.1); }
+
+
+/* =========================================================
+   Phase 9G — Portfolio Intelligence Overview
+   ========================================================= */
+.intel-overview-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem 1.1rem;
+    margin-bottom: 1rem;
+    box-shadow: 0 1px 0 rgba(255,255,255,0.02) inset;
+}
+.intel-overview-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.9rem;
+}
+.intel-posture {
+    display: flex;
+    align-items: center;
+    gap: 0.7rem;
+}
+.intel-posture .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+    box-shadow: 0 0 0 2px rgba(0,0,0,0.15);
+}
+.intel-posture .dot.red    { background: hsl(0, 70%, 55%); }
+.intel-posture .dot.orange { background: hsl(25, 90%, 55%); }
+.intel-posture .dot.yellow { background: hsl(45, 90%, 55%); }
+.intel-posture .dot.green  { background: hsl(140, 55%, 45%); }
+.intel-posture .dot.gray   { background: hsl(220, 8%, 45%); }
+
+.intel-posture-label {
+    font-size: 0.98rem;
+    font-weight: 700;
+    letter-spacing: 0.1px;
+}
+.posture-strong-negative  { color: hsl(0, 70%, 65%); }
+.posture-mild-negative    { color: hsl(25, 90%, 65%); }
+.posture-mixed            { color: hsl(45, 90%, 65%); }
+.posture-constructive     { color: hsl(140, 55%, 60%); }
+.posture-strong-positive  { color: hsl(140, 60%, 60%); }
+.posture-insufficient     { color: var(--muted-fg); }
+
+.intel-posture-reason {
+    font-size: 0.78rem;
+    color: var(--muted-fg);
+    max-width: 520px;
+    line-height: 1.35;
+}
+.intel-overview-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+.intel-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.75rem;
+    padding: 0.22rem 0.55rem;
+    border-radius: 999px;
+    background: hsla(220,10%,50%,0.14);
+    color: var(--muted-fg);
+    border: 1px solid var(--border);
+    white-space: nowrap;
+}
+.intel-chip-stale {
+    background: hsla(25,90%,55%,0.12);
+    color: hsl(25, 90%, 70%);
+    border-color: hsla(25,90%,55%,0.30);
+}
+.intel-chip-alert {
+    background: hsla(0,70%,55%,0.12);
+    color: hsl(0, 75%, 72%);
+    border-color: hsla(0,70%,55%,0.30);
+}
+.sev-dot {
+    width: 7px; height: 7px; border-radius: 50%; display: inline-block;
+}
+.sev-dot-critical { background: hsl(0, 75%, 55%); }
+.sev-dot-high     { background: hsl(0, 65%, 60%); }
+.sev-dot-warning  { background: hsl(45, 90%, 55%); }
+
+.intel-overview-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 1rem;
+}
+@media (max-width: 860px) {
+    .intel-overview-grid { grid-template-columns: 1fr; }
+}
+.intel-block-label {
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin-bottom: 0.45rem;
+}
+.intel-pill-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+.intel-factor-pill, .intel-rel-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.32rem 0.65rem;
+    border-radius: 6px;
+    background: hsla(217,70%,58%,0.07);
+    border: 1px solid hsla(217,70%,58%,0.22);
+    font-size: 0.80rem;
+    color: var(--foreground);
+}
+.intel-factor-pill strong, .intel-rel-pill strong {
+    font-weight: 600;
+}
+.intel-factor-arrow, .intel-rel-arrow {
+    color: var(--primary);
+    font-weight: 600;
+}
+.intel-attention {
+    margin-top: 0.85rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+.intel-attention-label {
+    font-size: 0.76rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+}
+.ticker-badge-warn {
+    background: hsla(25,90%,55%,0.15) !important;
+    color: hsl(25, 90%, 72%) !important;
+    border-color: hsla(25,90%,55%,0.35) !important;
+}
+.intel-health {
+    margin-top: 0.55rem;
+    font-size: 0.70rem;
+    color: var(--muted);
+    text-align: right;
+}
+
+/* Phase 9G — Digest premium reader */
+.digest-card {
+    padding: 1rem 1.15rem;
+    margin-bottom: 0.85rem;
+}
+.digest-headline .digest-headline-text {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--foreground);
+    margin: 0 0 0.35rem 0;
+}
+.digest-headline .digest-content {
+    color: var(--muted-fg);
+    line-height: 1.55;
+}
+.digest-risk-flags h3, .digest-attention h3,
+.digest-developments h3, .digest-actions h3,
+.digest-market h3 {
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin: 0 0 0.6rem 0;
+}
+.digest-list {
+    margin: 0;
+    padding-left: 1.1rem;
+    color: var(--foreground);
+    line-height: 1.55;
+}
+.digest-list li { margin-bottom: 0.3rem; }
+.digest-attention-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+}
+.digest-risk-flags  { border-left: 3px solid hsl(0, 70%, 55%); }
+.digest-attention   { border-left: 3px solid hsl(25, 90%, 55%); }
+.digest-developments { border-left: 3px solid hsl(217, 70%, 58%); }
+.digest-actions     { border-left: 3px solid hsl(140, 55%, 50%); }
+
+
+/* =========================================================
+   Phase 9I — Operator panel
+   ========================================================= */
+.op-panel-card {
+    padding: 1rem 1.1rem;
+    margin-bottom: 0.8rem;
+}
+.op-panel-card .card-header {
+    font-size: 0.88rem;
+    font-weight: 600;
+    margin-bottom: 0.4rem;
+    padding: 0;
+    border: none;
+}
+.op-panel-portfolio {
+    font-size: 0.75rem;
+    color: var(--muted-fg);
+}
+.op-panel-portfolio code {
+    font-size: 0.72rem;
+    padding: 0.1rem 0.4rem;
+    background: hsla(220,10%,50%,0.15);
+    border-radius: 4px;
+    margin-left: 0.25rem;
+}
+.op-card-actions {
+    display: flex;
+    gap: 0.4rem;
+    align-items: center;
+    flex-wrap: wrap;
+}
+.op-empty {
+    padding: 1.2rem 0.8rem;
+    text-align: center;
+}
+
+/* Source discriminator badges — seed / manual / ai_inferred /
+   default / zero — colored so the operator sees at a glance
+   who owns each row. */
+.op-source-badge {
+    display: inline-block;
+    padding: 0.12rem 0.5rem;
+    font-size: 0.68rem;
+    font-weight: 600;
+    border-radius: 999px;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    border: 1px solid transparent;
+    white-space: nowrap;
+}
+.op-src-manual {
+    background: hsla(217,70%,58%,0.15);
+    color: hsl(217, 70%, 70%);
+    border-color: hsla(217,70%,58%,0.35);
+}
+.op-src-seed {
+    background: hsla(140,55%,50%,0.12);
+    color: hsl(140, 55%, 65%);
+    border-color: hsla(140,55%,50%,0.32);
+}
+.op-src-ai {
+    background: hsla(280,55%,60%,0.12);
+    color: hsl(280, 55%, 72%);
+    border-color: hsla(280,55%,60%,0.32);
+}
+.op-src-default {
+    background: hsla(220,10%,50%,0.12);
+    color: var(--muted-fg);
+    border-color: var(--border);
+}
+.op-src-zero {
+    background: hsla(220,10%,50%,0.08);
+    color: var(--muted);
+    border-color: var(--border);
+}
+
+/* Compact operator data tables */
+.op-factor-table,
+.op-rel-table {
+    font-size: 0.80rem;
+}
+.op-factor-table th,
+.op-rel-table th {
+    font-size: 0.70rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+}
+.op-factor-table td,
+.op-rel-table td {
+    padding: 0.45rem 0.55rem;
+}
+
+.op-rel-locked {
+    display: inline-block;
+    color: var(--muted);
+    padding: 0.1rem 0.4rem;
+}
+
+/* Last-action result block */
+.op-last-result {
+    margin-top: 0.35rem;
+    padding: 0.55rem 0.75rem;
+    border-radius: var(--radius);
+    border: 1px solid var(--border);
+    font-size: 0.78rem;
+    background: hsla(220,10%,50%,0.07);
+}
+.op-last-result strong { display: block; margin-bottom: 0.2rem; }
+.op-last-result-ok {
+    background: hsla(140,55%,50%,0.08);
+    border-color: hsla(140,55%,50%,0.3);
+    color: hsl(140, 55%, 68%);
+}
+.op-last-result-err {
+    background: hsla(0,70%,55%,0.08);
+    border-color: hsla(0,70%,55%,0.3);
+    color: hsl(0, 70%, 72%);
+}
+.op-last-result-info {
+    color: var(--muted-fg);
+}
+
+/* Maintenance action row (reconcile + backfill side-by-side) */
+.op-action-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 1rem;
+}
+@media (max-width: 780px) {
+    .op-action-row { grid-template-columns: 1fr; }
+}
+.op-action-block {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.75rem 0.85rem;
+    background: hsla(220,10%,50%,0.04);
+}
+.op-action-title {
+    font-weight: 600;
+    margin-bottom: 0.35rem;
+    font-size: 0.82rem;
+}
+
+
+/* =========================================================
+   Phase 9L — Live operator action status + busy states
+   ========================================================= */
+
+/* Header row inside each maintenance action block: title on the
+   left, live status chip on the right */
+.op-action-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.35rem;
+}
+.op-action-head .op-action-title {
+    margin-bottom: 0;  /* handled by the row flex gap */
+}
+
+.op-action-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.68rem;
+    font-weight: 600;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    padding: 0.18rem 0.55rem;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: hsla(220,10%,50%,0.12);
+    color: var(--muted-fg);
+    white-space: nowrap;
+}
+.op-action-chip .op-action-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    display: inline-block;
+    background: hsl(220, 8%, 55%);
+}
+.op-action-chip .op-action-chip-label {
+    /* Semantic hook for the chip's text so tests + aria labels can
+       target the label independent of the chip wrapper styling. */
+    display: inline-block;
+}
+.op-action-chip-idle {
+    /* default muted look */
+}
+.op-action-chip-running {
+    background: hsla(217,70%,58%,0.16);
+    color: hsl(217, 70%, 70%);
+    border-color: hsla(217,70%,58%,0.42);
+}
+.op-action-chip-running .op-action-dot {
+    background: hsl(217, 70%, 65%);
+    animation: op-action-pulse 1.6s ease-in-out infinite;
+    box-shadow: 0 0 0 0 hsla(217, 70%, 65%, 0.6);
+}
+@keyframes op-action-pulse {
+    0%   { box-shadow: 0 0 0 0 hsla(217, 70%, 65%, 0.55); }
+    70%  { box-shadow: 0 0 0 6px hsla(217, 70%, 65%, 0);  }
+    100% { box-shadow: 0 0 0 0 hsla(217, 70%, 65%, 0);    }
+}
+
+/* Busy button state — applied alongside [disabled] so the visual
+   treatment matches the chip */
+.btn.op-btn-busy,
+.btn.op-btn-busy:disabled,
+.btn.op-btn-busy:hover {
+    background: hsla(217,70%,58%,0.22);
+    color: hsl(217, 70%, 78%);
+    border-color: hsla(217,70%,58%,0.45);
+    cursor: progress;
+    position: relative;
+}
+.btn.op-btn-busy::before {
+    content: "";
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    border: 2px solid hsla(217,70%,80%,0.35);
+    border-top-color: hsl(217,70%,80%);
+    display: inline-block;
+    margin-right: 0.4rem;
+    vertical-align: -1px;
+    animation: op-btn-spin 0.9s linear infinite;
+}
+@keyframes op-btn-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Last-action result block — Phase 9L adds a footer row with
+   timestamp + audit trail hint */
+.op-last-result-body {
+    margin-top: 0.15rem;
+    color: var(--muted-fg);
+    line-height: 1.4;
+}
+.op-last-result-footer {
+    margin-top: 0.45rem;
+    padding-top: 0.35rem;
+    border-top: 1px dashed var(--border);
+    display: flex;
+    justify-content: space-between;
+    gap: 0.5rem;
+    font-size: 0.68rem;
+    color: var(--muted);
+}
+.op-last-result-footer .op-audit-hint {
+    color: hsl(140, 55%, 62%);
+}
+
+/* Phase 9L: busy tone for the last-action block — not a failure,
+   not a success.  Use a muted blue so it's visibly distinct from
+   the green "ok" and red "err" variants. */
+.op-last-result-busy {
+    background: hsla(217,70%,58%,0.08);
+    border-color: hsla(217,70%,58%,0.30);
+    color: hsl(217, 70%, 74%);
+}
+.op-last-result-busy strong { color: hsl(217, 70%, 80%); }
+.op-last-result-busy .op-last-result-footer { color: hsl(217, 30%, 68%); }
+
+
+/* =========================================================
+   Phase 9N — Actionable intelligence + explanation polish
+   ========================================================= */
+
+/* Recommended actions zone inside the Phase 9G intelligence overview */
+.intel-actions-block {
+    margin-top: 0.85rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid var(--border);
+}
+.intel-actions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    margin-top: 0.35rem;
+}
+.intel-action-row {
+    padding: 0.55rem 0.75rem;
+    border-radius: 8px;
+    background: hsla(220,10%,50%,0.06);
+    border: 1px solid var(--border);
+    border-left-width: 3px;
+}
+.intel-action-row.intel-action-high {
+    border-left-color: hsl(0, 70%, 55%);
+    background: hsla(0,70%,55%,0.05);
+}
+.intel-action-row.intel-action-medium {
+    border-left-color: hsl(25, 90%, 55%);
+    background: hsla(25,90%,55%,0.05);
+}
+.intel-action-row.intel-action-low {
+    border-left-color: hsl(217, 70%, 58%);
+    background: hsla(217,70%,58%,0.04);
+}
+.intel-action-main {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.25rem;
+}
+.intel-action-title {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--foreground);
+}
+.intel-action-priority {
+    display: inline-block;
+    padding: 0.1rem 0.45rem;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    border-radius: 999px;
+    border: 1px solid transparent;
+    line-height: 1.4;
+}
+.intel-action-priority.intel-action-high {
+    background: hsla(0,70%,55%,0.15);
+    color: hsl(0, 70%, 72%);
+    border-color: hsla(0,70%,55%,0.35);
+}
+.intel-action-priority.intel-action-medium {
+    background: hsla(25,90%,55%,0.15);
+    color: hsl(25, 90%, 72%);
+    border-color: hsla(25,90%,55%,0.35);
+}
+.intel-action-priority.intel-action-low {
+    background: hsla(217,70%,58%,0.14);
+    color: hsl(217, 70%, 74%);
+    border-color: hsla(217,70%,58%,0.35);
+}
+.intel-action-body {
+    font-size: 0.78rem;
+    color: var(--muted-fg);
+    line-height: 1.5;
+}
+.intel-action-tickers {
+    margin-top: 0.35rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+}
+.intel-actions-empty {
+    font-size: 0.78rem;
+    color: var(--muted);
+    font-style: italic;
+    padding: 0.35rem 0.1rem;
+}
+
+/* Event detail modal — "Why Axion flagged this" block */
+.event-why-block {
+    background: hsla(217,70%,58%,0.06);
+    border-left: 3px solid hsla(217,70%,58%,0.45);
+    padding: 0.75rem 0.9rem;
+    border-radius: var(--radius);
+}
+.event-why-block h4 {
+    color: hsl(217, 70%, 74%);
+    margin-bottom: 0.35rem;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+.event-why-text {
+    font-size: 0.88rem;
+    line-height: 1.55;
+    color: var(--foreground);
+    margin: 0 0 0.4rem 0;
+}
+.event-why-action {
+    font-size: 0.82rem;
+    color: var(--foreground);
+    padding: 0.4rem 0.55rem;
+    border-radius: 6px;
+    background: hsla(140,55%,50%,0.08);
+    border: 1px solid hsla(140,55%,50%,0.25);
+    margin-top: 0.35rem;
+}
+.event-why-action strong {
+    color: hsl(140, 55%, 65%);
+}
+.event-why-grounding {
+    margin-top: 0.5rem;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    align-items: center;
+}
+.event-why-ref {
+    display: inline-block;
+    padding: 0.1rem 0.4rem;
+    font-size: 0.65rem;
+    border-radius: 4px;
+    background: hsla(220,10%,50%,0.12);
+    color: var(--muted-fg);
+    border: 1px solid var(--border);
+    font-family: var(--font-mono, monospace);
+}
+
+/* Alert card — per-alert "Next step" line */
+.alert-suggested-action {
+    margin-top: 0.5rem;
+    padding: 0.35rem 0.55rem;
+    background: hsla(140,55%,50%,0.06);
+    border-left: 2px solid hsla(140,55%,50%,0.5);
+    border-radius: 4px;
+    font-size: 0.78rem;
+    color: var(--foreground);
+    line-height: 1.45;
+}
+.alert-suggested-label {
+    font-weight: 600;
+    color: hsl(140, 55%, 68%);
+    margin-right: 0.25rem;
+    text-transform: uppercase;
+    font-size: 0.68rem;
+    letter-spacing: 0.05em;
+}
+
+/* Operator panel — last-action "Next step" block */
+.op-last-result-next-step {
+    margin-top: 0.5rem;
+    padding: 0.4rem 0.55rem;
+    background: hsla(217,70%,58%,0.08);
+    border-left: 2px solid hsla(217,70%,58%,0.45);
+    border-radius: 4px;
+    font-size: 0.75rem;
+    color: var(--foreground);
+}
+.op-next-step-label {
+    font-weight: 600;
+    color: hsl(217, 70%, 74%);
+    margin-right: 0.3rem;
+    text-transform: uppercase;
+    font-size: 0.65rem;
+    letter-spacing: 0.05em;
+}
+
+/* ============================================================
+   Phase 9O — Audit Trail UX + Traceability Surfaces
+   ============================================================ */
+
+/* --- Recommended action evidence chips (Phase 9N + 9O) --- */
+.evidence-refs {
+    margin-top: 0.4rem;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem;
+    font-size: 0.7rem;
+    line-height: 1.4;
+}
+.evidence-refs-label {
+    color: var(--muted-foreground);
+    text-transform: uppercase;
+    font-size: 0.62rem;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+    margin-right: 0.15rem;
+}
+.evidence-ref-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.12rem 0.45rem;
+    border-radius: 3px;
+    background: hsla(217, 14%, 55%, 0.12);
+    color: var(--muted-foreground);
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-size: 0.65rem;
+    letter-spacing: 0;
+    max-width: 18rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    border: 1px solid hsla(217, 14%, 55%, 0.18);
+}
+.evidence-ref-more {
+    font-size: 0.62rem;
+    color: var(--muted-foreground);
+    font-style: italic;
+    cursor: help;
+}
+
+/* --- Grouped evidence refs (event detail modal) --- */
+.evidence-refs-grouped {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.35rem;
+}
+.evidence-ref-groups {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    width: 100%;
+}
+.evidence-ref-group {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem;
+}
+.evidence-ref-group-label {
+    color: var(--muted-foreground);
+    font-size: 0.62rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    min-width: 4.5rem;
+}
+
+/* --- Intelligence overview recommended action refs row --- */
+.intel-action-refs {
+    margin-top: 0.45rem;
+    padding-top: 0.4rem;
+    border-top: 1px dashed hsla(217, 14%, 55%, 0.2);
+}
+
+/* --- Alert card evidence chips --- */
+.alert-evidence-refs {
+    margin-top: 0.4rem;
+    padding-top: 0.35rem;
+    border-top: 1px dashed hsla(217, 14%, 55%, 0.16);
+}
+
+/* --- Digest trust footer --- */
+.digest-trust-footer {
+    margin-top: 0.75rem;
+    padding: 0.55rem 0.75rem;
+    background: hsla(217, 14%, 55%, 0.06);
+    border: 1px solid hsla(217, 14%, 55%, 0.14);
+    border-radius: 6px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.75rem;
+    color: var(--muted-foreground);
+}
+.digest-trust-label {
+    text-transform: uppercase;
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    color: var(--muted-foreground);
+}
+.digest-trust-body {
+    color: var(--foreground);
+    font-weight: 500;
+}
+
+/* --- Operator "Recent operator actions" card --- */
+#op-recent-actions-card {
+    margin-top: 0;
+}
+.op-recent-empty {
+    padding: 1rem;
+    text-align: center;
+    background: hsla(217, 14%, 55%, 0.05);
+    border-radius: 6px;
+    border: 1px dashed hsla(217, 14%, 55%, 0.18);
+}
+.op-recent-error {
+    padding: 0.75rem;
+    background: hsla(0, 70%, 55%, 0.08);
+    border: 1px solid hsla(0, 70%, 55%, 0.22);
+    border-radius: 6px;
+}
+.op-recent-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+.op-recent-row {
+    padding: 0.55rem 0.7rem;
+    background: hsla(217, 14%, 55%, 0.04);
+    border: 1px solid hsla(217, 14%, 55%, 0.12);
+    border-left: 3px solid hsla(217, 14%, 55%, 0.3);
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+.op-recent-row[data-entity-type="holding_factor_sensitivity"] {
+    border-left-color: hsl(45, 75%, 58%);
+}
+.op-recent-row[data-entity-type="holding_relationship"] {
+    border-left-color: hsl(200, 75%, 58%);
+}
+.op-recent-row[data-entity-type="holding_relationships"] {
+    border-left-color: hsl(280, 55%, 65%);
+}
+.op-recent-row[data-entity-type="intelligence_backfill"] {
+    border-left-color: hsl(160, 55%, 55%);
+}
+.op-recent-header {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+}
+.op-recent-entity {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    font-size: 0.62rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    background: hsla(217, 14%, 55%, 0.15);
+    color: var(--muted-foreground);
+}
+.op-recent-entity-factor {
+    background: hsla(45, 75%, 58%, 0.15);
+    color: hsl(45, 75%, 72%);
+}
+.op-recent-entity-rel {
+    background: hsla(200, 75%, 58%, 0.15);
+    color: hsl(200, 75%, 72%);
+}
+.op-recent-entity-reconcile {
+    background: hsla(280, 55%, 65%, 0.15);
+    color: hsl(280, 55%, 78%);
+}
+.op-recent-entity-backfill {
+    background: hsla(160, 55%, 55%, 0.15);
+    color: hsl(160, 55%, 68%);
+}
+.op-recent-portfolio {
+    padding: 0.08rem 0.38rem;
+    border-radius: 3px;
+    background: hsla(217, 70%, 58%, 0.15);
+    color: hsl(217, 70%, 78%);
+    font-size: 0.62rem;
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-weight: 600;
+}
+.op-recent-title {
+    font-weight: 600;
+    color: var(--foreground);
+    font-size: 0.85rem;
+}
+.op-recent-summary {
+    font-size: 0.75rem;
+    line-height: 1.45;
+}
+.op-recent-reason {
+    margin-top: 0.15rem;
+    font-size: 0.7rem;
+    color: var(--muted-foreground);
+    font-style: italic;
+}
+.op-recent-reason-label {
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-right: 0.25rem;
+    font-style: normal;
+    font-size: 0.6rem;
+}
+
+/* --- Factor / Relationship table provenance hint --- */
+.op-provenance {
+    display: block;
+    margin-top: 0.15rem;
+    font-size: 0.6rem;
+    color: var(--muted-foreground);
+    font-style: italic;
+    letter-spacing: 0;
+    text-transform: none;
+}
+.op-provenance-manual {
+    color: hsl(45, 70%, 68%);
+}
+.op-provenance-seed {
+    color: hsl(200, 60%, 65%);
+}
+.op-provenance-ai {
+    color: hsl(280, 50%, 72%);
+}
+.op-provenance-default {
+    color: var(--muted-foreground);
+    opacity: 0.75;
+}
+
+/* ============================================================
+   Phase 9P — Notification Center + Inbox Workflow
+   ============================================================ */
+
+/* --- Unread badge on the Inbox sub-tab button --- */
+.inbox-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 1.1rem;
+    height: 1.1rem;
+    padding: 0 0.35rem;
+    margin-left: 0.35rem;
+    border-radius: 999px;
+    background: hsl(0, 70%, 55%);
+    color: #fff;
+    font-size: 0.62rem;
+    font-weight: 700;
+    letter-spacing: 0;
+    line-height: 1;
+    vertical-align: middle;
+}
+
+/* --- Inbox summary header --- */
+.inbox-summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.55rem 0.85rem;
+    margin-bottom: 0.75rem;
+    background: hsla(217, 14%, 55%, 0.05);
+    border: 1px solid hsla(217, 14%, 55%, 0.12);
+    border-radius: 6px;
+    font-size: 0.8rem;
+}
+.inbox-summary-unread strong {
+    color: hsl(0, 70%, 68%);
+    font-weight: 700;
+    margin-right: 0.15rem;
+}
+
+/* --- Inbox list + item cards --- */
+.inbox-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+.inbox-item {
+    padding: 0.75rem 0.9rem;
+    background: hsla(217, 14%, 55%, 0.04);
+    border: 1px solid hsla(217, 14%, 55%, 0.12);
+    border-left: 4px solid hsla(217, 14%, 55%, 0.3);
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    transition: background 0.12s ease;
+}
+.inbox-item-unread {
+    background: hsla(217, 70%, 58%, 0.07);
+    border-color: hsla(217, 70%, 58%, 0.25);
+}
+.inbox-item-read {
+    opacity: 0.72;
+}
+.inbox-priority-high {
+    border-left-color: hsl(0, 70%, 55%);
+}
+.inbox-priority-medium {
+    border-left-color: hsl(45, 75%, 58%);
+}
+.inbox-priority-low {
+    border-left-color: hsl(200, 55%, 55%);
+}
+.inbox-item-header {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+    font-size: 0.72rem;
+}
+.inbox-spacer {
+    flex-grow: 1;
+}
+.inbox-source-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.12rem 0.45rem;
+    border-radius: 3px;
+    background: hsla(217, 14%, 55%, 0.18);
+    color: var(--muted-foreground);
+    font-size: 0.62rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+.inbox-src-alert    { background: hsla(0, 70%, 55%, 0.18);   color: hsl(0, 70%, 78%); }
+.inbox-src-digest   { background: hsla(217, 70%, 58%, 0.18); color: hsl(217, 70%, 78%); }
+.inbox-src-operator { background: hsla(45, 75%, 58%, 0.18);  color: hsl(45, 75%, 72%); }
+.inbox-src-action   { background: hsla(160, 55%, 55%, 0.18); color: hsl(160, 55%, 68%); }
+.inbox-src-event    { background: hsla(280, 55%, 65%, 0.18); color: hsl(280, 55%, 78%); }
+.inbox-priority-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.12rem 0.45rem;
+    border-radius: 3px;
+    font-size: 0.62rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    background: hsla(217, 14%, 55%, 0.15);
+    color: var(--muted-foreground);
+}
+.inbox-priority-pill.inbox-priority-high {
+    background: hsla(0, 70%, 55%, 0.18);
+    color: hsl(0, 70%, 78%);
+    border: 1px solid hsla(0, 70%, 55%, 0.3);
+}
+.inbox-priority-pill.inbox-priority-medium {
+    background: hsla(45, 75%, 58%, 0.18);
+    color: hsl(45, 75%, 72%);
+    border: 1px solid hsla(45, 75%, 58%, 0.3);
+}
+.inbox-priority-pill.inbox-priority-low {
+    background: hsla(200, 55%, 55%, 0.18);
+    color: hsl(200, 55%, 72%);
+    border: 1px solid hsla(200, 55%, 55%, 0.3);
+}
+.inbox-timestamp {
+    font-size: 0.7rem;
+}
+.inbox-item-title {
+    font-size: 0.92rem;
+    font-weight: 600;
+    color: var(--foreground);
+    line-height: 1.35;
+}
+.inbox-item-unread .inbox-item-title {
+    color: var(--foreground);
+}
+.inbox-item-body {
+    font-size: 0.82rem;
+    line-height: 1.45;
+    color: var(--muted-foreground);
+}
+.inbox-evidence-refs {
+    margin-top: 0.15rem;
+}
+.inbox-item-actions {
+    display: flex;
+    gap: 0.35rem;
+    margin-top: 0.2rem;
+}
+.inbox-mark-read-btn,
+.inbox-jump-btn {
+    font-size: 0.72rem;
+    padding: 0.25rem 0.55rem;
+}
+.inbox-read-chip {
+    padding: 0.1rem 0.4rem;
+    border-radius: 3px;
+    background: hsla(160, 55%, 55%, 0.12);
+    color: hsl(160, 55%, 68%);
+    font-weight: 600;
+}
+
+/* --- Empty state --- */
+.inbox-empty {
+    padding: 1.25rem;
+    text-align: center;
+    background: hsla(217, 14%, 55%, 0.04);
+    border: 1px dashed hsla(217, 14%, 55%, 0.2);
+    border-radius: 6px;
+}
+
+/* ============================================================
+   Phase 9Q — Deep Links + Contextual Navigation
+   ============================================================ */
+
+/* --- Temporary flash on the jump destination --- */
+@keyframes nav-highlight-fade {
+    0%   { box-shadow: 0 0 0 0 hsla(45, 90%, 60%, 0.55),
+                       0 0 0 6px hsla(45, 90%, 60%, 0.20); }
+    60%  { box-shadow: 0 0 0 4px hsla(45, 90%, 60%, 0.35),
+                       0 0 0 10px hsla(45, 90%, 60%, 0.12); }
+    100% { box-shadow: 0 0 0 0 hsla(45, 90%, 60%, 0.0),
+                       0 0 0 0 hsla(45, 90%, 60%, 0.0); }
+}
+.nav-highlight-flash {
+    animation: nav-highlight-fade 1.8s ease-out;
+    position: relative;
+    z-index: 1;
+}
+
+/* --- Clickable evidence chip (alert evidence, event detail refs) --- */
+.evidence-ref-chip.evidence-ref-clickable {
+    cursor: pointer;
+    border: 1px solid hsla(217, 70%, 58%, 0.35);
+    background: hsla(217, 70%, 58%, 0.12);
+    color: hsl(217, 70%, 80%);
+    transition: background 0.12s ease, border-color 0.12s ease;
+}
+.evidence-ref-chip.evidence-ref-clickable:hover {
+    background: hsla(217, 70%, 58%, 0.22);
+    border-color: hsla(217, 70%, 58%, 0.55);
+}
+.evidence-ref-chip.evidence-ref-clickable:focus-visible {
+    outline: 2px solid hsl(217, 70%, 68%);
+    outline-offset: 1px;
+}
+
+/* --- "Open X →" jump button on recommended action rows --- */
+.intel-action-nav {
+    margin-top: 0.45rem;
+    display: flex;
+    justify-content: flex-end;
+}
+.intel-action-jump {
+    padding: 0.22rem 0.65rem;
+    font-size: 0.72rem;
+    background: hsla(217, 70%, 58%, 0.1);
+    color: hsl(217, 70%, 78%);
+    border: 1px solid hsla(217, 70%, 58%, 0.3);
+    border-radius: 4px;
+    cursor: pointer;
+    font-weight: 600;
+    transition: background 0.12s ease;
+}
+.intel-action-jump:hover {
+    background: hsla(217, 70%, 58%, 0.2);
+}
+
+/* --- Clickable operator recent-action row --- */
+.op-recent-row-clickable {
+    cursor: pointer;
+    transition: background 0.12s ease, border-left-width 0.12s ease;
+}
+.op-recent-row-clickable:hover {
+    background: hsla(217, 70%, 58%, 0.08);
+}
+.op-recent-row-clickable:focus-visible {
+    outline: 2px solid hsl(217, 70%, 68%);
+    outline-offset: 2px;
+}
+
+/* ============================================================
+   Phase 9R — Shareable Deep Links + Exact Holding Anchors
+   ============================================================ */
+
+/* --- Modal header actions (side-by-side close + copy-link) --- */
+.modal-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+}
+
+/* --- Copy-link button (event detail modal + inbox items) --- */
+.copy-link-btn {
+    font-size: 0.72rem;
+    padding: 0.18rem 0.5rem;
+    border: 1px solid hsla(217, 70%, 58%, 0.25);
+    border-radius: 4px;
+    background: hsla(217, 70%, 58%, 0.08);
+    color: hsl(217, 70%, 78%);
+    cursor: pointer;
+    transition: background 0.12s ease;
+    white-space: nowrap;
+}
+.copy-link-btn:hover {
+    background: hsla(217, 70%, 58%, 0.18);
+}
+.inbox-copy-link-btn {
+    font-size: 0.65rem;
+    padding: 0.12rem 0.35rem;
+}
+
+/* ============================================================
+   Phase 9T — Dismissible Actions
+   ============================================================ */
+
+/* --- Dismiss button on recommended action rows --- */
+.intel-action-dismiss {
+    font-size: 0.68rem;
+    padding: 0.15rem 0.45rem;
+    border: 1px solid hsla(217, 14%, 55%, 0.25);
+    border-radius: 3px;
+    background: hsla(217, 14%, 55%, 0.08);
+    color: var(--muted-foreground);
+    cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.intel-action-dismiss:hover {
+    background: hsla(0, 50%, 55%, 0.12);
+    color: hsl(0, 60%, 75%);
+    border-color: hsla(0, 50%, 55%, 0.35);
+}
+.intel-action-dismiss-spacer {
+    flex-grow: 1;
+}
+
+/* Make the action main row a flex container so the dismiss
+   button aligns right */
+.intel-action-main {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+/* --- "N handled actions hidden" footer --- */
+.intel-actions-hidden-footer {
+    margin-top: 0.45rem;
+    padding: 0.35rem 0.55rem;
+    background: hsla(217, 14%, 55%, 0.05);
+    border: 1px dashed hsla(217, 14%, 55%, 0.15);
+    border-radius: 4px;
+    text-align: center;
+    font-style: italic;
+}
+
+/* ============================================================
+   Phase 9U — Saved Analytical Views
+   ============================================================ */
+
+.saved-views-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+}
+.saved-view-row {
+    padding: 0.5rem 0.65rem;
+    background: hsla(217, 14%, 55%, 0.04);
+    border: 1px solid hsla(217, 14%, 55%, 0.12);
+    border-radius: 6px;
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+.saved-view-header {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    flex-wrap: wrap;
+}
+.saved-view-name {
+    font-weight: 600;
+    font-size: 0.88rem;
+    color: var(--foreground);
+}
+.saved-view-surface {
+    font-size: 0.62rem;
+}
+.saved-view-actions {
+    display: flex;
+    gap: 0.3rem;
+}
+.saved-view-restore,
+.saved-view-copy,
+.saved-view-delete {
+    font-size: 0.7rem;
+    padding: 0.18rem 0.45rem;
+}
+.saved-view-delete {
+    color: var(--muted-foreground);
+}
+.saved-view-delete:hover {
+    color: hsl(0, 60%, 70%);
+}
+
+/* Phase 9V — saved-view description subline */
+.saved-view-description {
+    font-style: italic;
+    color: var(--muted-foreground);
+    line-height: 1.4;
+}
