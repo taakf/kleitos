@@ -148,7 +148,7 @@ The cleanest path:
 1. Run a full reset (section 1).
 2. Launch Axion.
 3. Import `sample_portfolio.csv` from the project root for representative data.
-4. Wait 1–2 minutes for the first collection cycle (or skip — the empty Events tab is also a valid demo of "nothing happens yet").
+4. Wait 1–2 minutes for the first collection cycle (or skip — the empty News sub-tab under Insights is also a valid demo of "nothing happens yet").
 5. Walk through Portfolio → Insights → Alerts → Settings.
 
 ## Files this guide intentionally does not touch

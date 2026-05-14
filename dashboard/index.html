@@ -110,7 +110,7 @@
                 <!-- Intelligence Tab (parent) -->
                 <div id="tab-intelligence" class="tab-panel" role="tabpanel">
                     <div class="sub-tabs" role="tablist" aria-label="Intelligence sections">
-                        <button class="sub-tab active" data-subtab="events" data-parent="intelligence">Events</button>
+                        <button class="sub-tab active" data-subtab="events" data-parent="intelligence">News</button>
                         <button class="sub-tab" data-subtab="analysis" data-parent="intelligence">Analysis</button>
                         <button class="sub-tab" data-subtab="digest" data-parent="intelligence">Digest</button>
                         <button class="sub-tab" data-subtab="inbox" data-parent="intelligence">
@@ -136,16 +136,16 @@
                         <div id="inbox-content"><div class="spinner">Loading inbox...</div></div>
                     </div>
 
-                    <!-- Events sub-tab -->
+                    <!-- News sub-tab (internal key "events" — backend events table) -->
                     <div id="subtab-events" class="sub-panel active">
                         <div class="tab-header">
-                            <h2>Events</h2>
+                            <h2>News</h2>
                             <div class="tab-actions">
-                                <input type="search" id="events-search" class="input search-input" placeholder="Search events...">
+                                <input type="search" id="events-search" class="input search-input" placeholder="Search news...">
                             </div>
                         </div>
                         <div class="card">
-                            <div id="events-table"><div class="spinner">Loading events...</div></div>
+                            <div id="events-table"><div class="spinner">Loading news...</div></div>
                         </div>
                     </div>
 
@@ -209,7 +209,7 @@
                                 <option value="">All entities</option>
                                 <option value="holding">Holdings</option>
                                 <option value="trade">Trades</option>
-                                <option value="event">Events</option>
+                                <option value="event">News items</option>
                                 <option value="classification">Classifications</option>
                                 <option value="alert">Alerts</option>
                             </select>
@@ -637,7 +637,7 @@
     <!-- Event Detail Modal (Phase 9B) -->
     <dialog id="event-detail-modal" class="modal-lg" aria-label="Event Detail">
         <div class="modal-header">
-            <h3 id="event-detail-title">Event</h3>
+            <h3 id="event-detail-title">News item</h3>
             <div class="modal-header-actions">
                 <button class="btn btn-ghost btn-sm copy-link-btn" id="event-detail-copy-link" title="Copy deep link">&#128279; Copy link</button>
                 <button class="btn btn-ghost" data-close-modal>&times;</button>
@@ -924,7 +924,7 @@
         </div>
         <div class="modal-body">
             <p>Are you sure you want to remove <strong id="delete-source-name"></strong>?</p>
-            <p class="text-sm text-muted mt-2">Events already collected from this source will be preserved.</p>
+            <p class="text-sm text-muted mt-2">News items already collected from this source will be preserved.</p>
         </div>
         <input type="hidden" id="delete-source-id">
         <div class="modal-footer">

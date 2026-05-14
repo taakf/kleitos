@@ -58,9 +58,9 @@ http://localhost:7777/dashboard
 - Show **recommended actions** with dismiss buttons
 - Dismiss one → "Stays hidden until the signal materially changes"
 
-### 3. Events + Causal Chains (3 min)
-- Click **Intelligence → Events**
-- Open a Fed/ECB event → **detail modal** with factor tags, causal chains, affected holdings
+### 3. News + Causal Chains (3 min)
+- Click **Insights → News**
+- Open a Fed/ECB news item → **detail modal** with factor tags, causal chains, affected holdings
 - Show the **"Why Axion flagged this"** block
 - Click a grounded evidence chip → deep-link jumps to the relevant surface
 

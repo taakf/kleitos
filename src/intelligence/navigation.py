@@ -106,17 +106,23 @@ def validate_filters(
 # ---------------------------------------------------------------------------
 
 #: Human labels for surfaces used by ``describe_view``.
+#:
+#: Phase 5 terminology: the surface key remains "events" (matches the
+#: backend ``events`` table and the saved-view payload schema), but the
+#: customer-visible label is "News" — the dashboard sub-tab uses that
+#: label and the saved-view name suggestions should match.
 _SURFACE_LABELS: dict[str, str] = {
     "alerts":    "Alerts",
     "digest":    "Digest",
-    "events":    "Events",
+    "events":    "News",
     "operator":  "Operator",
     "portfolio": "Portfolio",
 }
 
-#: Human labels for subtabs.
+#: Human labels for subtabs. ``events`` subtab → "News" label, matching
+#: dashboard/index.html.
 _SUBTAB_LABELS: dict[str, str] = {
-    "events":        "Events",
+    "events":        "News",
     "analysis":      "Analysis",
     "digest":        "Digest",
     "inbox":         "Inbox",
@@ -174,7 +180,7 @@ def describe_view(
         >>> describe_view({"surface": "operator", "subtab": "relationships", "filters": {"source": "manual"}})
         'Operator · Relationships · Source: manual'
         >>> describe_view({"surface": "events", "subtab": "events", "filters": {"search": "fed"}})
-        'Events · Search: fed'
+        'News · Search: fed'
         >>> describe_view({"surface": "portfolio"})
         'Portfolio'
     """
@@ -212,7 +218,7 @@ def describe_view(
     if payload.get("open_modal") and payload.get("entity_type") == "holding":
         label += " · Holding detail"
     elif payload.get("open_modal") and payload.get("entity_type") == "event":
-        label += " · Event detail"
+        label += " · News item detail"
 
     return label
 

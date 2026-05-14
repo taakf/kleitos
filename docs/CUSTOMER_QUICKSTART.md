@@ -78,7 +78,7 @@ For PDFs and scanned documents, see "AI features" below.
 | Tab | Shows |
 |-----|-------|
 | **Portfolio** | Holdings, exposures (sector / geography / currency), trade history |
-| **Insights** | Events collected from news sources, ranked by impact on your holdings |
+| **Insights** | News collected from RSS / API sources, ranked by impact on your holdings, plus deterministic analysis and digests. Sub-tabs: News, Analysis, Digest, Inbox. |
 | **Alerts** | Concentration breaches, calendar clusters, stale data warnings |
 | **Assistant** | Conversational queries (requires AI provider — disabled otherwise) |
 | **Settings** | API keys, provider selection, source health |

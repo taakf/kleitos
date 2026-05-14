@@ -137,6 +137,18 @@ This produces a single zip at `~/axion-data/support/axion-support-<YYYYMMDD-HHMM
 
 It does **not** include: your database file, any backup `.db` file, the raw `.env`, any API keys, holdings values, or portfolio names. Secrets matching common patterns (Anthropic `sk-ant-*`, OpenAI `sk-*`, Telegram bot tokens, etc.) are also redacted by value, not just by env-var name.
 
+## Terminology
+
+Three customer-facing terms that are easy to confuse — Axion uses them with these specific meanings:
+
+| Term | What it means in the UI | Where you see it |
+|------|-------------------------|------------------|
+| **News** | Items collected from public news / regulatory / RSS / API sources (Fed press releases, market news, etc.). Each one is a record in the backend `events` table. | Dashboard → **Insights → News** sub-tab. |
+| **Insights** | The analysis layer that consumes your portfolio + news + alerts + relationships. Includes News, Analysis, Digest, and Inbox sub-tabs. | Dashboard → top-level **Insights** tab. |
+| **Corporate Events** | *Reserved for a future feature.* Will mean company-calendar items — earnings dates, dividends, general meetings, board announcements — fetched per-holding from sources like ATHEX. **Not implemented yet.** Do not confuse with News. |
+
+The repo's backend keeps the table name `events` (matching the existing schema, API routes, and migrations); the customer-facing label for those rows is "News" / "news item". A future top-level **Events** tab will be added when corporate-calendar fetching exists.
+
 ## What this is NOT
 
 - **Not** a cloud / multi-tenant service. Loopback-only, single user, single machine.

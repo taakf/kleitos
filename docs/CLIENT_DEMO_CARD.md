@@ -14,8 +14,8 @@ http://localhost:7777/dashboard
 
 1. **Look at the Overview card** (top of Portfolio tab)
 2. **Click AAPL** in the holdings table
-3. **Intelligence → Events** → click a **Federal Reserve** event
-4. **Intelligence → Digest**
+3. **Insights → News** → click a **Federal Reserve** news item
+4. **Insights → Digest**
 5. **Alerts tab** → switch filter to **Critical & High**
 
 ## What to say

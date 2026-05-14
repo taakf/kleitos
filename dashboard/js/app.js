@@ -947,7 +947,7 @@
                         <span class="text-sm text-muted">${esc(name)}</span>
                         ${_alertBadge(data.alerts)}
                         ${_freshnessChip(data.freshness)}
-                        <span class="intel-chip" title="Events linked to your holdings in the last 24h">${recentEvents} event${recentEvents === 1 ? '' : 's'} (24h)</span>
+                        <span class="intel-chip" title="News items linked to your holdings in the last 24h">${recentEvents} news item${recentEvents === 1 ? '' : 's'} (24h)</span>
                     </div>
                 </div>
                 <div class="intel-overview-grid">
@@ -1112,7 +1112,7 @@
                     <span class="step-icon">${collected ? check : circle}</span>
                     <div>
                         <div class="step-label">First news collection</div>
-                        <div class="step-hint">${collected ? 'Events collected.' : 'Runs every 30 minutes automatically — nothing to do here.'}</div>
+                        <div class="step-hint">${collected ? 'News collected.' : 'Runs every 30 minutes automatically — nothing to do here.'}</div>
                     </div>
                 </div>
             </div>
@@ -1537,8 +1537,8 @@
     function renderEventsTable(list) {
         const el = $('#events-table');
         if (!list.length) {
-            el.innerHTML = renderEmpty('events', 'No events collected yet.', {
-                hint: 'Events appear here as sources collect news.',
+            el.innerHTML = renderEmpty('events', 'No news collected yet.', {
+                hint: 'News items appear here as sources are polled. Collection runs automatically every 30 minutes; you can also trigger a manual run.',
                 actions: [{ label: 'Run Collection', onclick: "runAction('collection')", primary: true }]
             });
             return;
@@ -1780,7 +1780,7 @@
         const titleEl = $('#event-detail-title');
         if (!modal || !body) return;
         body.innerHTML = '<div class="spinner">Loading event detail...</div>';
-        if (titleEl) titleEl.textContent = 'Event';
+        if (titleEl) titleEl.textContent = 'News item';
         modal.showModal();
 
         // Phase 9R — wire the copy-link button to the current event.
@@ -1806,11 +1806,11 @@
             // fetchJSON returns null on 404 — handle that as a clean
             // "not found" state instead of crashing on `data.title`.
             if (!data) {
-                if (titleEl) titleEl.textContent = 'Event not found';
+                if (titleEl) titleEl.textContent = 'News item not found';
                 body.innerHTML = '<span class="empty-inline">This event no longer exists or could not be loaded.</span>';
                 return;
             }
-            if (titleEl) titleEl.textContent = data.title || 'Event';
+            if (titleEl) titleEl.textContent = data.title || 'News item';
             body.innerHTML = _renderEventDetail(data);
         } catch (e) {
             body.innerHTML = renderError('event detail: ' + (e && e.message ? e.message : 'unknown error'));
@@ -1850,7 +1850,7 @@
 
             if (!list.length) {
                 el.innerHTML = renderEmpty('analysis', 'No analysis notes yet.', {
-                    hint: 'Analysis is generated automatically from collected events.',
+                    hint: 'Analysis is generated from collected news once you have holdings to score against. AI-narrated analysis additionally requires an AI provider in Settings; deterministic rule-based scoring runs without one.',
                     actions: [{ label: 'Run Analysis', onclick: "runAction('analysis')", primary: true }]
                 });
                 return;
@@ -2039,8 +2039,8 @@
         try {
             const data = await fetchJSON(_pq(API.digestLatest));
             if (!data) {
-                el.innerHTML = renderEmpty('digest', 'No digests generated yet.', {
-                    hint: 'Digests summarize your portfolio activity.',
+                el.innerHTML = renderEmpty('digest', 'No digest generated yet.', {
+                    hint: 'A digest summarises portfolio activity, alerts, and material news. You can generate one after some news has been collected; with an AI key it also produces a short narrative.',
                     actions: [{ label: 'Generate Digest', onclick: 'generateDigest()', primary: true }]
                 });
                 return;
@@ -2145,7 +2145,7 @@
             });
             if (!list.length) {
                 el.innerHTML = renderEmpty('check', 'No active alerts.', {
-                    hint: 'Alerts appear when risks are detected in your portfolio.'
+                    hint: 'This means no current rule-based alerts (concentration, calendar clusters, stale data, material news). It does not mean risk is zero — only that none of the configured rules have fired.'
                 });
                 return;
             }
@@ -2672,7 +2672,7 @@
     function _renderInboxItems(items) {
         const list = Array.isArray(items) ? items : [];
         if (!list.length) {
-            return `<div class="inbox-empty card"><p class="text-sm text-muted">You're all caught up — no notifications right now.</p><p class="text-xs text-muted">Signals from alerts, digests, operator actions, and high-priority recommendations will appear here.</p></div>`;
+            return `<div class="inbox-empty card"><p class="text-sm text-muted">No notifications yet.</p><p class="text-xs text-muted">The inbox collects alerts, digests, operator actions, and high-priority recommendations. New items will appear here as they're generated.</p></div>`;
         }
         return `<ul class="inbox-list">${list.map(item => {
             const src = _INBOX_SOURCE_STYLE[item.source_type] || { label: item.source_type || 'item', cls: '' };
@@ -5138,7 +5138,7 @@
         // Mirror the backend's ``describe_view`` logic in a tiny
         // client-side form so the prompt pre-fills a reasonable name.
         const surfaceLabels = {
-            alerts:'Alerts', digest:'Digest', events:'Events',
+            alerts:'Alerts', digest:'Digest', events:'News',
             operator:'Operator', portfolio:'Portfolio',
         };
         const label = surfaceLabels[payload.surface] || payload.surface || '';
@@ -5331,14 +5331,14 @@
             </div>
 
             <div class="detail-section">
-                <h4>Recent Events${eventList.length ? ' (' + eventList.length + ')' : ''}</h4>
+                <h4>Recent news${eventList.length ? ' (' + eventList.length + ')' : ''}</h4>
                 ${eventList.length ? `<table class="detail-mini-table">
                     <tbody>${eventList.slice(0, 8).map(e => `<tr>
                         <td>${e.event_type ? `<span class="badge badge-muted">${esc(titleCase(e.event_type))}</span>` : ''}</td>
                         <td style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(e.title)}">${esc(e.title || 'Untitled')}</td>
                         <td class="text-muted text-xs">${formatDateShort(e.published_at)}</td>
                     </tr>`).join('')}</tbody>
-                </table>` : '<span class="text-sm text-muted">No events</span>'}
+                </table>` : '<span class="text-sm text-muted">No news</span>'}
             </div>
 
             <div class="detail-section">

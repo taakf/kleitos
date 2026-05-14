@@ -39,7 +39,9 @@ class TestDescribeView:
         assert r == "Operator · Relationships · Source: manual"
 
     def test_events_with_search(self):
-        assert describe_view({"surface": "events", "subtab": "events", "filters": {"search": "fed"}}) == "Events · Search: fed"
+        # Phase 5 rename: surface "events" renders as customer-facing "News".
+        # The payload key itself stays "events" for backend compatibility.
+        assert describe_view({"surface": "events", "subtab": "events", "filters": {"search": "fed"}}) == "News · Search: fed"
 
     def test_portfolio_plain(self):
         assert describe_view({"surface": "portfolio"}) == "Portfolio"
@@ -50,7 +52,9 @@ class TestDescribeView:
 
     def test_event_detail(self):
         r = describe_view({"surface": "events", "entity_type": "event", "open_modal": True})
-        assert "Event detail" in r
+        # Phase 5 rename: modal label is "News item detail" for customers,
+        # entity_type stays "event" in the saved-view payload.
+        assert "News item detail" in r
 
     def test_operator_factors_with_factor(self):
         r = describe_view({"surface": "operator", "subtab": "factors", "filters": {"factor": "interest_rate"}})
@@ -66,8 +70,9 @@ class TestDescribeView:
 
     def test_subtab_same_as_surface_not_duplicated(self):
         r = describe_view({"surface": "events", "subtab": "events"})
-        # "Events" should appear only once, not "Events · Events"
-        assert r == "Events"
+        # Phase 5 rename: surface + subtab "events" both render as "News",
+        # so this should appear only once, not "News · News".
+        assert r == "News"
 
     def test_digest_surface(self):
         assert describe_view({"surface": "digest", "subtab": "digest"}) == "Digest"
