@@ -18,6 +18,9 @@ Anthropic (Claude), OpenAI / ChatGPT, and Google Gemini. Pick one as primary in 
 **What does the Insights → Overview sub-tab do?**
 It's a deterministic, evidence-backed roll-up of everything else in the app (Phase 12). Each card carries a severity, a category, the source rows it came from, and a deep link to the surface that explains it. The AI narrate toggle is optional — when enabled and a provider is configured, the wording can be rewritten, but the AI is constrained: it cannot add new holdings, new percentages, or new claims. Rewrites that mention an untrusted ticker are dropped. With no AI key, the page still works.
 
+**How do Insight notifications work? (Phase 13)**
+Each generator run fingerprints every card on its deterministic content (severity, category, evidence, affected holdings). The notifier compares against `insight_snapshots` and labels each card `new` / `escalated` / `unchanged`. `new` and `escalated` cards above the inbox severity floor flow into the **Inbox** sub-tab with read/unread state; when Telegram is configured they also get a single push for cards at severity **high** or higher. Re-running with no material change does nothing — the fingerprint is identical, the badge stays "Already notified". Manual **Run now** button and a **Last generated** timestamp are available on the Overview sub-tab. AI narration never moves the fingerprint, so AI re-wording can't produce a fake notification.
+
 **Does the Insights page give investment advice?**
 No. Axion's deterministic insights are operational signals — concentration warnings, upcoming corporate events, data gaps, factor touchpoints — grounded in your portfolio's stored rows. They are not personalised investment advice or buy/sell recommendations, and they never use live market prices.
 

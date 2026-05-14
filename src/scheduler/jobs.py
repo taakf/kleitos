@@ -111,6 +111,23 @@ class AxionScheduler:
             misfire_grace_time=DEFAULT_MISFIRE_GRACE,
         )
 
+        # ---- Insights generation (Phase 13) -----------------------------
+        # Runs after the risk pass so any new alerts/factor classifications
+        # already exist on disk.  Idempotent + non-blocking; on any
+        # backend hiccup it logs and returns without raising.
+        insights_interval = sched_config.get(
+            "insights_generation", {}
+        ).get("interval_minutes", 15)
+        self._scheduler.add_job(
+            self._run_insights_generation,
+            IntervalTrigger(minutes=insights_interval),
+            id="insights_generation",
+            name="Insights Generation",
+            max_instances=1,
+            replace_existing=True,
+            misfire_grace_time=DEFAULT_MISFIRE_GRACE,
+        )
+
         # ---- Daily digest -----------------------------------------------
         digest_time = sched_config.get("digest", {}).get("time", "07:00")
         hour, minute = _parse_time(digest_time, 7, 0)
@@ -246,6 +263,68 @@ class AxionScheduler:
                 logger.info("Scheduled job: Risk assessment for '%s' — %s", pid, result)
         except Exception as exc:
             logger.error("Scheduled job: Risk assessment failed — %s", exc, exc_info=True)
+
+    async def _run_insights_generation(self) -> None:
+        """Phase 13 — periodic insight generation + diff-aware notify.
+
+        For each portfolio:
+
+        1. Build the Phase 12 deterministic insight response.
+        2. Diff against the persisted ``insight_snapshots``.
+        3. Upsert snapshots so the next pass is idempotent.
+        4. If Telegram is configured, deliver new + escalated cards
+           above the severity floor.  If not configured, this is a
+           silent no-op locally.
+
+        Never raises: on any backend hiccup the job logs and returns,
+        so a transient DB lock doesn't poison the scheduler loop.
+        """
+        logger.info("Scheduled job: Insights generation start")
+        try:
+            from src.database.connection import get_db
+            from src.database.models import Portfolio
+            from src.intelligence.insights import (
+                build_insights, notify_new_or_escalated,
+            )
+            from sqlalchemy import select
+
+            async with get_db() as session:
+                portfolios = (await session.execute(select(Portfolio))).scalars().all()
+                portfolio_ids = [p.id for p in portfolios] if portfolios else ["default"]
+
+            totals = {"new": 0, "escalated": 0, "unchanged": 0}
+            for pid in portfolio_ids:
+                try:
+                    async with get_db() as session:
+                        response = await build_insights(
+                            session, portfolio_id=pid, limit=60,
+                        )
+                        outcome = await notify_new_or_escalated(
+                            session, response, deliver_telegram=True,
+                        )
+                    totals["new"] += len(outcome.new)
+                    totals["escalated"] += len(outcome.escalated)
+                    totals["unchanged"] += len(outcome.unchanged)
+                    logger.info(
+                        "Scheduled job: Insights for '%s' — new=%d escalated=%d "
+                        "unchanged=%d telegram=%s",
+                        pid, len(outcome.new), len(outcome.escalated),
+                        len(outcome.unchanged), outcome.telegram_status,
+                    )
+                except Exception as inner:  # per-portfolio failure isolated
+                    logger.warning(
+                        "Scheduled job: Insights for '%s' failed — %s",
+                        pid, inner,
+                    )
+            logger.info(
+                "Scheduled job: Insights generation complete — totals=%s",
+                totals,
+            )
+        except Exception as exc:
+            logger.error(
+                "Scheduled job: Insights generation failed — %s",
+                exc, exc_info=True,
+            )
 
     async def _run_daily_digest(self) -> None:
         """Generate and deliver daily digest per portfolio, then push to Telegram/email."""

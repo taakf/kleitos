@@ -270,6 +270,19 @@ The Coverage strip above the cards shows what inputs the generator had — holdi
 
 Revenue geography is **never inferred from listing country**. The "Listing country" exposure card and the "Revenue geography" insight card live separately, and a Phase 12 test enforces that no listing-country evidence ever ends up in a revenue-geography card.
 
+### Insight notifications (Phase 13)
+
+The Insights → Overview surface drives a small notification layer:
+
+* **Diff-aware**: every generator run computes a stable fingerprint per card. Re-running produces the same fingerprint when nothing changed; severity / evidence / title shifts move it. AI narration alone does NOT re-notify — the fingerprint is computed on deterministic content only.
+* **Persisted in `insight_snapshots`** (migration `v11`). The row carries only `card_key / category / severity / title / fingerprint / last_seen_at / status` — no AI prompt body, no narration text, no uploaded document content.
+* **Inbox integration**: `new` and `escalated` cards above the `medium` severity floor appear in the existing **Inbox** sub-tab with read/unread semantics and a deep link back to the surface (News detail / Events tab / Exposures / Alerts / Settings). Unchanged cards stay on the Overview only.
+* **Telegram delivery is opt-in**: when the bot is configured AND there's at least one authorised chat, `new` and `escalated` cards at severity **high** or higher are pushed. When Telegram isn't configured, the dispatcher is a silent no-op — Insights still works end-to-end.
+* **Digest integration**: the daily digest builder attaches `top_insights` (up to five deterministic cards) so the morning summary references the same evidence as the dashboard.
+* **Scheduler**: an interval job (15 minutes by default, tunable via `scheduler.insights_generation.interval_minutes`) regenerates and notifies. The job is idempotent — running it twice in a row produces no duplicate notifications.
+* **Manual control**: the Overview sub-tab has a **Run now** button that triggers a generation pass on demand and refreshes the badges. A **Last generated** timestamp is shown above the cards.
+* **Per-card pills** on the Overview surface: `New`, `Escalated`, `Already notified`. These come from the snapshot diff — there are no "alert!" pings invented client-side.
+
 ## What this is NOT
 
 - **Not** a cloud / multi-tenant service. Loopback-only, single user, single machine.

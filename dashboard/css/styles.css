@@ -3525,3 +3525,26 @@ th.sortable.sort-desc::after { content: '\25BC'; opacity: 0.8; color: var(--prim
     margin-right: 0.6rem;
     cursor: pointer;
 }
+
+/* Phase 13 — Insight notification pills + Last-generated stamp */
+.insight-notif-pill {
+    margin-left: 0.2rem;
+}
+.insight-notif-new {
+    background: var(--primary-bg);
+    color: var(--primary);
+    border: 1px solid var(--primary);
+}
+.insight-notif-escalated {
+    background: hsl(0, 65%, 90%);
+    color: hsl(0, 65%, 35%);
+    border: 1px solid hsl(0, 65%, 55%);
+}
+.insight-notif-notified {
+    opacity: 0.8;
+}
+.insights-last-generated {
+    align-self: center;
+    margin-right: 0.4rem;
+    font-variant-numeric: tabular-nums;
+}

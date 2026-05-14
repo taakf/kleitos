@@ -983,6 +983,74 @@ class RevenueGeography(Base):
 
 
 # ---------------------------------------------------------------------------
+# Phase 13 — Insight snapshots (diff-aware notification state)
+#
+# One row per ``(portfolio_id, card_key)`` slot.  The notifier reads
+# the row to decide whether the current generator output is "new",
+# "escalated", or "unchanged" relative to the last persisted snapshot,
+# then upserts the row with the latest fingerprint + severity.
+#
+# We deliberately store **only** the deterministic shape needed to
+# diff and to render UI/Inbox/Telegram cues.  No AI prompt body, no
+# narration text, no uploaded document content ever flows in here.
+# ---------------------------------------------------------------------------
+
+
+class InsightSnapshot(Base):
+    """Latest persisted state of an :class:`InsightCard` slot.
+
+    Phase 13 — written by
+    :mod:`src.intelligence.insights.notifier.notify_new_or_escalated`
+    after each generator run.  The notifier never reads anything
+    beyond what's in this table; the customer-visible card body is
+    always re-rendered from live rows.
+
+    Status vocabulary:
+
+    * ``new``       — first time this card_key was generated (or
+                      re-emerged after dismissal).
+    * ``escalated`` — re-generated with strictly more important
+                      severity than the prior snapshot.
+    * ``notified``  — already emitted to Inbox/Telegram; the
+                      notifier suppresses repeat notifications.
+    * ``dismissed`` — operator dismissed the insight; the notifier
+                      respects this until the fingerprint changes.
+    """
+
+    __tablename__ = "insight_snapshots"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    portfolio_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("portfolios.id"), nullable=False
+    )
+    card_key: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(Text, nullable=False)
+    severity: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    last_seen_at: Mapped[str] = mapped_column(Text, nullable=False)
+    first_seen_at: Mapped[str] = mapped_column(Text, nullable=False)
+    notified_at: Mapped[str | None] = mapped_column(Text)
+    notified_severity: Mapped[str | None] = mapped_column(Text)
+    telegram_delivered_at: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="new"
+    )
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "portfolio_id", "card_key",
+            name="uq_insight_snapshots_portfolio_key",
+        ),
+        Index("ix_insight_snapshots_portfolio_id", "portfolio_id"),
+        Index("ix_insight_snapshots_status", "status"),
+        Index("ix_insight_snapshots_last_seen_at", "last_seen_at"),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Schema versioning
 # ---------------------------------------------------------------------------
 

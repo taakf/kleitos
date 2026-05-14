@@ -266,6 +266,68 @@ async def _fetch_high_priority_actions(
         return high_actions  # fallback: show all
 
 
+async def _fetch_recent_insights(
+    session: AsyncSession, portfolio_id: str,
+) -> list[dict[str, Any]]:
+    """Phase 13 — read recent ``new`` / ``escalated`` insight snapshots.
+
+    Each row is paired with the live :class:`InsightCard` body re-
+    rendered through the Phase 12 generator so the inbox always
+    shows the current title / summary / evidence — never a stale
+    copy.  Errors fall through to an empty list so the inbox surface
+    never breaks.
+    """
+    try:
+        from src.database.models import InsightSnapshot
+        from src.intelligence.insights import build_insights
+        from sqlalchemy import select
+    except Exception:  # pragma: no cover — defensive
+        return []
+
+    try:
+        snap_rows = (await session.execute(
+            select(InsightSnapshot).where(
+                InsightSnapshot.portfolio_id == portfolio_id,
+                InsightSnapshot.status.in_(("new", "escalated")),
+            ).order_by(InsightSnapshot.last_seen_at.desc()).limit(20)
+        )).scalars().all()
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning(
+            "notifications: insight snapshots load failed for %s: %s",
+            portfolio_id, exc,
+        )
+        return []
+    if not snap_rows:
+        return []
+    snap_by_key = {r.card_key: r for r in snap_rows}
+
+    try:
+        response = await build_insights(
+            session, portfolio_id=portfolio_id, limit=60,
+        )
+    except Exception as exc:  # pragma: no cover — defensive
+        logger.warning(
+            "notifications: live insights build failed for %s: %s",
+            portfolio_id, exc,
+        )
+        return []
+
+    from src.intelligence.insights.fingerprint import card_key
+    out: list[dict[str, Any]] = []
+    for card in response.insights:
+        key = card_key(card)
+        snap = snap_by_key.get(key)
+        if snap is None:
+            continue
+        out.append({
+            "card_key": key,
+            "state": snap.status,
+            "card": card.model_dump(),
+            "previous_severity": snap.notified_severity or snap.severity,
+        })
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
@@ -290,6 +352,7 @@ async def get_inbox(
         session, portfolio_id, window_hours=OPERATOR_WINDOW_HOURS,
     )
     actions = await _fetch_high_priority_actions(session, portfolio_id)
+    insights = await _fetch_recent_insights(session, portfolio_id)
 
     items = build_inbox(InboxInputs(
         portfolio_id=portfolio_id,
@@ -297,6 +360,7 @@ async def get_inbox(
         digests=digests,
         operator_entries=operator_entries,
         recommended_actions=actions,
+        insights=insights,
         read_keys=read_keys,
     ))
 
@@ -387,6 +451,7 @@ async def mark_all_read(
         session, portfolio_id, window_hours=OPERATOR_WINDOW_HOURS,
     )
     actions = await _fetch_high_priority_actions(session, portfolio_id)
+    insights = await _fetch_recent_insights(session, portfolio_id)
 
     items = build_inbox(InboxInputs(
         portfolio_id=portfolio_id,
@@ -394,6 +459,7 @@ async def mark_all_read(
         digests=digests,
         operator_entries=operator_entries,
         recommended_actions=actions,
+        insights=insights,
         read_keys=existing,
     ))
 

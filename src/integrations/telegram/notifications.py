@@ -334,6 +334,99 @@ async def deliver_digest(digest: dict) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Phase 13 — Insight delivery
+# ---------------------------------------------------------------------------
+
+
+async def deliver_insight(insight: dict) -> dict:
+    """Deliver one Phase 13 insight notification to authorised chats.
+
+    Expected ``insight`` keys (all strings): ``card_key``,
+    ``portfolio_id``, ``severity``, ``category``, ``title``,
+    ``summary``, ``state`` (``new`` | ``escalated``).  No prompt
+    bodies, no uploaded document content — the dispatcher only
+    surfaces the deterministic card body Phase 12 already renders.
+
+    Returns ``{"delivered": bool, "status": "delivered"|"skipped"|"failed",
+    "sent_to": [chat_id, ...]}``.  Never raises.
+
+    Telegram filtering:
+
+    * The bot must be running and have ≥1 authorised chat.
+    * Each candidate chat's active portfolio must match
+      ``insight['portfolio_id']`` (operator pin from Phase 9F).
+    * On send failure, the row stays unmarked so the next pass can
+      retry.
+    """
+    result: dict = {"delivered": False, "status": "skipped", "sent_to": []}
+    portfolio_id = insight.get("portfolio_id") or DEFAULT_PORTFOLIO_ID
+
+    chat_ids = await _chat_ids()
+    if not chat_ids:
+        result["status"] = "skipped"
+        return result
+
+    state = (insight.get("state") or "new").lower()
+    state_pill = "🆕 New" if state == "new" else "⬆️ Escalated"
+    severity = (insight.get("severity") or "info").lower()
+    sev_pill = {
+        "critical": "🚨 Critical",
+        "high":     "🔴 High",
+        "medium":   "🟠 Medium",
+        "low":      "🟡 Low",
+        "info":     "ℹ️ Info",
+    }.get(severity, severity)
+    title = str(insight.get("title") or "Insight")
+    summary = str(insight.get("summary") or "")
+    if len(summary) > 320:
+        summary = summary[:317] + "…"
+    message = (
+        f"*{state_pill}* — {sev_pill}\n"
+        f"*{_escape_md(title)}*\n"
+        f"{_escape_md(summary)}\n"
+        f"\n_Portfolio: {_escape_md(portfolio_id)}_"
+    )
+
+    any_sent = False
+    any_failed = False
+    sent_to: list[int] = []
+    for chat_id in chat_ids:
+        async with get_db() as session:
+            chat_portfolio = await get_active_portfolio_id(session, chat_id)
+        if chat_portfolio != portfolio_id:
+            continue
+        ok, _err = await _push_message_to_chat(chat_id, message)
+        if ok:
+            any_sent = True
+            sent_to.append(chat_id)
+        else:
+            any_failed = True
+
+    if any_sent:
+        result["delivered"] = True
+        result["status"] = "delivered"
+        result["sent_to"] = sent_to
+        logger.info(
+            "Insight delivered to %d chat(s) (portfolio=%s, card_key=%s)",
+            len(sent_to), portfolio_id, insight.get("card_key"),
+        )
+    elif any_failed:
+        result["status"] = "failed"
+    return result
+
+
+def _escape_md(text: str) -> str:
+    """Minimal Markdown V1 escape: backticks + asterisks + underscores."""
+    return (
+        (text or "")
+        .replace("\\", "\\\\")
+        .replace("*", "\\*")
+        .replace("_", "\\_")
+        .replace("`", "\\`")
+    )
+
+
+# ---------------------------------------------------------------------------
 # Background polling loop
 # ---------------------------------------------------------------------------
 _running = False

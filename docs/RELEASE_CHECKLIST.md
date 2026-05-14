@@ -94,6 +94,23 @@ Run from the project root with the venv active.
   - Settings → Sources UI uses the Phase 7 status vocabulary and `Auth env var` column.
   - Customer docs name `NEWSAPI_KEY` and `FINNHUB_KEY` and never claim Bloomberg / FactSet / ATHEX corporate events.
 
+- [ ] **Insights notifications regressions pass**
+  ```bash
+  python -m pytest -q tests/unit/test_phase13_insight_notifications.py
+  ```
+  Must report all green. Covers:
+  - Fingerprint stability: identical content → identical fingerprint; severity/evidence/title changes move it; AI summary rewording does NOT move it.
+  - `card_key` stable across re-runs and independent of the InsightCard `id` field.
+  - Migration `v11` creates `insight_snapshots` with the required columns + indexes + uniqueness constraint; `run_migrations()` is idempotent.
+  - Notifier classifies cards as `new` / `escalated` / `unchanged` / `first_run`; idempotent on repeat runs.
+  - Snapshot rows carry no AI prompt body / narration text.
+  - Inbox shaper surfaces only `new` / `escalated` insights above the `medium` floor; deep links resolve to a navigation target.
+  - Telegram delivery is a no-op when not configured; when mocked-configured, the dispatcher delivers high+ severity new/escalated cards.
+  - Digest builder attaches a deterministic `top_insights` list (no AI summary leakage).
+  - `POST /api/v1/intelligence/insights/run` persists snapshots and returns the structured summary; `GET /insights/last-run` returns the most recent timestamp.
+  - Scheduler `setup({})` registers the `insights_generation` job id.
+  - Dashboard markup carries the **Run now** button + **Last generated** stamp + notification pill CSS classes.
+
 - [ ] **Insights overview regressions pass**
   ```bash
   python -m pytest -q tests/unit/test_phase12_insights.py

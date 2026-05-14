@@ -657,6 +657,18 @@ class AnalysisAgent(BaseAgent):
             # render them without re-querying.
             digest_content["macro_factor_touchpoints"] = factor_touchpoints
 
+            # Phase 13 — attach the top deterministic insight cards so
+            # the daily digest can quote them.  This is a pure pass-
+            # through of Phase 12's deterministic output; no AI is
+            # consulted here and no card body is invented.  Failures
+            # degrade silently to no top_insights field.
+            try:
+                digest_content["top_insights"] = await self._fetch_top_insights_for_digest()
+            except Exception as exc:  # pragma: no cover — defensive
+                logger.warning(
+                    "digest top_insights attach failed: %s", exc,
+                )
+
             digest_id = await self._persist_digest(period, notes, digest_content)
 
             summary = {
@@ -671,6 +683,40 @@ class AnalysisAgent(BaseAgent):
         except Exception as exc:
             await self._log_run_error(exc)
             raise
+
+    async def _fetch_top_insights_for_digest(
+        self, limit: int = 5,
+    ) -> list[dict[str, Any]]:
+        """Phase 13 — return the top deterministic insight cards.
+
+        The digest quotes ``severity / category / title / summary``
+        and the first evidence ref for each card — pure pass-through
+        of Phase 12 generator output.  No AI, no live prices.
+        """
+        try:
+            from src.database.connection import get_db
+            from src.intelligence.insights import build_insights
+        except Exception:  # pragma: no cover — defensive
+            return []
+        async with get_db() as session:
+            response = await build_insights(
+                session, portfolio_id=self._portfolio_id, limit=limit,
+            )
+        out: list[dict[str, Any]] = []
+        for c in response.insights[:limit]:
+            first_evidence = c.evidence[0] if c.evidence else None
+            out.append({
+                "card_key": None,  # populated by the notifier path, not here
+                "severity": c.severity,
+                "category": c.category,
+                "title": c.title,
+                "summary": c.summary,
+                "affected_holdings": list(c.affected_holdings)[:6],
+                "evidence_ref": first_evidence.ref if first_evidence else None,
+                "evidence_label": first_evidence.label if first_evidence else None,
+                "source_type": c.source_type,
+            })
+        return out
 
     async def _fetch_macro_factor_touchpoints(
         self, period: str,

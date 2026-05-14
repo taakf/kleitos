@@ -171,6 +171,12 @@ class InboxInputs:
     the caller.  The builder never queries the DB directly — that
     keeps it pure, trivially testable, and impossible to leak rows
     across portfolios by mistake.
+
+    Phase 13 — ``insights`` carries the per-card notification
+    outcome produced by :func:`src.intelligence.insights.notify_new_or_escalated`.
+    Each item is a small dict with: ``card_key``, ``state``,
+    ``card`` (dict form of the :class:`InsightCard`), and
+    optionally ``previous_severity``.
     """
 
     portfolio_id: str
@@ -178,6 +184,7 @@ class InboxInputs:
     digests: Sequence[Mapping[str, Any]] = field(default_factory=tuple)
     operator_entries: Sequence[Mapping[str, Any]] = field(default_factory=tuple)
     recommended_actions: Sequence[Mapping[str, Any]] = field(default_factory=tuple)
+    insights: Sequence[Mapping[str, Any]] = field(default_factory=tuple)
     #: set of notification_key strings known to be read for this portfolio
     read_keys: frozenset[str] = field(default_factory=frozenset)
     now_iso: str | None = None
@@ -430,6 +437,99 @@ def _shape_action(
     )
 
 
+_INSIGHT_PRIORITY_RANK: dict[str, Priority] = {
+    "critical": "high",
+    "high":     "high",
+    "medium":   "medium",
+    "low":      "low",
+    "info":     "low",
+}
+
+
+def _shape_insight(
+    item: Mapping[str, Any], read_keys: frozenset[str], portfolio_id: str,
+) -> NotificationItem | None:
+    """Phase 13 — shape a NotifiedInsight dict into a notification.
+
+    Only ``new`` and ``escalated`` insights ever flow into the
+    inbox.  ``unchanged`` and ``first_run`` are noisy and live on
+    the Overview surface instead.  Within those, we still respect
+    the inbox severity floor so info-level cards don't push to the
+    unread badge.
+    """
+    state = str(item.get("state") or "unchanged").lower()
+    if state not in ("new", "escalated"):
+        return None
+
+    card = item.get("card") or {}
+    if not isinstance(card, Mapping):
+        return None
+    card_key_value = str(item.get("card_key") or "")
+    if not card_key_value:
+        return None
+
+    severity = str(card.get("severity") or "info").lower()
+    # Floor — defined in notifier so the two surfaces share one truth.
+    from src.intelligence.insights.notifier import INBOX_SEVERITY_FLOOR
+    from src.intelligence.insights.fingerprint import severity_rank
+    if severity_rank(severity) > severity_rank(INBOX_SEVERITY_FLOOR):
+        return None
+
+    key = card_key_value
+    title = str(card.get("title") or "Insight")
+    body = str(card.get("summary") or "")
+    timestamp = str(card.get("created_at") or "")
+
+    # Evidence chips → notification refs.
+    refs: list[str] = []
+    for ev in card.get("evidence") or ():
+        if isinstance(ev, Mapping):
+            ref = ev.get("ref")
+            if ref:
+                refs.append(str(ref))
+    refs = refs[:5]
+
+    # Deep link — pick the first deep_link target (already in
+    # NavigationTarget shape).
+    nav_target: Mapping[str, Any] | None = None
+    deep_links = card.get("deep_links") or []
+    if isinstance(deep_links, list) and deep_links:
+        first = deep_links[0]
+        if isinstance(first, Mapping):
+            nav_target = {
+                "surface": first.get("surface"),
+                "subtab": first.get("subtab"),
+                "entity_type": first.get("entity_type"),
+                "entity_id": first.get("entity_id"),
+                "portfolio_id": portfolio_id,
+                "open_modal": bool(first.get("entity_type") == "event"),
+                "highlight_key": None,
+                "label": first.get("label") or "Open",
+                "filters": first.get("filters"),
+            }
+
+    return NotificationItem(
+        key=key,
+        source_type="insight",
+        source_id=card_key_value,
+        portfolio_id=portfolio_id,
+        priority=_INSIGHT_PRIORITY_RANK.get(severity, "low"),
+        title=title,
+        body=body,
+        timestamp=timestamp,
+        unread=(key not in read_keys),
+        evidence_refs=tuple(refs),
+        action_label=("Open in Insights" if state == "new" else "Review escalation"),
+        action_target=nav_target,
+        metadata={
+            "state": state,
+            "category": str(card.get("category") or ""),
+            "severity": severity,
+            "previous_severity": item.get("previous_severity"),
+        },
+    )
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -483,6 +583,12 @@ def build_inbox(inputs: InboxInputs) -> list[NotificationItem]:
     # --- Recommended actions (Phase 9N) ------------------------------
     for act in inputs.recommended_actions or ():
         item = _shape_action(act, read_keys, portfolio_id, now_iso)
+        if item is not None:
+            items.append(item)
+
+    # --- Insight notifications (Phase 13) ----------------------------
+    for ins in inputs.insights or ():
+        item = _shape_insight(ins, read_keys, portfolio_id)
         if item is not None:
             items.append(item)
 

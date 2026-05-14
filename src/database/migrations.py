@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Current schema version — increment this when adding a new migration step.
 # ---------------------------------------------------------------------------
-CURRENT_SCHEMA_VERSION = 10
+CURRENT_SCHEMA_VERSION = 11
 
 # ---------------------------------------------------------------------------
 # Migration steps
@@ -717,6 +717,65 @@ def _migrate_v10(sync_conn) -> None:
         logger.info("Created revenue_geography table (Phase 10)")
 
 
+def _migrate_v11(sync_conn) -> None:
+    """V11: Phase 13 diff-aware insight notifications.
+
+    1. Create ``insight_snapshots`` table if missing.  Stores only
+       the deterministic shape needed for diffing — card_key,
+       fingerprint, severity ladder, notified-at / dismissed
+       timestamps.  Never carries AI prompt bodies or narration
+       text.
+    2. Add indexes for the notifier hot paths: ``portfolio_id``
+       (load-by-portfolio), ``status`` (filter "new" / "escalated"),
+       ``last_seen_at`` (prune stale rows).
+    3. Unique constraint on ``(portfolio_id, card_key)`` so the
+       notifier's upsert stays idempotent and a re-run never
+       inserts duplicates.
+
+    All operations are additive and idempotent.  The existing
+    ``notification_reads`` (Phase 9P) and ``action_states`` (Phase
+    9T) tables stay untouched — Phase 13 adds a new table rather
+    than re-purposing them, because insight-card identity is
+    composite (category + evidence ref) and storing it on a
+    Phase-specific row keeps the schema clean.
+    """
+    inspector = inspect(sync_conn)
+    existing_tables = set(inspector.get_table_names())
+
+    if "insight_snapshots" not in existing_tables:
+        sync_conn.execute(text("""
+            CREATE TABLE insight_snapshots (
+                id TEXT PRIMARY KEY,
+                portfolio_id TEXT NOT NULL,
+                card_key TEXT NOT NULL,
+                category TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                title TEXT NOT NULL,
+                fingerprint TEXT NOT NULL,
+                last_seen_at TEXT NOT NULL,
+                first_seen_at TEXT NOT NULL,
+                notified_at TEXT,
+                notified_severity TEXT,
+                telegram_delivered_at TEXT,
+                status TEXT NOT NULL DEFAULT 'new',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (portfolio_id) REFERENCES portfolios(id),
+                CONSTRAINT uq_insight_snapshots_portfolio_key
+                    UNIQUE (portfolio_id, card_key)
+            )
+        """))
+        for col, idx in (
+            ("portfolio_id",  "ix_insight_snapshots_portfolio_id"),
+            ("status",        "ix_insight_snapshots_status"),
+            ("last_seen_at",  "ix_insight_snapshots_last_seen_at"),
+        ):
+            sync_conn.execute(text(
+                f"CREATE INDEX {idx} ON insight_snapshots ({col})"
+            ))
+        logger.info("Created insight_snapshots table (Phase 13)")
+
+
 # ---------------------------------------------------------------------------
 # Migration registry
 # ---------------------------------------------------------------------------
@@ -731,6 +790,7 @@ _MIGRATIONS: list[tuple[int, str, callable]] = [
     (8, "add saved analytical views (Phase 9U)", _migrate_v8),
     (9, "add corporate-events calendar (Phase 9)", _migrate_v9),
     (10, "add revenue-geography exposure foundation (Phase 10)", _migrate_v10),
+    (11, "add insight snapshots for diff-aware notifications (Phase 13)", _migrate_v11),
 ]
 
 

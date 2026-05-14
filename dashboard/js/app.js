@@ -59,6 +59,9 @@
         intelligenceSummary: '/api/v1/intelligence/summary',
         // Phase 12 — Insights → Overview surface.
         intelligenceInsights: '/api/v1/intelligence/insights',
+        // Phase 13 — insight notification controls.
+        intelligenceInsightsRun:     '/api/v1/intelligence/insights/run',
+        intelligenceInsightsLastRun: '/api/v1/intelligence/insights/last-run',
         // Phase 9I — Operator control surface (read + write)
         opFactorSensitivities:   '/api/v1/operator/factor-sensitivities',
         opFactorOverrides:       '/api/v1/operator/factor-sensitivities/overrides',
@@ -3304,14 +3307,35 @@
         return `<div class="insight-evidence">${chips}${more}</div>`;
     }
 
+    function _renderInsightNotificationPill(c) {
+        // Phase 13 — read the notification state stamped onto data_gaps.
+        const gaps = Array.isArray(c.data_gaps) ? c.data_gaps : [];
+        const tag = gaps.find(g => typeof g === 'string' && g.startsWith('notification:'));
+        if (!tag) return '';
+        const state = tag.slice('notification:'.length);
+        if (state === 'new') {
+            return '<span class="badge badge-info insight-notif-pill insight-notif-new" title="New since last run">New</span>';
+        }
+        if (state === 'escalated') {
+            return '<span class="badge badge-high insight-notif-pill insight-notif-escalated" title="Severity increased since last run">Escalated</span>';
+        }
+        if (state === 'unchanged') {
+            return '<span class="badge badge-muted insight-notif-pill insight-notif-notified" title="Already notified — unchanged since last run">Already notified</span>';
+        }
+        // first_run: keep quiet on the initial pass.
+        return '';
+    }
+
     function _renderInsightCard(c) {
         const ai = c.source_type === 'ai_narrative'
             ? '<span class="badge badge-muted insight-ai-pill" title="AI narrator rewrote the wording; evidence unchanged.">AI narrated</span>'
             : '';
+        const notif = _renderInsightNotificationPill(c);
         return `<div class="insight-card insight-sev-${esc(c.severity)}" data-insight-id="${esc(c.id)}">
             <div class="insight-card-head">
                 ${_renderInsightSeverityBadge(c.severity)}
                 ${_renderInsightCategoryBadge(c.category)}
+                ${notif}
                 ${ai}
             </div>
             <div class="insight-card-title">${esc(c.title)}</div>
@@ -3359,6 +3383,16 @@
         el.textContent = `${msg}${warnText}`;
     }
 
+    function _renderInsightsLastGenerated(ts) {
+        const el = document.getElementById('insights-last-generated');
+        if (!el) return;
+        if (!ts) {
+            el.hidden = true; el.textContent = ''; return;
+        }
+        el.hidden = false;
+        el.textContent = `Last generated: ${formatDate(ts) || ts}`;
+    }
+
     async function loadInsightsOverview() {
         const el = document.getElementById('insights-cards');
         if (!el) return;
@@ -3374,6 +3408,7 @@
             const data = await fetchJSON(`${API.intelligenceInsights}?${params.toString()}`);
             _renderInsightsCoverage(data.coverage);
             _renderInsightsGroundingBanner(data.grounding_status, data.warnings);
+            _renderInsightsLastGenerated(data.last_generated_at);
             const cards = Array.isArray(data.insights) ? data.insights : [];
             if (!cards.length) {
                 el.innerHTML = `<div class="empty-state" style="padding:1.5rem"><p><strong>Nothing to surface yet.</strong></p><p class="text-sm">Add holdings or run a collection cycle to generate insights. Insights work without AI; AI narration is optional.</p></div>`;
@@ -3382,6 +3417,30 @@
             el.innerHTML = cards.map(_renderInsightCard).join('');
         } catch (e) {
             el.innerHTML = renderError('insights: ' + (e.message || 'unknown'));
+        }
+    }
+
+    async function _runInsightsNow() {
+        // Phase 13 — manual generation pass.  Persists snapshots and
+        // (if Telegram is configured server-side) pushes new + escalated
+        // cards.  We always re-fetch the GET /insights afterwards so
+        // the badges update.
+        const btn = document.getElementById('insights-run-now-btn');
+        if (btn) { btn.disabled = true; btn.textContent = 'Running...'; }
+        try {
+            const params = new URLSearchParams({ portfolio_id: _activePortfolioId });
+            await postJSON(`${API.intelligenceInsightsRun}?${params.toString()}`, {});
+            await loadInsightsOverview();
+        } catch (e) {
+            // Surface the error without breaking the panel.
+            const banner = document.getElementById('insights-grounding-banner');
+            if (banner) {
+                banner.hidden = false;
+                banner.dataset.status = 'ai_failed';
+                banner.textContent = 'Run failed: ' + (e.message || 'unknown');
+            }
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = 'Run now'; }
         }
     }
 
@@ -3405,6 +3464,9 @@
         });
         const refresh = document.getElementById('insights-refresh-btn');
         if (refresh) refresh.addEventListener('click', loadInsightsOverview);
+        // Phase 13 — Run-now button persists a snapshot + notifies.
+        const runNow = document.getElementById('insights-run-now-btn');
+        if (runNow) runNow.addEventListener('click', _runInsightsNow);
     }
     _wireInsightsOnce();
 

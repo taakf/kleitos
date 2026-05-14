@@ -86,7 +86,14 @@ For PDFs and scanned documents, see "AI features" below.
 
 ### Insights → Overview
 
-The first sub-tab under **Insights** is the new Phase 12 Overview. It surfaces a ranked, evidence-backed list of insight cards drawn from News impact, upcoming Corporate Events, Revenue geography coverage, Listing-country concentration, Alerts, and Factor sensitivities. Every card shows its severity, category, the rows it came from, and a deep link to the surface that explains it. **No AI is required** — the AI narrate toggle is optional and never adds new facts.
+The first sub-tab under **Insights** is the Phase 12 Overview. It surfaces a ranked, evidence-backed list of insight cards drawn from News impact, upcoming Corporate Events, Revenue geography coverage, Listing-country concentration, Alerts, and Factor sensitivities. Every card shows its severity, category, the rows it came from, and a deep link to the surface that explains it. **No AI is required** — the AI narrate toggle is optional and never adds new facts.
+
+**Phase 13** adds a quiet notification layer on top:
+
+* A `New` / `Escalated` / `Already notified` pill on each card based on a deterministic fingerprint vs the last snapshot.
+* A scheduled job regenerates insights every 15 minutes; the **Run now** button forces a pass on demand.
+* `new`/`escalated` cards above medium severity appear in the **Inbox** sub-tab with read/unread state.
+* When Telegram is configured, `high+` severity cards push a single message per change. Without Telegram, the dispatcher is silent — Insights still works end-to-end.
 
 ### Reading the Exposures cards
 

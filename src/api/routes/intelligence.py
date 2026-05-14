@@ -21,7 +21,13 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_session
-from src.intelligence.insights import build_insights, narrate_insights
+from src.intelligence.insights import (
+    attach_notification_state,
+    build_insights,
+    get_last_generated_at,
+    narrate_insights,
+    notify_new_or_escalated,
+)
 from src.intelligence.summary import build_intelligence_summary
 
 router = APIRouter(prefix="/api/v1/intelligence", tags=["intelligence"])
@@ -117,4 +123,142 @@ async def intelligence_insights(
         time_window_days=time_window_days,
     )
     response = await narrate_insights(response, include_ai=include_ai)
-    return response.to_dict()
+    # Phase 13 — stamp each card with its notification_state
+    # (new / escalated / unchanged / first_run) from the snapshot
+    # table.  Read-only here: persistence happens on
+    # ``POST /insights/run`` (manual) or the scheduler interval.
+    try:
+        outcome = await _peek_notification_state(session, response)
+        response = attach_notification_state(response, outcome)
+    except Exception as exc:  # pragma: no cover — defensive
+        # The notification-state stamp is purely cosmetic; a backend
+        # hiccup must not break the read-only /insights surface.  Log
+        # but never raise.
+        import logging as _logging
+        _logging.getLogger(__name__).debug(
+            "notification_state stamp skipped: %r", exc,
+        )
+    out = response.to_dict()
+    try:
+        out["last_generated_at"] = await get_last_generated_at(
+            session, portfolio_id=portfolio_id or "default",
+        )
+    except Exception:
+        out["last_generated_at"] = None
+    return out
+
+
+async def _peek_notification_state(session, response):
+    """Build a NotifyOutcome **without** writing to insight_snapshots.
+
+    The /insights GET endpoint must be read-only — persistence is
+    reserved for /insights/run and the scheduler.  We reuse the
+    notifier's classification logic by loading existing snapshots
+    once and diffing locally.
+    """
+    from src.database.models import InsightSnapshot
+    from src.intelligence.insights.fingerprint import (
+        card_fingerprint, card_key, is_escalation,
+    )
+    from src.intelligence.insights.notifier import (
+        NotifiedInsight, NotifyOutcome,
+    )
+    from sqlalchemy import select as _select
+
+    portfolio_id = response.portfolio_id
+    rows = (await session.execute(
+        _select(InsightSnapshot).where(
+            InsightSnapshot.portfolio_id == portfolio_id,
+        )
+    )).scalars().all()
+    by_key = {r.card_key: r for r in rows}
+    outcome = NotifyOutcome(portfolio_id=portfolio_id)
+    outcome.is_first_run = not by_key
+    outcome.snapshot_count = len(by_key)
+    for card in response.insights:
+        key = card_key(card)
+        fp = card_fingerprint(card)
+        prior = by_key.get(key)
+        if prior is None:
+            state = "first_run" if outcome.is_first_run else "new"
+            entry = NotifiedInsight(
+                card=card, state=state,
+                card_key=key, fingerprint=fp,
+            )
+            if state == "first_run":
+                outcome.unchanged.append(entry)
+            else:
+                outcome.new.append(entry)
+            continue
+        if prior.fingerprint == fp:
+            outcome.unchanged.append(NotifiedInsight(
+                card=card, state="unchanged",
+                card_key=key, fingerprint=fp,
+                previous_severity=prior.severity,
+            ))
+            continue
+        escalated = is_escalation(
+            old_severity=prior.severity, new_severity=card.severity,
+        )
+        entry = NotifiedInsight(
+            card=card,
+            state="escalated" if escalated else "new",
+            card_key=key, fingerprint=fp,
+            previous_severity=prior.severity,
+        )
+        (outcome.escalated if escalated else outcome.new).append(entry)
+    return outcome
+
+
+# ---------------------------------------------------------------------------
+# Phase 13 — Insight notification controls
+# ---------------------------------------------------------------------------
+
+
+@router.post("/insights/run")
+async def insights_run(
+    portfolio_id: str = Query("default"),
+    deliver_telegram: bool = Query(
+        False,
+        description=(
+            "If true and Telegram is configured, deliver new + escalated "
+            "cards above the severity floor.  No-op when not configured."
+        ),
+    ),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Phase 13 — manual trigger for an insight generation pass.
+
+    Reuses the scheduler's runner via ``build_insights`` +
+    ``notify_new_or_escalated``.  Always returns a structured
+    summary; never raises.  Persists snapshots.
+    """
+    response = await build_insights(
+        session, portfolio_id=portfolio_id or "default", limit=60,
+    )
+    outcome = await notify_new_or_escalated(
+        session, response, deliver_telegram=deliver_telegram,
+    )
+    return {
+        "portfolio_id": outcome.portfolio_id,
+        "generated_at": outcome.generated_at,
+        "new": len(outcome.new),
+        "escalated": len(outcome.escalated),
+        "unchanged": len(outcome.unchanged),
+        "telegram_status": outcome.telegram_status,
+        "telegram_delivered": outcome.telegram_delivered,
+        "is_first_run": outcome.is_first_run,
+    }
+
+
+@router.get("/insights/last-run")
+async def insights_last_run(
+    portfolio_id: str = Query("default"),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Return the most recent ``last_seen_at`` from insight_snapshots
+    for the portfolio, or ``null`` if no pass has run yet."""
+    ts = await get_last_generated_at(
+        session, portfolio_id=portfolio_id or "default",
+    )
+    return {"portfolio_id": portfolio_id, "last_generated_at": ts}
