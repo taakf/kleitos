@@ -48,12 +48,13 @@ class TestSafeTarget:
     def test_known_surfaces_are_stable(self):
         # Lock in the public surface vocabulary so any future phase
         # that adds a new surface must update the tests explicitly.
-        # Phase 12 added the top-level "corporate-events" surface
-        # (Phase 9 tab) and "settings" so Insights cards can deep-link
-        # to them — both additive.
+        # Phase 12 added the top-level "corporate-events" + "settings".
+        # Phase 14 added "intelligence" so saved views can target the
+        # Insights → Overview surface.  All additive.
         assert _KNOWN_SURFACES == frozenset({
             "alerts", "digest", "events", "operator", "portfolio",
             "corporate-events", "settings",
+            "intelligence",
         })
 
     def test_known_operator_subtabs_are_stable(self):

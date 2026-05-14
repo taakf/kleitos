@@ -62,6 +62,8 @@
         // Phase 13 — insight notification controls.
         intelligenceInsightsRun:     '/api/v1/intelligence/insights/run',
         intelligenceInsightsLastRun: '/api/v1/intelligence/insights/last-run',
+        // Phase 14 — history deck endpoint.
+        intelligenceInsightsHistory: '/api/v1/intelligence/insights/history',
         // Phase 9I — Operator control surface (read + write)
         opFactorSensitivities:   '/api/v1/operator/factor-sensitivities',
         opFactorOverrides:       '/api/v1/operator/factor-sensitivities/overrides',
@@ -3251,6 +3253,9 @@
         category: '',
         severity: '',
         wired: false,
+        // Phase 14 — Insights history deck state.
+        historyWindowDays: 30,
+        historyState: '',
     };
 
     function _renderInsightSeverityBadge(sev) {
@@ -3397,6 +3402,9 @@
         const el = document.getElementById('insights-cards');
         if (!el) return;
         el.innerHTML = '<div class="spinner">Loading insights...</div>';
+        // Phase 14 — kick off the history deck load in parallel.  It
+        // renders independently and never blocks the card grid.
+        loadInsightsHistory().catch(() => {});
         const params = new URLSearchParams({
             portfolio_id: _activePortfolioId,
             limit: '12',
@@ -3420,6 +3428,109 @@
         }
     }
 
+    // ----- Phase 14 — Insights history deck -----------------------------
+
+    function _renderHistorySummary(summary) {
+        const el = document.getElementById('insights-history-summary');
+        if (!el) return;
+        if (!summary) { el.innerHTML = ''; return; }
+        el.innerHTML = `
+            <span class="insights-history-chip insights-history-chip-new" title="Cards that appeared for the first time in this window">
+                <strong>${summary.new || 0}</strong> New
+            </span>
+            <span class="insights-history-chip insights-history-chip-escalated" title="Cards whose severity moved higher in this window">
+                <strong>${summary.escalated || 0}</strong> Escalated
+            </span>
+            <span class="insights-history-chip insights-history-chip-total" title="Total snapshot rows touched in this window">
+                <strong>${summary.total || 0}</strong> Total
+            </span>`;
+    }
+
+    function _renderHistorySparkline(counts) {
+        const el = document.getElementById('insights-history-sparkline');
+        if (!el) return;
+        if (!Array.isArray(counts) || !counts.length) {
+            el.innerHTML = '';
+            return;
+        }
+        const max = Math.max(1, ...counts.map(c => c.total || 0));
+        el.innerHTML = counts.map(c => {
+            const pctTotal = Math.round(((c.total || 0) / max) * 100);
+            const tooltip = `${c.date}: ${c.total || 0} total (new ${c.new || 0}, escalated ${c.escalated || 0}, unchanged ${c.unchanged || 0})`;
+            return `<div class="insights-history-bar" title="${esc(tooltip)}" style="--bar-pct:${pctTotal}%;">
+                <div class="insights-history-bar-segment insights-history-bar-new" style="height:${Math.round(((c.new||0)/max)*100)}%"></div>
+                <div class="insights-history-bar-segment insights-history-bar-escalated" style="height:${Math.round(((c.escalated||0)/max)*100)}%"></div>
+                <div class="insights-history-bar-segment insights-history-bar-unchanged" style="height:${Math.round(((c.unchanged||0)/max)*100)}%"></div>
+            </div>`;
+        }).join('');
+    }
+
+    function _renderHistoryList(items) {
+        const el = document.getElementById('insights-history-list');
+        if (!el) return;
+        if (!Array.isArray(items) || !items.length) {
+            el.innerHTML = `<div class="empty-state insights-history-empty">
+                <strong>No insight changes recorded yet.</strong>
+                <div class="text-sm text-muted">Click <em>Run now</em> to generate the first snapshot, or wait for the scheduled regeneration pass.</div>
+            </div>`;
+            return;
+        }
+        el.innerHTML = items.map(it => {
+            const sev = (it.severity || 'info').toLowerCase();
+            const sevPill = `<span class="badge insight-sev-${esc(sev)}">${esc(sev)}</span>`;
+            const cat = it.category || 'data_gap';
+            const catLabels = {
+                news_impact: 'News impact',
+                corporate_event: 'Corporate event',
+                concentration: 'Concentration',
+                revenue_geography: 'Revenue geography',
+                listing_country: 'Listing country',
+                factor_sensitivity: 'Factor',
+                relationship_chain: 'Relationship',
+                alert: 'Alert',
+                data_gap: 'Data gap',
+            };
+            const catChip = `<span class="badge badge-muted insight-cat insight-cat-${esc(cat)}">${esc(catLabels[cat] || cat)}</span>`;
+            const stateChip = (() => {
+                if (it.state === 'new') return '<span class="badge badge-info insights-history-state-chip">New</span>';
+                if (it.state === 'escalated') return '<span class="badge badge-high insights-history-state-chip">Escalated</span>';
+                return '<span class="badge badge-muted insights-history-state-chip">Unchanged</span>';
+            })();
+            const firstSeen = formatDate(it.first_seen_at) || it.first_seen_at;
+            const lastSeen = formatDate(it.last_seen_at) || it.last_seen_at;
+            const dl = it.deep_link ? `<button type="button" class="btn btn-ghost btn-sm" data-nav-jump="1" data-nav-target='${escAttr(JSON.stringify(it.deep_link))}'>${esc(it.deep_link.label || 'Open')} &rarr;</button>` : '';
+            return `<div class="insights-history-row">
+                <div class="insights-history-row-head">
+                    ${sevPill}${catChip}${stateChip}
+                    <span class="insights-history-time text-sm text-muted">first ${esc(firstSeen)} · last ${esc(lastSeen)}</span>
+                </div>
+                <div class="insights-history-row-title">${esc(it.title || '(untitled)')}</div>
+                <div class="insights-history-row-actions">${dl}</div>
+            </div>`;
+        }).join('');
+    }
+
+    async function loadInsightsHistory() {
+        const params = new URLSearchParams({
+            portfolio_id: _activePortfolioId,
+            days: String(_insightsState.historyWindowDays || 30),
+            limit: '50',
+        });
+        if (_insightsState.historyState) params.set('state', _insightsState.historyState);
+        // We deliberately do NOT pass category/severity here — the deck
+        // shows the whole change feed regardless of the live-card
+        // filters, so the operator can spot drift across categories.
+        try {
+            const data = await fetchJSON(`${API.intelligenceInsightsHistory}?${params.toString()}`);
+            _renderHistorySummary(data.summary);
+            _renderHistorySparkline(data.daily_counts);
+            _renderHistoryList(data.items);
+        } catch (e) {
+            const list = document.getElementById('insights-history-list');
+            if (list) list.innerHTML = renderError('insights history: ' + (e.message || 'unknown'));
+        }
+    }
+
     async function _runInsightsNow() {
         // Phase 13 — manual generation pass.  Persists snapshots and
         // (if Telegram is configured server-side) pushes new + escalated
@@ -3431,6 +3542,8 @@
             const params = new URLSearchParams({ portfolio_id: _activePortfolioId });
             await postJSON(`${API.intelligenceInsightsRun}?${params.toString()}`, {});
             await loadInsightsOverview();
+            // Phase 14 — Run-now refreshes the history deck too.
+            await loadInsightsHistory();
         } catch (e) {
             // Surface the error without breaking the panel.
             const banner = document.getElementById('insights-grounding-banner');
@@ -3467,6 +3580,24 @@
         // Phase 13 — Run-now button persists a snapshot + notifies.
         const runNow = document.getElementById('insights-run-now-btn');
         if (runNow) runNow.addEventListener('click', _runInsightsNow);
+
+        // Phase 14 — Insights history deck controls.
+        document.querySelectorAll('.insights-history-pill').forEach(p => {
+            p.addEventListener('click', () => {
+                const days = Number(p.dataset.historyWindow);
+                if (!Number.isFinite(days)) return;
+                _insightsState.historyWindowDays = days;
+                document.querySelectorAll('.insights-history-pill').forEach(q => {
+                    q.classList.toggle('active', q === p);
+                });
+                loadInsightsHistory();
+            });
+        });
+        const historyState = document.getElementById('insights-history-state');
+        if (historyState) historyState.addEventListener('change', () => {
+            _insightsState.historyState = historyState.value;
+            loadInsightsHistory();
+        });
     }
     _wireInsightsOnce();
 
@@ -3516,6 +3647,8 @@
         // Phase 12 — additive surface → top-tab mapping for Insights cards.
         'corporate-events': 'corporate-events',
         settings:  'settings',
+        // Phase 14 — Insights surface (top-level Insights tab).
+        intelligence: 'intelligence',
     };
 
     function _inboxJumpDescriptor(item) {
@@ -3688,6 +3821,49 @@
                 tabLoaded.alerts = true;
                 loadAlerts();
             }
+        }
+
+        // --- Insights Overview filters — Phase 14 -----------------
+        // Maps the saved-view payload back onto the dashboard
+        // controls and triggers a reload of both the card grid and
+        // the history deck.  Unknown keys are dropped silently so
+        // a stale saved view doesn't break the panel.
+        if (target.surface === 'intelligence' && target.subtab === 'overview'
+                && f && Object.keys(f).length) {
+            const setVal = (id, v) => {
+                const el = document.getElementById(id);
+                if (!el) return;
+                if (v == null) return;
+                const hasOption = !el.options || Array.from(el.options).some(o => o.value === String(v));
+                if (hasOption) el.value = String(v);
+            };
+            if (f.category) {
+                _insightsState.category = String(f.category);
+                setVal('insights-category-filter', f.category);
+            }
+            if (f.severity) {
+                _insightsState.severity = String(f.severity);
+                setVal('insights-severity-filter', f.severity);
+            }
+            const aiVal = (f.include_ai != null ? f.include_ai : f.ai);
+            if (aiVal != null) {
+                const truthy = String(aiVal).toLowerCase() === 'true'
+                    || aiVal === true || aiVal === '1' || aiVal === 1;
+                _insightsState.includeAi = !!truthy;
+                const ai = document.getElementById('insights-include-ai');
+                if (ai) ai.checked = !!truthy;
+            }
+            const window = (f.time_window_days != null ? f.time_window_days : f.time_window);
+            if (window != null) {
+                const n = Number(window);
+                if (Number.isFinite(n) && n > 0) {
+                    _insightsState.historyWindowDays = n;
+                    document.querySelectorAll('.insights-history-pill').forEach(p => {
+                        p.classList.toggle('active', Number(p.dataset.historyWindow) === n);
+                    });
+                }
+            }
+            if (typeof loadInsightsOverview === 'function') loadInsightsOverview();
         }
 
         // --- News (events) filters — Phase 8 full restore ---------
@@ -6425,7 +6601,11 @@
             const activeSub = document.querySelector('#tab-intelligence .sub-tab.active');
             if (activeSub) {
                 subtab = activeSub.dataset.subtab;
-                if (subtab === 'digest') surface = 'digest';
+                // Phase 14 — Insights → Overview gets its own surface
+                // so saved views can restore the category/severity/
+                // time-window/AI filters.
+                if (subtab === 'overview') surface = 'intelligence';
+                else if (subtab === 'digest') surface = 'digest';
                 else surface = 'events';
             }
         }
@@ -6445,6 +6625,20 @@
             const rs = document.querySelector('#op-rel-source-filter')?.value;
             if (rs) filters.source = rs;
             subtab = ff ? 'factors' : (rs ? 'relationships' : null);
+        }
+        // Phase 14 — Insights Overview filters: category, severity,
+        // AI toggle, history window.
+        if (surface === 'intelligence' && subtab === 'overview') {
+            const cat = document.querySelector('#insights-category-filter')?.value;
+            if (cat) filters.category = cat;
+            const sev = document.querySelector('#insights-severity-filter')?.value;
+            if (sev) filters.severity = sev;
+            const ai = document.querySelector('#insights-include-ai');
+            if (ai && ai.checked) filters.include_ai = 'true';
+            if (_insightsState.historyWindowDays
+                    && _insightsState.historyWindowDays !== 30) {
+                filters.time_window_days = String(_insightsState.historyWindowDays);
+            }
         }
         if (surface === 'events' || subtab === 'events') {
             // Phase 8 — capture the full structured filter set so a
@@ -6518,9 +6712,16 @@
         const surfaceLabels = {
             alerts:'Alerts', digest:'Digest', events:'News',
             operator:'Operator', portfolio:'Portfolio',
+            // Phase 12/14 additions — keep aligned with backend.
+            'corporate-events': 'Events',
+            settings: 'Settings',
+            intelligence: 'Insights',
         };
         const label = surfaceLabels[payload.surface] || payload.surface || '';
         const parts = [label];
+        if (payload.subtab === 'overview' && payload.surface === 'intelligence') {
+            parts.push('Overview');
+        }
         const f = payload.filters || {};
         const sevLabels = {
             '':'All','all':'All','critical':'Critical',
@@ -6528,6 +6729,38 @@
             'warning':'Warning+','info':'Info',
         };
         const ackLabels = {'open':'Open','ack':'Acked','':'All'};
+        // Phase 14 — Insights Overview category labels mirror the backend.
+        const insightCategoryLabels = {
+            news_impact:        'News impact',
+            corporate_event:    'Corporate event',
+            concentration:      'Concentration',
+            revenue_geography:  'Revenue geography',
+            listing_country:    'Listing country',
+            factor_sensitivity: 'Factor sensitivity',
+            relationship_chain: 'Relationship',
+            alert:              'Alert',
+            data_gap:           'Data gap',
+        };
+        const insightSeverityLabels = {
+            critical: 'Critical', high: 'High', medium: 'Medium',
+            low: 'Low', info: 'Info',
+        };
+        const isInsightsOverview = payload.surface === 'intelligence' && payload.subtab === 'overview';
+        if (isInsightsOverview) {
+            if (f.category) parts.push(insightCategoryLabels[f.category] || f.category);
+            if (f.severity) parts.push(insightSeverityLabels[f.severity] || f.severity);
+            const w = f.time_window_days || f.time_window;
+            if (w) {
+                const n = Number(w);
+                parts.push('Last ' + n + ' day' + (n === 1 ? '' : 's'));
+            }
+            const ai = (f.include_ai != null ? f.include_ai : f.ai);
+            if (ai != null) {
+                const truthy = String(ai).toLowerCase() === 'true' || ai === true;
+                if (truthy) parts.push('AI narration on');
+            }
+            return parts.join(' · ');
+        }
         if (f.severity) parts.push(sevLabels[f.severity] || f.severity);
         if (f.ack && f.ack !== 'open') parts.push(ackLabels[f.ack] || f.ack);
         if (f.factor) parts.push(f.factor);

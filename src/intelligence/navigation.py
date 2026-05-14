@@ -53,6 +53,13 @@ Surface = Literal[
     # Phase 12 — added the corporate-events tab (Phase 9) and the
     # settings surface so Insights cards can deep-link to them.
     "corporate-events", "settings",
+    # Phase 14 — the Insights top-tab gets its own surface so saved
+    # views can pin Overview filters (category / severity / time
+    # window / AI toggle).  The frontend dispatcher routes
+    # ``intelligence`` to the Insights top-tab; sub-tab hints
+    # (overview / events / analysis / digest / inbox) work the same
+    # way they always have.
+    "intelligence",
 ]
 
 #: Set of surface values the frontend dispatcher knows how to route to.
@@ -62,6 +69,8 @@ _KNOWN_SURFACES: frozenset[str] = frozenset({
     "alerts", "digest", "events", "operator", "portfolio",
     # Phase 12 additions (additive — no existing target schema breaks).
     "corporate-events", "settings",
+    # Phase 14 addition (additive).
+    "intelligence",
 })
 
 #: Settings sub-sections the frontend can focus.  Maps to anchor ids
@@ -111,6 +120,18 @@ _APPROVED_FILTERS: dict[tuple[str, str | None], frozenset[str]] = {
         "linked_only",
     }),
     ("alerts", None):               frozenset({"severity", "ack"}),
+    # Phase 14 — Insights → Overview saved-view filter set.  The keys
+    # mirror the ``GET /api/v1/intelligence/insights`` query params
+    # one-for-one so restoring a saved view is the same as opening
+    # the bookmarked URL.
+    ("intelligence", "overview"):   frozenset({
+        "category",
+        "severity",
+        "time_window_days",
+        "time_window",          # alias accepted at restore time
+        "include_ai",
+        "ai",                   # alias accepted at restore time
+    }),
 }
 
 
@@ -154,6 +175,10 @@ _SURFACE_LABELS: dict[str, str] = {
     # Phase 12 — clear customer-facing labels for the new surfaces.
     "corporate-events": "Events",
     "settings":         "Settings",
+    # Phase 14 — Insights top-tab.  The same key is used by the
+    # dashboard's ``data-tab="intelligence"`` element; the customer
+    # label is "Insights".
+    "intelligence":     "Insights",
 }
 
 #: Human labels for subtabs. ``events`` subtab → "News" label, matching
@@ -225,6 +250,39 @@ _FILTER_KEY_LABELS: dict[str, str] = {
     "confidence_min":  "Confidence",
     "linked":          "Linked only",
     "linked_only":     "Linked only",
+    # Phase 14 — Insights Overview saved-view filter keys.
+    "category":        "Category",
+    "time_window_days": "Last N days",
+    "time_window":     "Last N days",
+    "include_ai":      "AI narration",
+    "ai":              "AI narration",
+}
+
+
+#: Phase 14 — friendly labels for the Insights ``category`` filter so
+#: a saved view named from the payload uses the same wording as the
+#: dashboard category select (News impact / Corporate event / …).
+_INSIGHT_CATEGORY_LABELS: dict[str, str] = {
+    "news_impact":        "News impact",
+    "corporate_event":    "Corporate event",
+    "concentration":      "Concentration",
+    "revenue_geography":  "Revenue geography",
+    "listing_country":    "Listing country",
+    "factor_sensitivity": "Factor sensitivity",
+    "relationship_chain": "Relationship",
+    "alert":              "Alert",
+    "data_gap":           "Data gap",
+}
+
+
+#: Phase 14 — friendly labels for the Insights ``severity`` filter
+#: (distinct from the alerts severity filter — different vocabulary).
+_INSIGHT_SEVERITY_LABELS: dict[str, str] = {
+    "critical": "Critical",
+    "high":     "High",
+    "medium":   "Medium",
+    "low":      "Low",
+    "info":     "Info",
 }
 
 
@@ -263,10 +321,34 @@ def describe_view(
             label += f" · {sub_label}"
 
     filters = payload.get("filters")
+    is_insights_overview = (
+        surface == "intelligence" and payload.get("subtab") == "overview"
+    )
     if isinstance(filters, Mapping):
         for fk, fv in filters.items():
             if not fk or fv is None or fv == "":
                 continue
+            if is_insights_overview and fk == "category":
+                cat_label = _INSIGHT_CATEGORY_LABELS.get(str(fv), str(fv))
+                label += f" · {cat_label}"
+                continue
+            if is_insights_overview and fk == "severity":
+                sev_label = _INSIGHT_SEVERITY_LABELS.get(str(fv).lower(), str(fv))
+                label += f" · {sev_label}"
+                continue
+            if is_insights_overview and fk in ("time_window_days", "time_window"):
+                try:
+                    n = int(fv)
+                    label += f" · Last {n} day{'s' if n != 1 else ''}"
+                except (TypeError, ValueError):
+                    label += f" · Last {fv} days"
+                continue
+            if is_insights_overview and fk in ("include_ai", "ai"):
+                truthy = str(fv).lower() in ("1", "true", "yes", "on")
+                if truthy:
+                    label += " · AI narration on"
+                continue
+
             if fk == "severity":
                 sev_label = _SEVERITY_FILTER_LABELS.get(str(fv), str(fv))
                 label += f" · {sev_label}"

@@ -3548,3 +3548,159 @@ th.sortable.sort-desc::after { content: '\25BC'; opacity: 0.8; color: var(--prim
     margin-right: 0.4rem;
     font-variant-numeric: tabular-nums;
 }
+
+/* ================================================================ */
+/* Phase 14 — Insights history deck + sparkline                     */
+/* ================================================================ */
+
+.insights-history {
+    margin: 0.55rem 0 0.8rem 0;
+    padding: 0.7rem 0.85rem;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+}
+.insights-history-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.55rem;
+}
+.insights-history-title {
+    margin: 0;
+    font-size: 0.9rem;
+    color: var(--muted-fg);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+}
+.insights-history-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+}
+.insights-history-pills {
+    display: inline-flex;
+    gap: 0.25rem;
+}
+.insights-history-pill {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--muted-fg);
+    border-radius: 999px;
+    padding: 0.2rem 0.6rem;
+    font-size: 0.72rem;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.insights-history-pill:hover {
+    background: var(--primary-bg);
+    color: var(--primary);
+    border-color: var(--primary);
+}
+.insights-history-pill.active {
+    background: var(--primary-bg);
+    color: var(--primary);
+    border-color: var(--primary);
+}
+.insights-history-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem;
+    margin-bottom: 0.5rem;
+}
+.insights-history-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.18rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--muted-fg);
+}
+.insights-history-chip-new {
+    background: var(--primary-bg);
+    color: var(--primary);
+    border-color: var(--primary);
+}
+.insights-history-chip-escalated {
+    background: hsl(0, 65%, 90%);
+    color: hsl(0, 65%, 35%);
+    border-color: hsl(0, 65%, 55%);
+}
+.insights-history-chip strong {
+    font-weight: 700;
+    color: inherit;
+}
+.insights-history-sparkline {
+    display: flex;
+    align-items: flex-end;
+    gap: 2px;
+    height: 36px;
+    margin-bottom: 0.55rem;
+    padding: 0.25rem 0;
+}
+.insights-history-bar {
+    flex: 1 1 0;
+    min-width: 3px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    height: 100%;
+    background: transparent;
+    border-bottom: 1px solid var(--border);
+}
+.insights-history-bar-segment {
+    width: 100%;
+}
+.insights-history-bar-new       { background: var(--primary); }
+.insights-history-bar-escalated { background: hsl(0, 60%, 55%); }
+.insights-history-bar-unchanged { background: var(--border); }
+
+.insights-history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+.insights-history-row {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.5rem 0.65rem;
+    background: var(--card);
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+.insights-history-row-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+}
+.insights-history-row-title {
+    font-weight: 500;
+    color: var(--foreground);
+    line-height: 1.35;
+}
+.insights-history-row-actions {
+    display: flex;
+    gap: 0.3rem;
+}
+.insights-history-time {
+    margin-left: auto;
+    font-size: 0.7rem;
+}
+.insights-history-state-chip {
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 0.66rem;
+}
+.insights-history-empty {
+    padding: 0.85rem 0.6rem;
+    text-align: left;
+    color: var(--muted-fg);
+}

@@ -94,6 +94,19 @@ Run from the project root with the venv active.
   - Settings → Sources UI uses the Phase 7 status vocabulary and `Auth env var` column.
   - Customer docs name `NEWSAPI_KEY` and `FINNHUB_KEY` and never claim Bloomberg / FactSet / ATHEX corporate events.
 
+- [ ] **Insights history + saved-view regressions pass**
+  ```bash
+  python -m pytest -q tests/unit/test_phase14_insights_history.py
+  ```
+  Must report all green. Covers:
+  - Navigation: ``intelligence`` is in ``_KNOWN_SURFACES``; ``_APPROVED_FILTERS[("intelligence", "overview")]`` lists `category` / `severity` / `time_window_days` / `time_window` / `include_ai` / `ai`.
+  - ``describe_view`` renders ``Insights``, ``Insights · Overview``, ``Insights · Overview · Critical``, ``Insights · Overview · News impact · Last 7 days``, and ``Insights · Overview · AI narration on`` cleanly without doubling labels.
+  - ``GET /api/v1/intelligence/insights/history`` returns ``portfolio_id`` / ``window_days`` / ``generated_at`` / ``items[]`` / ``daily_counts[]`` / ``summary``; empty portfolio returns honest empty response; portfolio isolation holds; the ``state`` / ``category`` / ``severity`` / ``days`` filters all work.
+  - Each item carries a typed deep link (``surface`` enum) routed by category (news_impact→events detail, corporate_event→Events tab, alert→Alerts, revenue/listing→Portfolio Exposures, factor→Operator factors).
+  - History endpoint never leaks AI prompt body or narration text — snapshot rows only.
+  - Dashboard markup carries the history deck container, the 7d/30d/90d pills, the state filter, the summary strip, the sparkline element, and the empty-state copy.
+  - ``_captureCurrentViewPayload`` produces a payload with ``surface="intelligence"`` + ``subtab="overview"`` when the Overview sub-tab is active; ``_applyTargetFilter`` restores those filters.
+
 - [ ] **Insights notifications regressions pass**
   ```bash
   python -m pytest -q tests/unit/test_phase13_insight_notifications.py

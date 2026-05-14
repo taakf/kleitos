@@ -259,6 +259,33 @@
                         </p>
                         <div id="insights-coverage" class="insights-coverage" hidden></div>
                         <div id="insights-grounding-banner" class="insights-grounding-banner" hidden></div>
+
+                        <!--
+                          Phase 14 — Insights history deck.  Built from the
+                          local insight_snapshots table; never re-runs AI
+                          narration.  Empty by design on fresh DB.
+                        -->
+                        <div id="insights-history" class="insights-history">
+                            <div class="insights-history-header">
+                                <h3 class="insights-history-title">What changed</h3>
+                                <div class="insights-history-controls">
+                                    <div class="insights-history-pills" role="group" aria-label="Time window">
+                                        <button type="button" class="insights-history-pill" data-history-window="7">7d</button>
+                                        <button type="button" class="insights-history-pill active" data-history-window="30">30d</button>
+                                        <button type="button" class="insights-history-pill" data-history-window="90">90d</button>
+                                    </div>
+                                    <select id="insights-history-state" class="select-input" aria-label="State">
+                                        <option value="">All states</option>
+                                        <option value="new">New only</option>
+                                        <option value="escalated">Escalated only</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div id="insights-history-summary" class="insights-history-summary"></div>
+                            <div id="insights-history-sparkline" class="insights-history-sparkline" aria-hidden="true"></div>
+                            <div id="insights-history-list" class="insights-history-list"></div>
+                        </div>
+
                         <div id="insights-cards" class="insights-cards">
                             <div class="spinner">Loading insights...</div>
                         </div>

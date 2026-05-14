@@ -72,6 +72,14 @@ http://localhost:7777/dashboard
 - Toggle **AI narrate (optional)** to show the AI-grounded path. "AI can rewrite wording, never add facts. If it mentions a ticker outside the affected list, the rewrite is discarded automatically."
 - Point at the Coverage strip — holdings count, news (7d), events (30d), active alerts, revenue-geography status, AI provider state. "This is the honest data-availability picture."
 
+### 2d. Insights history deck + saved views (2 min, Phase 14)
+- Above the card grid, point at the **What changed** panel.
+- Click between **7d / 30d / 90d** pills — sparkline + summary chips refresh from local snapshots only. "No live prices. No AI inference. Just what Phase 13 wrote to disk."
+- Toggle **New only** / **Escalated only** — list filters in place.
+- Click a row's deep link → land on the underlying News / Events / Alerts / Exposures surface.
+- Click **Save current view** — show the auto-suggested name (e.g. *"Insights · Overview · Critical · Last 7 days"*).
+- Restore another saved Insights view → category + severity + window + AI toggle restore in one click.
+
 ### 3. News + Causal Chains (3 min)
 - Click **Insights → News**
 - Type "fed" in the search box — "**Server-side, debounced** — Source/Type/Factor/Materiality filters narrow the slice the same way."

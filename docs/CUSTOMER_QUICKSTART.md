@@ -95,6 +95,13 @@ The first sub-tab under **Insights** is the Phase 12 Overview. It surfaces a ran
 * `new`/`escalated` cards above medium severity appear in the **Inbox** sub-tab with read/unread state.
 * When Telegram is configured, `high+` severity cards push a single message per change. Without Telegram, the dispatcher is silent — Insights still works end-to-end.
 
+**Phase 14** adds a *What changed* panel above the card grid:
+
+* 7d / 30d / 90d windows.
+* Sparkline of new/escalated/unchanged transitions per day, built only from local snapshots.
+* List of recent transitions with deep links to the surface that explains each card.
+* **Save current view** now pins your Insights Overview filters (category, severity, time window, AI toggle) so you can return to the same slice with one click.
+
 ### Reading the Exposures cards
 
 The Portfolio → Exposures tab now shows **Listing country** (instrument-listing exposure derived from ISIN/venue) and a separate **Revenue geography** card. Revenue geography is populated only when you upload a CSV via the card's *Import CSV* button — Axion never infers where a company earns money from where its shares are listed. CSV columns: `region`, `revenue_share`, plus at least one of `ticker` / `isin`. `revenue_share` accepts `0.45`, `45`, or `45%`. Holdings you haven't uploaded for show up in a "Holdings without revenue breakdowns" panel so the gap is visible at a glance.

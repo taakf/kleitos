@@ -262,3 +262,185 @@ async def insights_last_run(
         session, portfolio_id=portfolio_id or "default",
     )
     return {"portfolio_id": portfolio_id, "last_generated_at": ts}
+
+
+# ---------------------------------------------------------------------------
+# Phase 14 — Insights history deck
+# ---------------------------------------------------------------------------
+
+
+@router.get("/insights/history")
+async def insights_history(
+    portfolio_id: str = Query("default"),
+    days: int = Query(7, ge=1, le=365),
+    category: str | None = Query(None),
+    severity: str | None = Query(None),
+    state: str | None = Query(None, description="new | escalated | unchanged"),
+    limit: int = Query(50, ge=1, le=200),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Phase 14 — read-only history deck over ``insight_snapshots``.
+
+    Returns ranked items + per-day counts + summary aggregates for the
+    given window.  Deterministic; never regenerates AI narration; never
+    inlines AI prompt bodies.  Portfolio-isolated.
+    """
+    from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+    from sqlalchemy import select as _select
+
+    from src.database.models import InsightSnapshot
+    from src.intelligence.insights.fingerprint import severity_rank
+
+    now = _dt.now(_tz.utc)
+    cutoff = now - _td(days=days)
+    cutoff_iso = cutoff.isoformat()
+    generated_at = now.isoformat()
+
+    # ─── Build query ──────────────────────────────────────────────
+    conds: list[Any] = [
+        InsightSnapshot.portfolio_id == portfolio_id,
+        InsightSnapshot.last_seen_at >= cutoff_iso,
+    ]
+    if category:
+        conds.append(InsightSnapshot.category == category)
+    if severity:
+        conds.append(InsightSnapshot.severity == severity.lower())
+    if state and state.lower() in ("new", "escalated", "unchanged"):
+        conds.append(InsightSnapshot.status == state.lower())
+
+    stmt = _select(InsightSnapshot)
+    for c in conds:
+        stmt = stmt.where(c)
+    stmt = stmt.order_by(
+        InsightSnapshot.last_seen_at.desc(),
+    ).limit(limit)
+
+    try:
+        rows = (await session.execute(stmt)).scalars().all()
+    except Exception:  # pragma: no cover — defensive
+        rows = []
+
+    # ─── Per-row payload + deep-link routing ──────────────────────
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        deep_link = _deep_link_for_card_key(
+            r.card_key, r.category, portfolio_id,
+        )
+        # Rank-aware severity sort fallback when last_seen_at ties.
+        items.append({
+            "card_key": r.card_key,
+            "category": r.category,
+            "severity": r.severity,
+            "severity_rank": severity_rank(r.severity),
+            "title": r.title,
+            "state": r.status,
+            "first_seen_at": r.first_seen_at,
+            "last_seen_at": r.last_seen_at,
+            "notified_at": r.notified_at,
+            "notified_severity": r.notified_severity,
+            "deep_link": deep_link.to_dict() if deep_link is not None else None,
+        })
+
+    # ─── Daily bucket counts (always returns a row per day) ──────
+    daily_counts: list[dict[str, Any]] = []
+    bucket_by_date: dict[str, dict[str, int]] = {}
+    for d_offset in range(days):
+        day = (cutoff + _td(days=d_offset + 1)).date().isoformat()
+        bucket_by_date[day] = {
+            "new": 0, "escalated": 0, "unchanged": 0, "total": 0,
+        }
+    # Re-query at the date granularity (cheap — same window) and stamp
+    # the right bucket per row.  We aggregate **all** rows in the
+    # window, not the sliced `limit` slice.
+    daily_stmt = _select(
+        InsightSnapshot.status,
+        InsightSnapshot.last_seen_at,
+    )
+    for c in conds:
+        daily_stmt = daily_stmt.where(c)
+    try:
+        daily_rows = (await session.execute(daily_stmt)).all()
+    except Exception:  # pragma: no cover — defensive
+        daily_rows = []
+    for st, ts in daily_rows:
+        try:
+            day = ts[:10]
+        except (TypeError, IndexError):
+            continue
+        if day not in bucket_by_date:
+            bucket_by_date[day] = {
+                "new": 0, "escalated": 0, "unchanged": 0, "total": 0,
+            }
+        bucket = bucket_by_date[day]
+        key = st if st in ("new", "escalated", "unchanged") else None
+        if key is not None:
+            bucket[key] += 1
+        bucket["total"] += 1
+    daily_counts = [
+        {"date": day, **counts}
+        for day, counts in sorted(bucket_by_date.items())
+    ]
+
+    summary = {
+        "new":        sum(b["new"]        for b in bucket_by_date.values()),
+        "escalated":  sum(b["escalated"]  for b in bucket_by_date.values()),
+        "unchanged":  sum(b["unchanged"]  for b in bucket_by_date.values()),
+        "total":      sum(b["total"]      for b in bucket_by_date.values()),
+    }
+
+    return {
+        "portfolio_id": portfolio_id,
+        "window_days": days,
+        "generated_at": generated_at,
+        "items": items,
+        "daily_counts": daily_counts,
+        "summary": summary,
+    }
+
+
+def _deep_link_for_card_key(
+    card_key: str, category: str, portfolio_id: str,
+):
+    """Phase 14 — best-effort navigation target from a card_key.
+
+    ``card_key`` looks like ``insight:<category>:<ref>``.  We route
+    each category to the surface that explains it; unknown shapes
+    fall back to Insights Overview itself.
+    """
+    from src.intelligence.navigation import (
+        _safe_target, target_for_alert, target_for_corporate_event,
+        target_for_event,
+    )
+
+    parts = card_key.split(":", 2)
+    ref = parts[2] if len(parts) >= 3 else None
+    sub_parts = ref.split(":", 1) if ref else []
+    ref_kind = sub_parts[0] if sub_parts else None
+    ref_id = sub_parts[1] if len(sub_parts) > 1 else None
+
+    if category == "news_impact" and ref_kind == "event" and ref_id:
+        return target_for_event(ref_id, portfolio_id)
+    if category == "corporate_event" and ref_kind == "corporate_event" and ref_id:
+        return target_for_corporate_event(ref_id, portfolio_id)
+    if category == "alert" and ref_kind == "alert" and ref_id:
+        return target_for_alert(ref_id, portfolio_id)
+    if category == "revenue_geography":
+        return _safe_target(
+            surface="portfolio", portfolio_id=portfolio_id,
+            subtab="exposures", label="Open Revenue geography",
+        )
+    if category == "listing_country":
+        return _safe_target(
+            surface="portfolio", portfolio_id=portfolio_id,
+            subtab="exposures", label="Open Listing country",
+        )
+    if category == "factor_sensitivity" and ref_kind == "factor" and ref_id:
+        return _safe_target(
+            surface="operator", portfolio_id=portfolio_id,
+            subtab="factors", filter=ref_id, label="Open factor table",
+        )
+    # Default — back to the Insights Overview itself.
+    return _safe_target(
+        surface="intelligence", portfolio_id=portfolio_id,
+        subtab="overview", label="Open in Insights",
+    )

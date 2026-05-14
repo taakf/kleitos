@@ -270,6 +270,18 @@ The Coverage strip above the cards shows what inputs the generator had — holdi
 
 Revenue geography is **never inferred from listing country**. The "Listing country" exposure card and the "Revenue geography" insight card live separately, and a Phase 12 test enforces that no listing-country evidence ever ends up in a revenue-geography card.
 
+### Insights history + saved views (Phase 14)
+
+A second panel on **Insights → Overview** — *"What changed"* — reads the local `insight_snapshots` table and shows how the deck has evolved over the last 7 / 30 / 90 days:
+
+* Summary chips for **New** / **Escalated** / **Total** card transitions in the window.
+* A deterministic per-day sparkline (no live data, no inferred numbers — just bucket counts from the snapshot table).
+* A list of recent transitions with severity + category + state pills, first-seen / last-seen timestamps, and a deep link back to the surface that explains each card.
+* `7d / 30d / 90d` window pills and a `New only / Escalated only` state filter.
+* Honest empty state on a fresh DB — *"No insight changes recorded yet. Click Run now to generate the first snapshot."*
+
+Saved views now cover Insights Overview too: the **Save current view** button captures `category`, `severity`, `time_window_days`, and `include_ai` so a pin like *"Insights · Overview · Critical · Last 7 days"* restores into the same filters across sessions. Existing saved views for News, Alerts, Portfolio, Operator, Events, and Settings continue to work unchanged.
+
 ### Insight notifications (Phase 13)
 
 The Insights → Overview surface drives a small notification layer:
