@@ -80,6 +80,11 @@ http://localhost:7777/dashboard
 - Click **Save current view** — show the auto-suggested name (e.g. *"Insights · Overview · Critical · Last 7 days"*).
 - Restore another saved Insights view → category + severity + window + AI toggle restore in one click.
 
+### 2e. Insights export + shareable state (1 min, Phase 15)
+- With a filter active (e.g. **Severity: critical** + **New only**) click **Export CSV** in the Overview toolbar — a file named `axion-insights-overview-YYYYMMDD-HHMMSS.csv` downloads. Open it: header row with one column per field, rows tagged `section=current` and `section=history`.
+- Click **Export JSON** — same merged payload as JSON.
+- Click **Copy share link** — paste the URL into a fresh browser tab. The Overview restores with the same category / severity / time window / history-state filters. "No keys, no prompt bodies, just the filter dimensions we already approved."
+
 ### 3. News + Causal Chains (3 min)
 - Click **Insights → News**
 - Type "fed" in the search box — "**Server-side, debounced** — Source/Type/Factor/Materiality filters narrow the slice the same way."

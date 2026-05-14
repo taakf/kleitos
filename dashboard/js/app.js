@@ -64,6 +64,9 @@
         intelligenceInsightsLastRun: '/api/v1/intelligence/insights/last-run',
         // Phase 14 — history deck endpoint.
         intelligenceInsightsHistory: '/api/v1/intelligence/insights/history',
+        // Phase 15 — export endpoints (CSV via POST, JSON via GET).
+        intelligenceInsightsExportCsv:  '/api/v1/intelligence/insights/export',
+        intelligenceInsightsExportJson: '/api/v1/intelligence/insights/export.json',
         // Phase 9I — Operator control surface (read + write)
         opFactorSensitivities:   '/api/v1/operator/factor-sensitivities',
         opFactorOverrides:       '/api/v1/operator/factor-sensitivities/overrides',
@@ -3531,6 +3534,138 @@
         }
     }
 
+    // ----- Phase 15 — Insights export + share helpers ------------------
+
+    function _insightsExportQueryParams() {
+        // Build the URLSearchParams used by both export endpoints.
+        // Mirrors the live filter state so the export matches what the
+        // operator sees on screen.  Empty string filters are omitted so
+        // the backend sees them as ``None``.
+        const p = new URLSearchParams({
+            portfolio_id: _activePortfolioId,
+            days: String(_insightsState.historyWindowDays || 30),
+            limit: '60',
+        });
+        if (_insightsState.category) p.set('category', _insightsState.category);
+        if (_insightsState.severity) p.set('severity', _insightsState.severity);
+        if (_insightsState.includeAi) p.set('include_ai', 'true');
+        if (_insightsState.historyState) p.set('history_state', _insightsState.historyState);
+        return p;
+    }
+
+    function _insightsExportFilename(suffix) {
+        // Mirrors the backend ``_insights_export_filename`` so the
+        // browser-driven download has the same shape if the backend
+        // header is missing (older browsers, sandboxed iframes).
+        const now = new Date();
+        const pad = (n) => String(n).padStart(2, '0');
+        const stamp = `${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}-${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}`;
+        return `axion-insights-overview-${stamp}.${suffix}`;
+    }
+
+    async function _downloadBlob(blob, filename) {
+        // Trigger a browser download without leaving the page.  Uses
+        // ``Object URL`` + a hidden anchor; revokes immediately after
+        // the click so the URL doesn't leak into memory.
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.style.display = 'none';
+        document.body.appendChild(a);
+        try {
+            a.click();
+        } finally {
+            setTimeout(() => {
+                try { a.remove(); URL.revokeObjectURL(url); } catch (_e) {}
+            }, 0);
+        }
+    }
+
+    async function _runInsightsExport(format) {
+        // Phase 15 — fetch the export and trigger a download.  ``format``
+        // is ``'csv'`` or ``'json'``.  Errors surface via the grounding
+        // banner so we don't have to wire a dedicated toast.
+        const btnCsv = document.getElementById('insights-export-csv-btn');
+        const btnJson = document.getElementById('insights-export-json-btn');
+        const btn = format === 'csv' ? btnCsv : btnJson;
+        const restoreLabel = btn ? btn.textContent : '';
+        if (btn) { btn.disabled = true; btn.textContent = 'Exporting...'; }
+        const params = _insightsExportQueryParams();
+        try {
+            let resp;
+            if (format === 'csv') {
+                resp = await fetch(`${API.intelligenceInsightsExportCsv}?${params.toString()}`, {
+                    method: 'POST',
+                    headers: { 'Accept': 'text/csv' },
+                });
+            } else {
+                resp = await fetch(`${API.intelligenceInsightsExportJson}?${params.toString()}`, {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json' },
+                });
+            }
+            if (!resp.ok) {
+                throw new Error(`${resp.status} ${resp.statusText}`);
+            }
+            const blob = format === 'csv'
+                ? await resp.blob()
+                : new Blob([JSON.stringify(await resp.json(), null, 2)], { type: 'application/json' });
+            // Pull the filename from the Content-Disposition header if
+            // present, otherwise mirror the backend's stamping.
+            let filename = _insightsExportFilename(format);
+            const cd = resp.headers.get('Content-Disposition') || '';
+            const m = cd.match(/filename="?([^";]+)"?/i);
+            if (m && m[1]) filename = m[1];
+            await _downloadBlob(blob, filename);
+            if (typeof showToast === 'function') {
+                showToast(`Exported ${format.toUpperCase()} · ${filename}`);
+            }
+        } catch (e) {
+            const banner = document.getElementById('insights-grounding-banner');
+            if (banner) {
+                banner.hidden = false;
+                banner.dataset.status = 'ai_failed';
+                banner.textContent = `Export failed: ${e && e.message ? e.message : 'unknown'}`;
+            }
+        } finally {
+            if (btn) { btn.disabled = false; btn.textContent = restoreLabel || (format === 'csv' ? 'Export CSV' : 'Export JSON'); }
+        }
+    }
+
+    function _buildInsightsShareTarget() {
+        // Phase 15 — build the NavigationTarget for the current
+        // Insights Overview state and route it through the existing
+        // Phase 9R copy-link helper.  The captured payload is the same
+        // shape the saved-view system uses, so a copied link and a
+        // saved view restore the same slice.
+        const filters = {};
+        if (_insightsState.category) filters.category = _insightsState.category;
+        if (_insightsState.severity) filters.severity = _insightsState.severity;
+        if (_insightsState.includeAi) filters.include_ai = 'true';
+        if (_insightsState.historyWindowDays
+                && _insightsState.historyWindowDays !== 30) {
+            filters.time_window_days = String(_insightsState.historyWindowDays);
+        }
+        if (_insightsState.historyState) {
+            filters.history_state = _insightsState.historyState;
+        }
+        const target = {
+            surface: 'intelligence',
+            portfolio_id: _activePortfolioId,
+            subtab: 'overview',
+        };
+        if (Object.keys(filters).length) target.filters = filters;
+        return target;
+    }
+
+    async function _copyInsightsShareLink() {
+        const target = _buildInsightsShareTarget();
+        if (typeof window._copyDeepLink === 'function') {
+            await window._copyDeepLink(target);
+        }
+    }
+
     async function _runInsightsNow() {
         // Phase 13 — manual generation pass.  Persists snapshots and
         // (if Telegram is configured server-side) pushes new + escalated
@@ -3598,6 +3733,14 @@
             _insightsState.historyState = historyState.value;
             loadInsightsHistory();
         });
+
+        // Phase 15 — Export + share toolbar wiring.
+        const csvBtn  = document.getElementById('insights-export-csv-btn');
+        if (csvBtn)  csvBtn.addEventListener('click',  () => _runInsightsExport('csv'));
+        const jsonBtn = document.getElementById('insights-export-json-btn');
+        if (jsonBtn) jsonBtn.addEventListener('click', () => _runInsightsExport('json'));
+        const copyBtn = document.getElementById('insights-copy-link-btn');
+        if (copyBtn) copyBtn.addEventListener('click', _copyInsightsShareLink);
     }
     _wireInsightsOnce();
 
@@ -3861,6 +4004,15 @@
                     document.querySelectorAll('.insights-history-pill').forEach(p => {
                         p.classList.toggle('active', Number(p.dataset.historyWindow) === n);
                     });
+                }
+            }
+            // Phase 15 — restore the history-deck state filter.
+            const historyStateVal = (f.history_state != null ? f.history_state : f.state);
+            if (historyStateVal != null) {
+                const v = String(historyStateVal).toLowerCase();
+                if (v === 'new' || v === 'escalated' || v === 'unchanged' || v === '') {
+                    _insightsState.historyState = v;
+                    setVal('insights-history-state', v);
                 }
             }
             if (typeof loadInsightsOverview === 'function') loadInsightsOverview();
@@ -6628,6 +6780,9 @@
         }
         // Phase 14 — Insights Overview filters: category, severity,
         // AI toggle, history window.
+        // Phase 15 — additionally capture the history-deck state
+        // filter so a shared link / saved view restores both the card
+        // grid and the history deck slice.
         if (surface === 'intelligence' && subtab === 'overview') {
             const cat = document.querySelector('#insights-category-filter')?.value;
             if (cat) filters.category = cat;
@@ -6638,6 +6793,9 @@
             if (_insightsState.historyWindowDays
                     && _insightsState.historyWindowDays !== 30) {
                 filters.time_window_days = String(_insightsState.historyWindowDays);
+            }
+            if (_insightsState.historyState) {
+                filters.history_state = String(_insightsState.historyState);
             }
         }
         if (surface === 'events' || subtab === 'events') {

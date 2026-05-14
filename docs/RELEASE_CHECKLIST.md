@@ -107,6 +107,19 @@ Run from the project root with the venv active.
   - Dashboard markup carries the history deck container, the 7d/30d/90d pills, the state filter, the summary strip, the sparkline element, and the empty-state copy.
   - ``_captureCurrentViewPayload`` produces a payload with ``surface="intelligence"`` + ``subtab="overview"`` when the Overview sub-tab is active; ``_applyTargetFilter`` restores those filters.
 
+- [ ] **Insights export + shareable state regressions pass (Phase 15)**
+  ```bash
+  python -m pytest -q tests/unit/test_phase15_insights_export.py
+  ```
+  Must report all green. Covers:
+  - Navigation: ``history_state`` (with alias ``state``) is in ``_APPROVED_FILTERS[("intelligence", "overview")]``; ``validate_filters`` strips unknown keys; ``describe_view`` renders *New only* / *Escalated only*; ``encode_nav_hash`` ↔ ``decode_nav_hash`` round-trip the new filter without dropping it.
+  - ``POST /api/v1/intelligence/insights/export`` returns CSV with the fixed 17-column header row (``section,category,severity,state,title,summary,why_it_matters,recommended_action,affected_holdings,confidence,first_seen_at,last_seen_at,notified_at,deep_link_label,deep_link_surface,deep_link_subtab,source_type``) and an ``axion-insights-overview-YYYYMMDD-HHMMSS.csv`` filename.
+  - ``GET /api/v1/intelligence/insights/export.json`` returns the stable JSON envelope (``portfolio_id`` / ``generated_at`` / ``window_days`` / ``filters`` / ``summary`` / ``current_cards`` / ``history`` / ``daily_counts`` / ``grounding_status`` / ``warnings`` / ``coverage`` / ``last_generated_at``).
+  - Filters pass through: ``category`` / ``severity`` / ``history_state`` / ``days`` narrow both responses; portfolio isolation holds (a second portfolio's rows never appear).
+  - Privacy: neither response body contains ``GROUNDING CONTRACT`` / ``BEGIN PDF`` / ``api_key=`` / ``Bearer `` / ``ANTHROPIC_API_KEY`` / ``OPENAI_API_KEY`` / ``TELEGRAM_BOT_TOKEN`` / ``.axion.env``; the ``_safe_str`` scrubber maps any forbidden substring to ``[redacted]``.
+  - Dashboard markup carries ``insights-export-csv-btn``, ``insights-export-json-btn``, ``insights-copy-link-btn`` inside the ``#subtab-overview`` block; app.js exposes the API constants and wires each button; the copy-share helper routes through the existing Phase 9R ``_copyDeepLink``.
+  - Surface lock-in: ``_KNOWN_SURFACES`` is unchanged (Phase 15 added zero new surfaces).
+
 - [ ] **Insights notifications regressions pass**
   ```bash
   python -m pytest -q tests/unit/test_phase13_insight_notifications.py

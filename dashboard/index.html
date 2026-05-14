@@ -252,6 +252,18 @@
                                 <span id="insights-last-generated" class="text-xs text-muted insights-last-generated" hidden></span>
                                 <button id="insights-run-now-btn" class="btn btn-outline btn-sm" type="button" title="Run insight generation now (writes a snapshot, notifies new + escalated cards)">Run now</button>
                                 <button id="insights-refresh-btn" class="btn btn-ghost btn-sm" type="button">Refresh</button>
+                                <!--
+                                  Phase 15 — Export + Share toolbar.  Buttons
+                                  read the live filter state and call the new
+                                  /insights/export endpoints; the copy-share
+                                  button writes a deep link with the current
+                                  filter set to the clipboard.
+                                -->
+                                <span class="insights-export-toolbar" role="group" aria-label="Export and share">
+                                    <button id="insights-export-csv-btn" class="btn btn-ghost btn-sm" type="button" title="Download the current Insights Overview as a CSV (current cards + recent history transitions)">Export CSV</button>
+                                    <button id="insights-export-json-btn" class="btn btn-ghost btn-sm" type="button" title="Download the current Insights Overview as JSON">Export JSON</button>
+                                    <button id="insights-copy-link-btn" class="btn btn-ghost btn-sm" type="button" title="Copy a shareable link that restores the current Overview filters">Copy share link</button>
+                                </span>
                             </div>
                         </div>
                         <p class="text-sm text-muted" style="margin:0 0 0.6rem 0;line-height:1.5;max-width:780px;">

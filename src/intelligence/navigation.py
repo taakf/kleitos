@@ -124,6 +124,11 @@ _APPROVED_FILTERS: dict[tuple[str, str | None], frozenset[str]] = {
     # mirror the ``GET /api/v1/intelligence/insights`` query params
     # one-for-one so restoring a saved view is the same as opening
     # the bookmarked URL.
+    #
+    # Phase 15 — additionally accept the history deck's local state
+    # (``history_state`` with legacy alias ``state``) so the
+    # shareable hash carries the full Overview filter set the
+    # operator was looking at, not just the card-grid slice.
     ("intelligence", "overview"):   frozenset({
         "category",
         "severity",
@@ -131,6 +136,8 @@ _APPROVED_FILTERS: dict[tuple[str, str | None], frozenset[str]] = {
         "time_window",          # alias accepted at restore time
         "include_ai",
         "ai",                   # alias accepted at restore time
+        "history_state",
+        "state",                # alias accepted at restore time
     }),
 }
 
@@ -256,6 +263,21 @@ _FILTER_KEY_LABELS: dict[str, str] = {
     "time_window":     "Last N days",
     "include_ai":      "AI narration",
     "ai":              "AI narration",
+    # Phase 15 — Insights Overview history-deck state filter.
+    "history_state":   "History",
+    "state":           "History",
+}
+
+
+#: Phase 15 — friendly labels for the Insights history-deck state
+#: filter.  Maps the hash/payload value to the same wording the
+#: dashboard select offers.
+_INSIGHT_HISTORY_STATE_LABELS: dict[str, str] = {
+    "":           "All states",
+    "all":        "All states",
+    "new":        "New only",
+    "escalated":  "Escalated only",
+    "unchanged":  "Unchanged only",
 }
 
 
@@ -347,6 +369,16 @@ def describe_view(
                 truthy = str(fv).lower() in ("1", "true", "yes", "on")
                 if truthy:
                     label += " · AI narration on"
+                continue
+            if is_insights_overview and fk in ("history_state", "state"):
+                # Phase 15 — history deck state filter.  Render the
+                # full label so the saved view name matches what the
+                # operator selected in the dashboard.
+                state_label = _INSIGHT_HISTORY_STATE_LABELS.get(
+                    str(fv).lower(), str(fv),
+                )
+                if state_label and state_label.lower() not in ("all states", ""):
+                    label += f" · {state_label}"
                 continue
 
             if fk == "severity":

@@ -282,6 +282,16 @@ A second panel on **Insights → Overview** — *"What changed"* — reads the l
 
 Saved views now cover Insights Overview too: the **Save current view** button captures `category`, `severity`, `time_window_days`, and `include_ai` so a pin like *"Insights · Overview · Critical · Last 7 days"* restores into the same filters across sessions. Existing saved views for News, Alerts, Portfolio, Operator, Events, and Settings continue to work unchanged.
 
+### Insights export + shareable state (Phase 15)
+
+The Insights → Overview surface now ships an **Export + Share** toolbar next to *Run now* and *Refresh*:
+
+* **Export CSV** — `POST /api/v1/intelligence/insights/export` merges the live card grid and the *What changed* history transitions for the same window into one self-describing CSV. The header row is fixed (`section,category,severity,state,title,summary,why_it_matters,recommended_action,affected_holdings,confidence,first_seen_at,last_seen_at,notified_at,deep_link_label,deep_link_surface,deep_link_subtab,source_type`), and rows are tagged with `section=current` (live card) or `section=history` (snapshot transition).
+* **Export JSON** — `GET /api/v1/intelligence/insights/export.json` returns the same merged payload as a stable JSON document — useful for downstream tooling and audits.
+* **Copy share link** — writes a URL whose `#nav=` hash carries the full Overview filter set (category, severity, AI toggle, history window, history state). Teammates opening the link land on the same slice. The hash never carries API keys, OAuth tokens, AI prompt bodies, or uploaded document content — only the filter dimensions already approved in `_APPROVED_FILTERS[("intelligence", "overview")]`.
+
+The export endpoints are read-only: they reuse the same Phase 12 + Phase 14 builders the live surface uses, so no rows are written and no extra AI calls are issued. A small string scrubber replaces anything that looks like a prompt-body fingerprint (`GROUNDING CONTRACT`, `BEGIN PDF`, `Bearer …`, …) with `[redacted]` defensively — the row model is already customer-safe by construction.
+
 ### Insight notifications (Phase 13)
 
 The Insights → Overview surface drives a small notification layer:

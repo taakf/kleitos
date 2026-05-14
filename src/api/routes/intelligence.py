@@ -15,9 +15,13 @@ intelligence module so it stays unit-testable.
 
 from __future__ import annotations
 
+import csv
+import io
+from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import APIRouter, Depends, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_session
@@ -443,4 +447,455 @@ def _deep_link_for_card_key(
     return _safe_target(
         surface="intelligence", portfolio_id=portfolio_id,
         subtab="overview", label="Open in Insights",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 15 — Insights export (CSV + JSON)
+# ---------------------------------------------------------------------------
+#
+# Both endpoints stitch the current ``/insights`` cards and the
+# ``/insights/history`` transitions for the same window into a single
+# download.  They are deterministic-first and read-only — no
+# regeneration, no AI re-narration, no live prices.  Every field that
+# ships is already public on one of the existing GET endpoints; nothing
+# new is exposed.
+#
+# Privacy invariants (Phase 15E):
+#   * No API keys, OAuth tokens, Telegram tokens.
+#   * No AI prompt bodies.
+#   * No uploaded PDF / document content.
+#   * No ``.env`` contents.
+#   * No live market prices, no investment advice framing.
+# These are enforced structurally — only ``InsightCard`` /
+# ``InsightSnapshot`` fields are ever copied into the export, and both
+# models are customer-safe by construction.
+
+
+_INSIGHTS_EXPORT_CSV_COLUMNS: list[str] = [
+    "section",                # "current" | "history"
+    "category",
+    "severity",
+    "state",                  # current notification_state or history state
+    "title",
+    "summary",
+    "why_it_matters",
+    "recommended_action",
+    "affected_holdings",      # ; -joined ticker list
+    "confidence",
+    "first_seen_at",
+    "last_seen_at",
+    "notified_at",
+    "deep_link_label",
+    "deep_link_surface",
+    "deep_link_subtab",
+    "source_type",
+]
+
+
+# Substrings that must NEVER appear in an export response — they are the
+# fingerprints of upstream secrets / prompts / uploaded content.  The
+# scrubber is a belt-and-braces guard; export rows are built only from
+# customer-safe model fields, so the substring set is intentionally
+# conservative and the test gate enforces it on every export response.
+_INSIGHTS_EXPORT_FORBIDDEN_SUBSTRINGS: tuple[str, ...] = (
+    "GROUNDING CONTRACT",
+    "STRUCTURED DATA",
+    "ANTI-HALLUCINATION",
+    "PROMPT:",
+    "BEGIN PDF",
+    "END PDF",
+    "-----BEGIN",     # PEM / OpenSSL keys
+    "api_key=",
+    "apikey=",
+    "Bearer ",
+    "ANTHROPIC_API_KEY",
+    "OPENAI_API_KEY",
+    "FINNHUB_KEY",
+    "NEWSAPI_KEY",
+    "TELEGRAM_BOT_TOKEN",
+)
+
+
+def _safe_str(value: Any) -> str:
+    """Render ``value`` as a string for CSV / JSON export, stripping
+    anything that looks like a leaked secret or prompt body.
+
+    Strings that contain any forbidden substring are replaced with
+    ``"[redacted]"`` — defensive only; the upstream model never produces
+    them, but a future regression in the generator can't leak.
+    """
+    if value is None:
+        return ""
+    s = str(value)
+    for needle in _INSIGHTS_EXPORT_FORBIDDEN_SUBSTRINGS:
+        if needle in s:
+            return "[redacted]"
+    return s
+
+
+def _flatten_insight_card(card: dict[str, Any]) -> dict[str, Any]:
+    """Project an ``InsightCard.to_dict()`` payload into the flat row
+    shape used by the CSV / JSON export.
+
+    Only the fields named in ``_INSIGHTS_EXPORT_CSV_COLUMNS`` are
+    emitted, plus ``section="current"``.  Notification state is read
+    from ``data_gaps`` (Phase 13 stamps it there as
+    ``notification:<state>``); deep-link metadata is read from the
+    first entry in ``deep_links``.
+    """
+    state = ""
+    for tag in card.get("data_gaps") or ():
+        if isinstance(tag, str) and tag.startswith("notification:"):
+            state = tag.split(":", 1)[1]
+            break
+
+    dls = card.get("deep_links") or []
+    dl = dls[0] if dls else {}
+
+    holdings = card.get("affected_holdings") or []
+    holdings_joined = ";".join(_safe_str(h) for h in holdings if h)
+
+    return {
+        "section": "current",
+        "category": _safe_str(card.get("category")),
+        "severity": _safe_str(card.get("severity")),
+        "state": _safe_str(state),
+        "title": _safe_str(card.get("title")),
+        "summary": _safe_str(card.get("summary")),
+        "why_it_matters": _safe_str(card.get("why_it_matters")),
+        "recommended_action": _safe_str(card.get("recommended_action")),
+        "affected_holdings": holdings_joined,
+        "confidence": _safe_str(card.get("confidence")),
+        "first_seen_at": "",
+        "last_seen_at": _safe_str(card.get("created_at")),
+        "notified_at": "",
+        "deep_link_label": _safe_str(dl.get("label")) if isinstance(dl, dict) else "",
+        "deep_link_surface": _safe_str(dl.get("surface")) if isinstance(dl, dict) else "",
+        "deep_link_subtab": _safe_str(dl.get("subtab")) if isinstance(dl, dict) else "",
+        "source_type": _safe_str(card.get("source_type") or "deterministic"),
+    }
+
+
+def _flatten_history_row(row: dict[str, Any]) -> dict[str, Any]:
+    """Project a ``/insights/history`` item into the flat export row."""
+    dl = row.get("deep_link") or {}
+    return {
+        "section": "history",
+        "category": _safe_str(row.get("category")),
+        "severity": _safe_str(row.get("severity")),
+        "state": _safe_str(row.get("state")),
+        "title": _safe_str(row.get("title")),
+        "summary": "",
+        "why_it_matters": "",
+        "recommended_action": "",
+        "affected_holdings": "",
+        "confidence": "",
+        "first_seen_at": _safe_str(row.get("first_seen_at")),
+        "last_seen_at": _safe_str(row.get("last_seen_at")),
+        "notified_at": _safe_str(row.get("notified_at")),
+        "deep_link_label": _safe_str(dl.get("label")) if isinstance(dl, dict) else "",
+        "deep_link_surface": _safe_str(dl.get("surface")) if isinstance(dl, dict) else "",
+        "deep_link_subtab": _safe_str(dl.get("subtab")) if isinstance(dl, dict) else "",
+        "source_type": "snapshot",
+    }
+
+
+async def _gather_insights_export_payload(
+    session: AsyncSession,
+    *,
+    portfolio_id: str,
+    category: str | None,
+    severity: str | None,
+    days: int,
+    history_state: str | None,
+    include_ai: bool,
+    limit: int,
+) -> dict[str, Any]:
+    """Shared loader for both the CSV and JSON Insights export
+    endpoints.  Reuses the same Phase 12 + Phase 14 builders the live
+    surface uses so the export is always consistent with what the
+    operator just saw on screen.
+    """
+    response = await build_insights(
+        session,
+        portfolio_id=portfolio_id or "default",
+        limit=limit,
+        category=category,
+        severity=severity,
+        time_window_days=days,
+    )
+    response = await narrate_insights(response, include_ai=include_ai)
+    # Read-only notification-state stamp (no snapshot writes).
+    try:
+        outcome = await _peek_notification_state(session, response)
+        response = attach_notification_state(response, outcome)
+    except Exception as exc:  # pragma: no cover — defensive
+        import logging as _logging
+        _logging.getLogger(__name__).debug(
+            "insights export: notification_state stamp skipped: %r", exc,
+        )
+
+    current_payload = response.to_dict()
+    current_cards: list[dict[str, Any]] = list(
+        current_payload.get("insights") or []
+    )
+
+    # Inline call to the history endpoint logic so we don't duplicate
+    # the snapshot reader.  ``insights_history`` is an async function on
+    # this router; importing it would be circular, so we reuse the same
+    # SQLAlchemy reader directly here.
+    history_block = await _read_history_for_export(
+        session,
+        portfolio_id=portfolio_id or "default",
+        days=days,
+        category=category,
+        severity=severity,
+        state=history_state,
+        limit=200,
+    )
+
+    generated_at = datetime.now(timezone.utc).isoformat()
+    return {
+        "portfolio_id": portfolio_id or "default",
+        "generated_at": generated_at,
+        "window_days": days,
+        "filters": {
+            "category": category or "",
+            "severity": severity or "",
+            "history_state": history_state or "",
+            "include_ai": bool(include_ai),
+        },
+        "summary": history_block.get("summary") or {
+            "new": 0, "escalated": 0, "unchanged": 0, "total": 0,
+        },
+        "current_cards": current_cards,
+        "history": history_block.get("items") or [],
+        "daily_counts": history_block.get("daily_counts") or [],
+        "grounding_status": current_payload.get("grounding_status"),
+        "warnings": current_payload.get("warnings") or [],
+        "coverage": current_payload.get("coverage"),
+        "last_generated_at": current_payload.get("last_generated_at"),
+    }
+
+
+async def _read_history_for_export(
+    session: AsyncSession,
+    *,
+    portfolio_id: str,
+    days: int,
+    category: str | None,
+    severity: str | None,
+    state: str | None,
+    limit: int,
+) -> dict[str, Any]:
+    """Mirror of :func:`insights_history` returning the dict payload
+    without going through HTTP.  Kept local so export logic doesn't
+    couple to the route handler signature."""
+    from datetime import timedelta as _td
+    from sqlalchemy import select as _select
+
+    from src.database.models import InsightSnapshot
+    from src.intelligence.insights.fingerprint import severity_rank
+
+    now = datetime.now(timezone.utc)
+    cutoff = now - _td(days=days)
+    cutoff_iso = cutoff.isoformat()
+
+    conds: list[Any] = [
+        InsightSnapshot.portfolio_id == portfolio_id,
+        InsightSnapshot.last_seen_at >= cutoff_iso,
+    ]
+    if category:
+        conds.append(InsightSnapshot.category == category)
+    if severity:
+        conds.append(InsightSnapshot.severity == severity.lower())
+    if state and state.lower() in ("new", "escalated", "unchanged"):
+        conds.append(InsightSnapshot.status == state.lower())
+
+    stmt = _select(InsightSnapshot)
+    for c in conds:
+        stmt = stmt.where(c)
+    stmt = stmt.order_by(InsightSnapshot.last_seen_at.desc()).limit(limit)
+    try:
+        rows = (await session.execute(stmt)).scalars().all()
+    except Exception:  # pragma: no cover — defensive
+        rows = []
+
+    items: list[dict[str, Any]] = []
+    for r in rows:
+        deep_link = _deep_link_for_card_key(
+            r.card_key, r.category, portfolio_id,
+        )
+        items.append({
+            "card_key": r.card_key,
+            "category": r.category,
+            "severity": r.severity,
+            "severity_rank": severity_rank(r.severity),
+            "title": r.title,
+            "state": r.status,
+            "first_seen_at": r.first_seen_at,
+            "last_seen_at": r.last_seen_at,
+            "notified_at": r.notified_at,
+            "notified_severity": r.notified_severity,
+            "deep_link": deep_link.to_dict() if deep_link is not None else None,
+        })
+
+    bucket_by_date: dict[str, dict[str, int]] = {}
+    for d_offset in range(days):
+        day = (cutoff + _td(days=d_offset + 1)).date().isoformat()
+        bucket_by_date[day] = {
+            "new": 0, "escalated": 0, "unchanged": 0, "total": 0,
+        }
+    daily_stmt = _select(
+        InsightSnapshot.status,
+        InsightSnapshot.last_seen_at,
+    )
+    for c in conds:
+        daily_stmt = daily_stmt.where(c)
+    try:
+        daily_rows = (await session.execute(daily_stmt)).all()
+    except Exception:  # pragma: no cover — defensive
+        daily_rows = []
+    for st, ts in daily_rows:
+        try:
+            day = ts[:10]
+        except (TypeError, IndexError):
+            continue
+        if day not in bucket_by_date:
+            bucket_by_date[day] = {
+                "new": 0, "escalated": 0, "unchanged": 0, "total": 0,
+            }
+        bucket = bucket_by_date[day]
+        k = st if st in ("new", "escalated", "unchanged") else None
+        if k is not None:
+            bucket[k] += 1
+        bucket["total"] += 1
+    daily_counts = [
+        {"date": day, **counts}
+        for day, counts in sorted(bucket_by_date.items())
+    ]
+    summary = {
+        "new":        sum(b["new"]        for b in bucket_by_date.values()),
+        "escalated":  sum(b["escalated"]  for b in bucket_by_date.values()),
+        "unchanged":  sum(b["unchanged"]  for b in bucket_by_date.values()),
+        "total":      sum(b["total"]      for b in bucket_by_date.values()),
+    }
+    return {
+        "items": items,
+        "daily_counts": daily_counts,
+        "summary": summary,
+    }
+
+
+def _insights_export_filename(suffix: str) -> str:
+    """Deterministic filename:
+    ``axion-insights-overview-YYYYMMDD-HHMMSS.<suffix>``"""
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    return f"axion-insights-overview-{stamp}.{suffix}"
+
+
+def _insights_export_to_csv(payload: dict[str, Any]) -> str:
+    """Serialise the merged current + history payload into CSV text.
+
+    Order: a single header row (``_INSIGHTS_EXPORT_CSV_COLUMNS``), then
+    every current card, then every history transition.  The CSV is
+    self-describing — no extra metadata rows so downstream tools (Excel,
+    pandas) can ingest it without skip-rows.
+    """
+    buf = io.StringIO()
+    writer = csv.DictWriter(
+        buf, fieldnames=_INSIGHTS_EXPORT_CSV_COLUMNS,
+        extrasaction="ignore", lineterminator="\n",
+    )
+    writer.writeheader()
+    for card in payload.get("current_cards") or ():
+        writer.writerow(_flatten_insight_card(card))
+    for row in payload.get("history") or ():
+        writer.writerow(_flatten_history_row(row))
+    return buf.getvalue()
+
+
+@router.post("/insights/export")
+async def insights_export_csv(
+    portfolio_id: str = Query("default"),
+    category: str | None = Query(None),
+    severity: str | None = Query(None),
+    days: int = Query(30, ge=1, le=365),
+    history_state: str | None = Query(
+        None, description="all | new | escalated | unchanged",
+    ),
+    include_ai: bool = Query(False),
+    limit: int = Query(60, ge=1, le=200),
+    session: AsyncSession = Depends(get_session),
+):
+    """Phase 15 — CSV download merging current Insights cards and recent
+    history transitions for the same portfolio.
+
+    The endpoint is POST so it shows up cleanly in browser DevTools as a
+    deliberate user action (some browsers cache GET-driven downloads
+    aggressively); the underlying read is still read-only — no rows are
+    written.
+    """
+    payload = await _gather_insights_export_payload(
+        session,
+        portfolio_id=portfolio_id or "default",
+        category=category,
+        severity=severity,
+        days=days,
+        history_state=history_state,
+        include_ai=include_ai,
+        limit=limit,
+    )
+    csv_text = _insights_export_to_csv(payload)
+    filename = _insights_export_filename("csv")
+    return StreamingResponse(
+        iter([csv_text]),
+        media_type="text/csv; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "X-Axion-Export-Type": "insights-overview-csv",
+        },
+    )
+
+
+@router.get("/insights/export.json")
+async def insights_export_json(
+    portfolio_id: str = Query("default"),
+    category: str | None = Query(None),
+    severity: str | None = Query(None),
+    days: int = Query(30, ge=1, le=365),
+    history_state: str | None = Query(None),
+    include_ai: bool = Query(False),
+    limit: int = Query(60, ge=1, le=200),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Phase 15 — JSON twin of the CSV export.
+
+    Stable, self-describing payload with::
+
+        {
+          "portfolio_id":  ...,
+          "generated_at":  ISO-8601 UTC,
+          "window_days":   <int>,
+          "filters":       {category, severity, history_state, include_ai},
+          "summary":       {new, escalated, unchanged, total},
+          "current_cards": [<InsightCard.to_dict()>, ...],
+          "history":       [<history-row>, ...],
+          "daily_counts":  [{date, new, escalated, unchanged, total}, ...],
+          "grounding_status": ...,
+          "warnings":      [...],
+          "coverage":      <InsightsCoverage>,
+          "last_generated_at": ISO-8601 | null,
+        }
+    """
+    return await _gather_insights_export_payload(
+        session,
+        portfolio_id=portfolio_id or "default",
+        category=category,
+        severity=severity,
+        days=days,
+        history_state=history_state,
+        include_ai=include_ai,
+        limit=limit,
     )

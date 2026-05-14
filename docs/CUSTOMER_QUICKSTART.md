@@ -102,6 +102,12 @@ The first sub-tab under **Insights** is the Phase 12 Overview. It surfaces a ran
 * List of recent transitions with deep links to the surface that explains each card.
 * **Save current view** now pins your Insights Overview filters (category, severity, time window, AI toggle) so you can return to the same slice with one click.
 
+**Phase 15** adds an Export + Share toolbar to the same surface:
+
+* **Export CSV** downloads the current cards *and* the recent history transitions for the same window as a single self-describing CSV — `axion-insights-overview-YYYYMMDD-HHMMSS.csv`. The header row pins one column per field (section / category / severity / state / title / summary / why_it_matters / recommended_action / affected_holdings / confidence / first_seen_at / last_seen_at / notified_at / deep_link_label / deep_link_surface / deep_link_subtab / source_type) so Excel and pandas can ingest it without skip-rows.
+* **Export JSON** returns the same merged payload in a stable JSON shape — handy for downstream tooling.
+* **Copy share link** writes a URL whose hash encodes the full Overview filter set (category, severity, AI toggle, history window, history state) so a teammate opening the link lands on the same slice. The hash never carries API keys, AI prompt bodies, or uploaded document content.
+
 ### Reading the Exposures cards
 
 The Portfolio → Exposures tab now shows **Listing country** (instrument-listing exposure derived from ISIN/venue) and a separate **Revenue geography** card. Revenue geography is populated only when you upload a CSV via the card's *Import CSV* button — Axion never infers where a company earns money from where its shares are listed. CSV columns: `region`, `revenue_share`, plus at least one of `ticker` / `isin`. `revenue_share` accepts `0.45`, `45`, or `45%`. Holdings you haven't uploaded for show up in a "Holdings without revenue breakdowns" panel so the gap is visible at a glance.
