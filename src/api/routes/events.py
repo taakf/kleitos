@@ -23,12 +23,13 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_session
@@ -41,12 +42,80 @@ from src.database.models import (
     MacroFactorEvent as MacroFactorEventModel,
     Source,
 )
-from src.intelligence.chains import NormalizedChain, build_chain_for_link
+from src.intelligence.chains import build_chain_for_link
 from src.intelligence.factors.taxonomy import get_factor as get_factor_definition
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/events", tags=["events"])
+
+
+# ---------------------------------------------------------------------------
+# Phase 8 — defence-in-depth URL scrubbing
+#
+# Source `url` strings come from upstream RSS/API article bodies; in
+# practice they never contain *our* API keys (we send the key in the
+# request, not the response). But a defensive pass before returning a
+# URL to a customer surface costs nothing and protects against:
+#   - a future YAML that points a parser at a URL with a key in the
+#     query string,
+#   - a future parser that copies a redirect URL containing a token.
+# ---------------------------------------------------------------------------
+
+_URL_KEY_PARAM = re.compile(
+    r"(?P<sep>[?&])(?P<name>(?:api[_-]?)?key|token|access[_-]?token|auth(?:orization)?|secret)"
+    r"=(?P<value>[^&\s#]+)",
+    re.IGNORECASE,
+)
+
+
+def _scrub_url(url: str | None) -> str | None:
+    """Return ``url`` with any ``key=…``/``token=…`` style param masked.
+
+    Idempotent and safe for innocent URLs (no-op when there's nothing
+    that looks like a secret parameter).
+    """
+    if not url:
+        return url
+    return _URL_KEY_PARAM.sub(
+        lambda m: f"{m.group('sep')}{m.group('name')}=***",
+        url,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 8 — confidence ladder for confidence_min filter.
+#
+# The DB column is a string ("unscored", "low", "medium", "high",
+# "critical"). We map it to an ordinal so the filter has a meaningful
+# >= comparison without changing the schema.
+# ---------------------------------------------------------------------------
+
+_CONFIDENCE_ORDER = {
+    "unscored": 0,
+    "low": 1,
+    "medium": 2,
+    "high": 3,
+    "critical": 4,
+}
+
+_MATERIALITY_ORDER = {
+    "unscored": 0,
+    "immaterial": 1,
+    "watch": 2,
+    "important": 3,
+    "high": 3,
+    "critical": 4,
+}
+
+
+def _at_or_above(ladder: dict[str, int], value: str) -> list[str]:
+    """Return the list of ladder labels >= ``value``."""
+    v = (value or "").lower().strip()
+    threshold = ladder.get(v)
+    if threshold is None:
+        return []
+    return [label for label, rank in ladder.items() if rank >= threshold]
 
 
 # ---------------------------------------------------------------------------
@@ -217,7 +286,7 @@ def _row_to_event(
         id=ev.id,
         title=ev.title,
         summary=ev.summary,
-        url=ev.url,
+        url=_scrub_url(ev.url),
         event_type=ev.event_type,
         materiality=ev.materiality,
         confidence=ev.confidence,
@@ -313,45 +382,123 @@ def _summarize_note(note: AnalysisNoteModel) -> str:
 # ---------------------------------------------------------------------------
 # Routes
 # ---------------------------------------------------------------------------
-@router.get("", response_model=list[EventResponse])
+class EventListEnvelope(BaseModel):
+    """Wrapped list response used by ``GET /events?envelope=true``.
+
+    Phase 8 — the default list shape stays a bare ``list[EventResponse]``
+    for backward compat.  Callers that want pagination metadata in the
+    body (instead of in ``X-Total-Count`` / ``X-Has-More`` headers) can
+    opt into this envelope by passing ``envelope=true``.
+    """
+
+    items: list[EventResponse]
+    total: int
+    limit: int
+    offset: int
+    has_more: bool
+
+
+@router.get("", response_model=None)
 async def list_events(
+    response: Response,
+    q: str | None = Query(None, description="Search query (title + summary, case-insensitive)"),
     ticker: str | None = Query(None, description="Filter by ticker (via event links)"),
-    event_type: str | None = Query(None, description="Filter by event type"),
-    materiality: str | None = Query(None, description="Filter by materiality level"),
+    holding_id: str | None = Query(None, description="Filter by holding_id (via event links)"),
+    source_id: str | None = Query(None, description="Filter by Source.id"),
+    factor_key: str | None = Query(None, description="Filter to events classified with this factor key"),
+    linked_only: bool = Query(False, description="Only events with at least one EventLink"),
+    event_type: str | None = Query(None, description="Filter by exact event type"),
+    materiality: str | None = Query(None, description="Filter by exact materiality"),
+    materiality_min: str | None = Query(None, description="Filter to materiality at or above this rung"),
+    confidence_min: str | None = Query(None, description="Filter to confidence at or above this rung"),
     date_from: datetime | None = Query(None, description="Start of date range (published_at)"),
     date_to: datetime | None = Query(None, description="End of date range (published_at)"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
+    envelope: bool = Query(False, description="Wrap in {items,total,limit,offset,has_more} envelope"),
     session: AsyncSession = Depends(get_session),
-) -> list[EventResponse]:
+) -> Any:
     """List events with optional filters.
 
-    Phase 9B adds ``factor_tags`` and ``linked_ticker_count`` to each
-    row so the dashboard can render factor badges without a second
-    request per row.
+    Phase 8 adds:
+
+    * Free-text search across ``title`` + ``summary`` via ``q``
+    * ``source_id`` / ``holding_id`` filters
+    * ``factor_key`` to filter to events classified with a factor
+    * ``linked_only`` to drop events that haven't linked to any holding
+    * ``confidence_min`` / ``materiality_min`` string-ladder filters
+    * ``X-Total-Count`` and ``X-Has-More`` response headers (always set)
+    * Optional ``?envelope=true`` mode returning
+      ``{items, total, limit, offset, has_more}`` so the UI can render
+      pagination without a HEAD pre-flight.
+
+    Phase 9B fields (``factor_tags``, ``linked_ticker_count``) are
+    populated for each row so the dashboard can render factor badges
+    without a second request per row.
     """
+    # ---------- Build WHERE clause as a list of conditions ----------
+    conditions: list[Any] = []
+
+    if q:
+        pattern = f"%{q.strip()}%"
+        conditions.append(
+            (EventModel.title.ilike(pattern)) | (EventModel.summary.ilike(pattern))
+        )
+
+    if ticker or holding_id:
+        link_sub = (
+            select(EventLinkModel.event_id)
+            .join(HoldingModel, EventLinkModel.link_target == HoldingModel.id)
+        )
+        if ticker:
+            link_sub = link_sub.where(HoldingModel.ticker == ticker.upper())
+        if holding_id:
+            link_sub = link_sub.where(HoldingModel.id == holding_id)
+        conditions.append(EventModel.id.in_(link_sub))
+
+    if source_id:
+        conditions.append(EventModel.source_id == source_id)
+
+    if factor_key:
+        factor_sub = select(MacroFactorEventModel.event_id).where(
+            MacroFactorEventModel.factor == factor_key
+        )
+        conditions.append(EventModel.id.in_(factor_sub))
+
+    if linked_only:
+        linked_sub = select(EventLinkModel.event_id).distinct()
+        conditions.append(EventModel.id.in_(linked_sub))
+
+    if event_type:
+        conditions.append(EventModel.event_type == event_type)
+    if materiality:
+        conditions.append(EventModel.materiality == materiality)
+    if materiality_min:
+        allowed = _at_or_above(_MATERIALITY_ORDER, materiality_min)
+        if allowed:
+            conditions.append(EventModel.materiality.in_(allowed))
+    if confidence_min:
+        allowed_conf = _at_or_above(_CONFIDENCE_ORDER, confidence_min)
+        if allowed_conf:
+            conditions.append(EventModel.confidence.in_(allowed_conf))
+    if date_from:
+        conditions.append(EventModel.published_at >= date_from.isoformat())
+    if date_to:
+        conditions.append(EventModel.published_at <= date_to.isoformat())
+
+    # ---------- COUNT for pagination metadata ----------
+    count_stmt = select(func.count()).select_from(EventModel)
+    for cond in conditions:
+        count_stmt = count_stmt.where(cond)
+    total = int((await session.execute(count_stmt)).scalar_one() or 0)
+
+    # ---------- Page query ----------
     stmt = (
         select(EventModel, Source.name.label("source_name"))
         .outerjoin(Source, EventModel.source_id == Source.id)
     )
-
-    if ticker:
-        ticker_subq = (
-            select(EventLinkModel.event_id)
-            .join(HoldingModel, EventLinkModel.link_target == HoldingModel.id)
-            .where(HoldingModel.ticker == ticker.upper())
-        )
-        stmt = stmt.where(EventModel.id.in_(ticker_subq))
-
-    if event_type:
-        stmt = stmt.where(EventModel.event_type == event_type)
-    if materiality:
-        stmt = stmt.where(EventModel.materiality == materiality)
-    if date_from:
-        stmt = stmt.where(EventModel.published_at >= date_from.isoformat())
-    if date_to:
-        stmt = stmt.where(EventModel.published_at <= date_to.isoformat())
-
+    for cond in conditions:
+        stmt = stmt.where(cond)
     stmt = stmt.order_by(EventModel.fetched_at.desc()).limit(limit).offset(offset)
 
     rows = (await session.execute(stmt)).all()
@@ -361,7 +508,7 @@ async def list_events(
     factor_tags_map = await _load_factor_tags_for_events(session, event_ids)
     ticker_counts = await _load_linked_ticker_counts(session, event_ids)
 
-    return [
+    items = [
         _row_to_event(
             ev,
             src_name,
@@ -370,6 +517,24 @@ async def list_events(
         )
         for ev, src_name in events
     ]
+
+    has_more = (offset + len(items)) < total
+
+    # Always set the pagination headers — the bare-list shape stays
+    # unchanged for back-compat, but the headers let the UI render
+    # totals without an extra round-trip.
+    response.headers["X-Total-Count"] = str(total)
+    response.headers["X-Has-More"] = "true" if has_more else "false"
+
+    if envelope:
+        return EventListEnvelope(
+            items=items,
+            total=total,
+            limit=limit,
+            offset=offset,
+            has_more=has_more,
+        )
+    return items
 
 
 @router.get("/recent", response_model=list[EventResponse])
@@ -650,7 +815,7 @@ async def get_event(
         id=ev.id,
         title=ev.title,
         summary=ev.summary,
-        url=ev.url,
+        url=_scrub_url(ev.url),
         event_type=ev.event_type,
         materiality=ev.materiality,
         confidence=ev.confidence,

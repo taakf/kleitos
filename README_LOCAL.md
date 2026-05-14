@@ -105,6 +105,23 @@ Once the env var is set in `~/.axion.env` and you restart Axion, enable the sour
 
 **ATHEX corporate-events calendar** is **not** part of this build — see [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md).
 
+### Working with the News tab
+
+The **Insights → News** tab is the inspection surface for everything the collectors pulled in. Each row carries traceability chips so you can tell at a glance how Axion connected the story to your portfolio:
+
+- **Linked** — the story matched at least one of your holdings (direct ticker hit or factor channel).
+- **Macro signal** — the macro-factor classifier flagged it with a deterministic factor (interest rates, oil, FX, etc.). Click the row to see the chain.
+
+The filter bar above the table works server-side:
+
+- **Search** debounces and queries the backend across title + summary.
+- **Source / Type / Factor / Materiality** narrow the slice. Materiality is a **≥** filter (picking "High & above" includes High and Critical).
+- **24h / 7d / 30d / All** pills set the published-at window.
+- **Linked holdings only** drops everything that didn't match a holding — useful when you want only the items that affect what you own.
+- **Reset** clears every filter back to default.
+
+Saved Views capture the full filter shape, so a saved "News · Linked only · Macro signal" view restores into the exact same slice next time. URLs are scrubbed of `apiKey=` / `token=` / `Bearer …` style secrets before they ever reach the dashboard.
+
 ## AI features (optional)
 
 Axion's core (portfolio management, exposures, alerts, source collection, deterministic risk rules) runs without any AI provider.

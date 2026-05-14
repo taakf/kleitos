@@ -60,9 +60,13 @@ http://localhost:7777/dashboard
 
 ### 3. News + Causal Chains (3 min)
 - Click **Insights → News**
+- Type "fed" in the search box — "**Server-side, debounced** — Source/Type/Factor/Materiality filters narrow the slice the same way."
+- Toggle **Linked holdings only** — "Now we're looking at just the news that hit our book."
+- Point at a row's **Linked** and **Macro signal** chips — "Two glanceable trust signals: did this story match a holding, and did the deterministic factor classifier tag it?"
 - Open a Fed/ECB news item → **detail modal** with factor tags, causal chains, affected holdings
 - Show the **"Why Axion flagged this"** block
 - Click a grounded evidence chip → deep-link jumps to the relevant surface
+- Click **Reset** in the filter bar to clear back to the full feed
 
 ### 4. Alerts + Filtering (2 min)
 - Click **Alerts tab**

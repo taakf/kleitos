@@ -163,18 +163,42 @@ async def _call_get_event(event_id: str):
         return await get_event(event_id, session=session)
 
 
-async def _call_list_events():
+async def _call_list_events(**overrides):
+    """Call the Phase 8-shaped list_events with explicit defaults.
+
+    The route signature uses ``Query()`` sentinels that only resolve
+    during real HTTP dispatch, plus a FastAPI-injected ``Response`` —
+    so for direct unit/integration calls we instantiate one ourselves
+    and override only the parameters the test cares about.
+    """
+    from fastapi import Response
     from src.api.routes.events import list_events
     from src.database.connection import get_session_factory
 
     factory = get_session_factory()
     async with factory() as session:
-        # Pass explicit defaults — the route signature uses Query()
-        # sentinels which only resolve during real HTTP dispatch.
+        kwargs: dict = dict(
+            q=None,
+            ticker=None,
+            holding_id=None,
+            source_id=None,
+            factor_key=None,
+            linked_only=False,
+            event_type=None,
+            materiality=None,
+            materiality_min=None,
+            confidence_min=None,
+            date_from=None,
+            date_to=None,
+            limit=50,
+            offset=0,
+            envelope=False,
+        )
+        kwargs.update(overrides)
         return await list_events(
-            ticker=None, event_type=None, materiality=None,
-            date_from=None, date_to=None, limit=50, offset=0,
+            response=Response(),
             session=session,
+            **kwargs,
         )
 
 
@@ -452,6 +476,72 @@ class TestEventListAPI:
         orchard = next((r for r in rows if "orchard" in r.title), None)
         assert orchard is not None
         assert orchard.factor_tags == []
+
+    # ----- Phase 8 — filter behaviour against the same seeded DB ------
+
+    async def test_phase8_q_filters_title(self, seeded):
+        """Free-text ``q`` filters across title + summary."""
+        await _run_link_event({
+            "title": "Federal Reserve raises interest rates by 50 bps",
+            "summary": "FOMC cited persistent inflation.",
+        })
+        await _run_link_event({
+            "title": "AAPL reports record earnings",
+            "summary": "Apple beat estimates.",
+        })
+        fed_only = await _call_list_events(q="Federal")
+        titles = {r.title for r in fed_only}
+        assert any("Federal Reserve" in t for t in titles)
+        assert not any("AAPL reports" in t for t in titles)
+
+    async def test_phase8_linked_only_filter(self, seeded):
+        """``linked_only=True`` drops events without an EventLink."""
+        # Direct-match (ticker_match) link emitted for AAPL.
+        await _run_link_event({
+            "title": "AAPL reports record earnings",
+            "summary": "Apple beat estimates.",
+        })
+        rows = await _call_list_events(linked_only=True)
+        titles = {r.title for r in rows}
+        assert any("AAPL reports" in t for t in titles)
+        for r in rows:
+            assert r.linked_ticker_count > 0, (
+                f"linked_only=True returned an unlinked row: {r.title}"
+            )
+
+    async def test_phase8_factor_key_filter(self, seeded):
+        """``factor_key=interest_rate`` keeps only events classified
+        with that factor."""
+        await _run_link_event({
+            "title": "Federal Reserve raises interest rates by 50 bps",
+            "summary": "FOMC cited persistent inflation.",
+        })
+        await _run_link_event({
+            "title": "Apple orchard destroyed by frost",
+            "summary": "Local fruit growers report severe losses.",
+        })
+        rows = await _call_list_events(factor_key="interest_rate")
+        titles = {r.title for r in rows}
+        assert any("Federal Reserve" in t for t in titles)
+        assert not any("orchard" in t for t in titles)
+
+    async def test_phase8_envelope_returns_metadata(self, seeded):
+        """When envelope=True the route returns the wrapped Pydantic
+        ``EventListEnvelope`` instead of a bare list."""
+        await _run_link_event({
+            "title": "Federal Reserve raises interest rates by 50 bps",
+            "summary": "FOMC cited persistent inflation.",
+        })
+        env = await _call_list_events(envelope=True, limit=1)
+        # ``EventListEnvelope`` model
+        assert hasattr(env, "items")
+        assert hasattr(env, "total")
+        assert hasattr(env, "has_more")
+        assert env.limit == 1
+        assert env.offset == 0
+        assert env.total >= 1
+        if env.total > 1:
+            assert env.has_more is True
 
 
 # ---------------------------------------------------------------------------

@@ -142,6 +142,44 @@
                             <h2>News</h2>
                             <div class="tab-actions">
                                 <input type="search" id="events-search" class="input search-input" placeholder="Search news...">
+                                <button id="events-filter-reset" class="btn btn-ghost btn-sm" type="button" title="Clear all filters">Reset</button>
+                            </div>
+                        </div>
+                        <div class="card events-filter-card">
+                            <div class="events-filter-bar" role="group" aria-label="News filters">
+                                <select id="events-filter-source" class="select-input" aria-label="Source"><option value="">All sources</option></select>
+                                <select id="events-filter-type" class="select-input" aria-label="Type">
+                                    <option value="">All types</option>
+                                    <option value="earnings">Earnings</option>
+                                    <option value="dividend">Dividend</option>
+                                    <option value="analyst_action">Analyst action</option>
+                                    <option value="regulatory">Regulatory</option>
+                                    <option value="macro">Macro</option>
+                                    <option value="geopolitical">Geopolitical</option>
+                                    <option value="ma">M&amp;A</option>
+                                    <option value="management">Management</option>
+                                    <option value="supply_chain">Supply chain</option>
+                                    <option value="litigation">Litigation</option>
+                                    <option value="news">News (general)</option>
+                                </select>
+                                <select id="events-filter-factor" class="select-input" aria-label="Factor"><option value="">All factors</option></select>
+                                <select id="events-filter-materiality" class="select-input" aria-label="Materiality minimum">
+                                    <option value="">Any materiality</option>
+                                    <option value="watch">Watch &amp; above</option>
+                                    <option value="important">Important &amp; above</option>
+                                    <option value="high">High &amp; above</option>
+                                    <option value="critical">Critical only</option>
+                                </select>
+                                <div class="events-range-pills" role="group" aria-label="Time range">
+                                    <button type="button" class="events-range-pill" data-range="24h">24h</button>
+                                    <button type="button" class="events-range-pill" data-range="7d">7d</button>
+                                    <button type="button" class="events-range-pill" data-range="30d">30d</button>
+                                    <button type="button" class="events-range-pill active" data-range="">All</button>
+                                </div>
+                                <label class="events-filter-toggle">
+                                    <input type="checkbox" id="events-filter-linked"> Linked holdings only
+                                </label>
+                                <span id="events-filter-status" class="text-sm text-muted" aria-live="polite"></span>
                             </div>
                         </div>
                         <div class="card">

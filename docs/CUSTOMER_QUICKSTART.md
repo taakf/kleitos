@@ -83,6 +83,10 @@ For PDFs and scanned documents, see "AI features" below.
 | **Assistant** | Conversational queries (requires AI provider — disabled otherwise) |
 | **Settings** | API keys, provider selection, source health |
 
+### Filtering the News tab
+
+Above the table you'll see a filter bar with **Search**, **Source**, **Type**, **Factor**, **Materiality**, **24h / 7d / 30d / All** range pills, and a **Linked holdings only** toggle. Search is debounced and queries the backend; the other controls take effect immediately. The **Reset** button clears every filter. Each row carries small chips: **Linked** when the story matched a holding, **Macro signal** when the deterministic factor classifier tagged it. Click any row to open the news-item modal with the why-it-matters narrative, affected holdings, causal chains, and any related analyses or alerts.
+
 ## 5. (Optional) Configure an AI provider
 
 The core platform runs without AI. If you want LLM-enhanced impact scoring, narrative digests, AI vision PDF extraction, and the conversational Assistant tab:

@@ -32,3 +32,12 @@ Yes. The unified inbox aggregates alerts, digests, operator actions, and high-pr
 
 **What happens after deployment?**
 Connect an AI key (Anthropic, OpenAI / ChatGPT, or Google Gemini) to unlock the optional AI features. Configure Telegram for mobile delivery if you want push notifications. Add custom news sources. Set up additional portfolios. The platform is ready for use whether you add AI or not.
+
+**How do I find a specific news item?**
+Go to **Insights → News**. The filter bar above the table is server-side: search (debounced) queries title + summary; Source / Type / Factor / Materiality narrow the slice; the 24h / 7d / 30d pills set the published-at window; **Linked holdings only** drops everything that didn't match a holding; **Reset** clears all filters. Save the configuration as a Saved View when you want to come back to the same slice — restoring re-applies every filter.
+
+**What do the chips on a news row mean?**
+**Linked** means the story matched at least one of your holdings (direct ticker hit or factor channel). **Macro signal** means the deterministic factor classifier tagged it (interest rate, oil, FX, etc.) — clicking the row opens the news-item modal with the chain. The chips never mean "AI said so": they reflect deterministic rule outputs.
+
+**Are source URLs safe to click?**
+Yes. Before any URL is shown in the UI or written to the support bundle, `apiKey=`, `api_key=`, `token=`, `Bearer …`, and similar parameters are replaced with `***`. The original key (if any) never leaves the local backend.

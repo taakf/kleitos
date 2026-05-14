@@ -1502,20 +1502,142 @@
     });
 
     // ================================================================
-    // Events Tab
+    // Events Tab — Phase 8 hardened News surface
     // ================================================================
+    //
+    // The News tab now drives filters through the backend instead of
+    // a client-side title-substring filter.  State lives in
+    // ``_eventsFilterState`` and is mirrored into the saved-view
+    // payload so a saved News view restores into the same filter
+    // configuration.
+    // ----------------------------------------------------------------
+
     let allEvents = [];
+
+    const _eventsFilterState = {
+        q: '',
+        source_id: '',
+        event_type: '',
+        factor_key: '',
+        materiality_min: '',
+        range: '',           // '24h' | '7d' | '30d' | '' (= all)
+        linked_only: false,
+    };
+
+    let _eventsTotal = 0;
+    let _eventsHasMore = false;
+    let _eventsFiltersInitialized = false;
+
+    function _eventsRangeToFrom(range) {
+        if (!range) return '';
+        const now = new Date();
+        const hours = range === '24h' ? 24 : range === '7d' ? 24 * 7 : range === '30d' ? 24 * 30 : 0;
+        if (!hours) return '';
+        const cutoff = new Date(now.getTime() - hours * 3600 * 1000);
+        return cutoff.toISOString();
+    }
+
+    function _eventsBuildQuery() {
+        const params = new URLSearchParams();
+        if (_eventsFilterState.q) params.set('q', _eventsFilterState.q);
+        if (_eventsFilterState.source_id) params.set('source_id', _eventsFilterState.source_id);
+        if (_eventsFilterState.event_type) params.set('event_type', _eventsFilterState.event_type);
+        if (_eventsFilterState.factor_key) params.set('factor_key', _eventsFilterState.factor_key);
+        if (_eventsFilterState.materiality_min) {
+            params.set('materiality_min', _eventsFilterState.materiality_min);
+        }
+        if (_eventsFilterState.linked_only) params.set('linked_only', 'true');
+        const dateFrom = _eventsRangeToFrom(_eventsFilterState.range);
+        if (dateFrom) params.set('date_from', dateFrom);
+        params.set('limit', '100');
+        params.set('envelope', 'true');
+        return params.toString();
+    }
+
+    function _eventsAnyFilterActive() {
+        const s = _eventsFilterState;
+        return Boolean(
+            s.q || s.source_id || s.event_type || s.factor_key
+            || s.materiality_min || s.linked_only || s.range
+        );
+    }
+
+    function _eventsUpdateStatus(shownCount) {
+        const el = document.getElementById('events-filter-status');
+        if (!el) return;
+        if (_eventsTotal <= 0) {
+            el.textContent = _eventsAnyFilterActive() ? 'No matches' : '';
+            return;
+        }
+        const more = _eventsHasMore ? ` of ${_eventsTotal}` : '';
+        el.textContent = `Showing ${shownCount}${more}`;
+    }
+
+    async function _eventsPopulateSourceOptions() {
+        const sel = document.getElementById('events-filter-source');
+        if (!sel || sel.dataset.populated === '1') return;
+        try {
+            const data = await fetchJSON(API.sources).catch(() => []);
+            const list = ensureArray(data, 'items', 'sources');
+            if (!Array.isArray(list) || !list.length) return;
+            const opts = list
+                .filter(s => s && s.id && s.name)
+                .map(s => `<option value="${esc(s.id)}">${esc(s.name)}</option>`)
+                .join('');
+            sel.insertAdjacentHTML('beforeend', opts);
+            sel.dataset.populated = '1';
+        } catch (_) { /* selector stays empty; non-fatal */ }
+    }
+
+    async function _eventsPopulateFactorOptions() {
+        const sel = document.getElementById('events-filter-factor');
+        if (!sel || sel.dataset.populated === '1') return;
+        try {
+            const data = await fetchJSON(API.opFactorTaxonomy).catch(() => null);
+            const list = ensureArray(data, 'items', 'factors');
+            if (!Array.isArray(list) || !list.length) return;
+            const opts = list
+                .filter(f => f && f.key)
+                .map(f => `<option value="${esc(f.key)}">${esc(f.label || f.key)}</option>`)
+                .join('');
+            sel.insertAdjacentHTML('beforeend', opts);
+            sel.dataset.populated = '1';
+        } catch (_) { /* selector stays empty; non-fatal */ }
+    }
+
+    async function _eventsInitFilters() {
+        if (_eventsFiltersInitialized) return;
+        _eventsFiltersInitialized = true;
+        await Promise.all([
+            _eventsPopulateSourceOptions(),
+            _eventsPopulateFactorOptions(),
+        ]);
+    }
 
     async function loadEvents() {
         const el = $('#events-table');
         if (!allEvents.length && el.querySelector('.spinner')) {
             el.innerHTML = renderSkeleton(4);
         }
+        // Lazily populate selects on first load.  Safe to call repeatedly.
+        await _eventsInitFilters();
         try {
-            const data = await fetchJSON(API.events);
-            const list = ensureArray(data, 'items', 'events');
+            const qs = _eventsBuildQuery();
+            const url = qs ? `${API.events}?${qs}` : API.events;
+            const data = await fetchJSON(url);
+            let list;
+            if (data && Array.isArray(data.items)) {
+                list = data.items;
+                _eventsTotal = Number.isFinite(data.total) ? data.total : list.length;
+                _eventsHasMore = Boolean(data.has_more);
+            } else {
+                list = ensureArray(data, 'items', 'events');
+                _eventsTotal = list.length;
+                _eventsHasMore = false;
+            }
             allEvents = list;
             renderEventsTable(list);
+            _eventsUpdateStatus(list.length);
         } catch (e) {
             el.innerHTML = renderError('events: ' + e.message);
         }
@@ -1535,9 +1657,35 @@
         return `<span class="factor-tag-list-mini">${chips}${more}</span>`;
     }
 
+    function _renderEventStatusChips(e) {
+        // Phase 8 \u2014 compact traceability chips per row.
+        // Linked      \u2192 at least one EventLink to a holding
+        // Macro       \u2192 at least one MacroFactorEvent classification
+        // We deliberately do NOT emit an "Unlinked" chip; the absence
+        // of "Linked" already conveys it without adding noise.
+        const chips = [];
+        const linked = (e.linked_ticker_count || 0) > 0;
+        const macro = Array.isArray(e.factor_tags) && e.factor_tags.length > 0;
+        if (linked) {
+            chips.push('<span class="events-status-chip chip-linked" title="At least one holding is affected">Linked</span>');
+        }
+        if (macro) {
+            chips.push('<span class="events-status-chip chip-macro" title="Classified by the macro factor pipeline">Macro signal</span>');
+        }
+        return chips.length ? `<span class="events-status-chips">${chips.join('')}</span>` : '';
+    }
+
     function renderEventsTable(list) {
         const el = $('#events-table');
         if (!list.length) {
+            // Distinguish "nothing to show" from "filter has zero hits".
+            if (_eventsAnyFilterActive()) {
+                el.innerHTML = renderEmpty('events', 'No news matches the current filters.', {
+                    hint: 'Try clearing one of the active filters, or reset to see everything.',
+                    actions: [{ label: 'Reset filters', onclick: "(function(){var b=document.getElementById('events-filter-reset');if(b)b.click();})()", primary: true }]
+                });
+                return;
+            }
             el.innerHTML = renderEmpty('events', 'No news collected yet.', {
                 hint: 'News items appear here as sources are polled. Collection runs automatically every 30 minutes; you can also trigger a manual run.',
                 actions: [{ label: 'Run Collection', onclick: "runAction('collection')", primary: true }]
@@ -1555,9 +1703,10 @@
             </tr></thead>
             <tbody>${list.map(e => {
                 const tags = renderFactorTagsMini(e.factor_tags || []);
+                const chips = _renderEventStatusChips(e);
                 const tickerCount = e.linked_ticker_count || 0;
                 return `<tr class="events-row-clickable" data-event-id="${esc(e.id)}">
-                    <td><span class="event-row-title">${esc(e.title || 'Untitled')}</span>${tags}</td>
+                    <td><span class="event-row-title">${esc(e.title || 'Untitled')}</span>${chips}${tags}</td>
                     <td>${e.event_type ? `<span class="badge badge-muted">${esc(titleCase(e.event_type))}</span>` : '<span class="text-muted">\u2014</span>'}</td>
                     <td>${e.materiality && e.materiality !== 'unscored' ? `<span class="badge badge-${e.materiality === 'critical' ? 'critical' : e.materiality === 'high' ? 'high' : 'info'}">${esc(e.materiality)}</span>` : '<span class="text-muted">unscored</span>'}</td>
                     <td class="text-sm text-muted">${tickerCount ? `${tickerCount} \uFF0F ${tickerCount === 1 ? 'holding' : 'holdings'}` : '<span class="text-muted">\u2014</span>'}</td>
@@ -1818,13 +1967,77 @@
         }
     };
 
+    // Phase 8 — search now drives the backend filter, not a client-side
+    // substring match.  Debounced so a fast typist doesn't issue a
+    // request per keystroke.  Kept as a function (not a closure) so
+    // the existing saved-view restore path (which still calls
+    // ``filterEvents(payload.filters.search)``) keeps working.
+    let _eventsSearchDebounce = null;
     function filterEvents(query) {
-        const q = query.toLowerCase();
-        const filtered = q ? allEvents.filter(e =>
-            (e.title || '').toLowerCase().includes(q) ||
-            (e.event_type || '').toLowerCase().includes(q)
-        ) : allEvents;
-        renderEventsTable(filtered);
+        _eventsFilterState.q = (query || '').trim();
+        if (_eventsSearchDebounce) clearTimeout(_eventsSearchDebounce);
+        _eventsSearchDebounce = setTimeout(() => {
+            _eventsSearchDebounce = null;
+            loadEvents();
+        }, 250);
+    }
+
+    function _eventsResetFilters() {
+        _eventsFilterState.q = '';
+        _eventsFilterState.source_id = '';
+        _eventsFilterState.event_type = '';
+        _eventsFilterState.factor_key = '';
+        _eventsFilterState.materiality_min = '';
+        _eventsFilterState.range = '';
+        _eventsFilterState.linked_only = false;
+
+        const sIn = document.getElementById('events-search');
+        if (sIn) sIn.value = '';
+        ['events-filter-source', 'events-filter-type', 'events-filter-factor', 'events-filter-materiality'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.value = '';
+        });
+        const linked = document.getElementById('events-filter-linked');
+        if (linked) linked.checked = false;
+        document.querySelectorAll('.events-range-pill').forEach(p => {
+            p.classList.toggle('active', p.dataset.range === '');
+        });
+        loadEvents();
+    }
+
+    // Phase 8 — restore filter state from a saved-view payload.  The
+    // saved-view restore path calls this with the ``filters`` block
+    // from the payload so the controls + state stay in sync.
+    function _eventsApplyFilterPayload(filters) {
+        if (!filters || typeof filters !== 'object') return;
+        const get = (...keys) => {
+            for (const k of keys) {
+                if (filters[k] !== undefined && filters[k] !== null && filters[k] !== '') return filters[k];
+            }
+            return '';
+        };
+        _eventsFilterState.q              = String(get('q', 'search') || '');
+        _eventsFilterState.source_id      = String(get('source_id', 'source') || '');
+        _eventsFilterState.event_type     = String(get('event_type', 'type') || '');
+        _eventsFilterState.factor_key     = String(get('factor_key', 'factor') || '');
+        _eventsFilterState.materiality_min = String(get('materiality_min', 'materiality') || '');
+        _eventsFilterState.range          = String(filters.range || '');
+        _eventsFilterState.linked_only    = String(get('linked_only', 'linked') || 'false').toLowerCase() === 'true'
+                                            || filters.linked_only === true
+                                            || filters.linked === true;
+
+        // Sync the DOM controls.
+        const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+        setVal('events-search', _eventsFilterState.q);
+        setVal('events-filter-source', _eventsFilterState.source_id);
+        setVal('events-filter-type', _eventsFilterState.event_type);
+        setVal('events-filter-factor', _eventsFilterState.factor_key);
+        setVal('events-filter-materiality', _eventsFilterState.materiality_min);
+        const linked = document.getElementById('events-filter-linked');
+        if (linked) linked.checked = !!_eventsFilterState.linked_only;
+        document.querySelectorAll('.events-range-pill').forEach(p => {
+            p.classList.toggle('active', p.dataset.range === _eventsFilterState.range);
+        });
     }
 
     // ================================================================
@@ -2417,12 +2630,21 @@
             }
         }
 
-        // --- Events search ---
-        if ((target.surface === 'events' || target.subtab === 'events') && f.search) {
-            const input = document.querySelector('#events-search');
-            if (input) {
-                input.value = f.search;
-                if (typeof filterEvents === 'function') filterEvents(f.search);
+        // --- News (events) filters — Phase 8 full restore ---------
+        // The legacy hash only carried ``search``; Phase 8 saved views
+        // can carry the full structured filter set.  ``_eventsApplyFilterPayload``
+        // both syncs the DOM controls and updates the in-memory state
+        // so the next ``loadEvents()`` reflects the restored shape.
+        if ((target.surface === 'events' || target.subtab === 'events') && f && Object.keys(f).length) {
+            if (typeof _eventsApplyFilterPayload === 'function') {
+                _eventsApplyFilterPayload(f);
+                if (typeof loadEvents === 'function') loadEvents();
+            } else if (f.search) {
+                const input = document.querySelector('#events-search');
+                if (input) {
+                    input.value = f.search;
+                    if (typeof filterEvents === 'function') filterEvents(f.search);
+                }
             }
         }
     }
@@ -5165,8 +5387,23 @@
             subtab = ff ? 'factors' : (rs ? 'relationships' : null);
         }
         if (surface === 'events' || subtab === 'events') {
+            // Phase 8 — capture the full structured filter set so a
+            // saved view restores into the same News slice the user
+            // is looking at.  The keys mirror the GET /events query
+            // parameters one-for-one.
             const es = document.querySelector('#events-search')?.value;
             if (es) filters.search = es;
+            const src = document.querySelector('#events-filter-source')?.value;
+            if (src) filters.source_id = src;
+            const etyp = document.querySelector('#events-filter-type')?.value;
+            if (etyp) filters.event_type = etyp;
+            const fac = document.querySelector('#events-filter-factor')?.value;
+            if (fac) filters.factor_key = fac;
+            const mat = document.querySelector('#events-filter-materiality')?.value;
+            if (mat) filters.materiality_min = mat;
+            if (_eventsFilterState.range) filters.range = _eventsFilterState.range;
+            const linked = document.querySelector('#events-filter-linked');
+            if (linked && linked.checked) filters.linked_only = 'true';
         }
 
         const payload = {
@@ -5911,10 +6148,44 @@
         const refreshViewsBtn = $('#saved-views-refresh');
         if (refreshViewsBtn) refreshViewsBtn.addEventListener('click', () => loadSavedViews());
 
-        // Events search
+        // Events search (Phase 8 — debounced backend query via filterEvents)
         const eventsSearch = $('#events-search');
         if (eventsSearch) {
             eventsSearch.addEventListener('input', () => filterEvents(eventsSearch.value));
+        }
+
+        // Phase 8 — News filter bar wiring
+        const _bindNewsFilter = (id, key, transform) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.addEventListener('change', () => {
+                const v = transform ? transform(el) : el.value;
+                _eventsFilterState[key] = v;
+                loadEvents();
+            });
+        };
+        _bindNewsFilter('events-filter-source', 'source_id');
+        _bindNewsFilter('events-filter-type', 'event_type');
+        _bindNewsFilter('events-filter-factor', 'factor_key');
+        _bindNewsFilter('events-filter-materiality', 'materiality_min');
+        _bindNewsFilter('events-filter-linked', 'linked_only', el => !!el.checked);
+
+        // Date-range pills — exactly one active at a time.
+        document.querySelectorAll('.events-range-pill').forEach(pill => {
+            pill.addEventListener('click', () => {
+                const range = pill.dataset.range || '';
+                _eventsFilterState.range = range;
+                document.querySelectorAll('.events-range-pill').forEach(p => {
+                    p.classList.toggle('active', p === pill);
+                });
+                loadEvents();
+            });
+        });
+
+        // Reset button — clears every Phase 8 News filter back to default.
+        const resetBtn = document.getElementById('events-filter-reset');
+        if (resetBtn) {
+            resetBtn.addEventListener('click', () => _eventsResetFilters());
         }
 
         // Analysis filter

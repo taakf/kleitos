@@ -849,6 +849,90 @@ dialog.modal-lg { max-width: 760px; }
     margin-right: 0.4rem;
 }
 
+/* Phase 8 — News filter bar */
+.events-filter-card {
+    padding: 0.7rem 0.85rem;
+    margin-bottom: 0.65rem;
+}
+.events-filter-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.45rem 0.6rem;
+}
+.events-filter-bar .select-input {
+    min-width: 9rem;
+    max-width: 14rem;
+    padding-block: 0.35rem;
+}
+.events-range-pills {
+    display: inline-flex;
+    gap: 0.25rem;
+}
+.events-range-pill {
+    border: 1px solid var(--border);
+    background: var(--card);
+    color: var(--muted-fg);
+    border-radius: 999px;
+    padding: 0.22rem 0.7rem;
+    font-size: 0.75rem;
+    cursor: pointer;
+    transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.events-range-pill:hover {
+    background: var(--surface);
+    color: var(--foreground);
+}
+.events-range-pill.active {
+    background: var(--primary-bg);
+    color: var(--primary);
+    border-color: var(--primary);
+}
+.events-filter-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.8rem;
+    color: var(--muted-fg);
+    cursor: pointer;
+}
+.events-filter-toggle input { cursor: pointer; }
+
+/* Phase 8 — per-row status chips (Linked / Macro signal) */
+.events-status-chips {
+    display: inline-flex;
+    gap: 0.3rem;
+    margin-left: 0.4rem;
+    vertical-align: middle;
+}
+.events-status-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.08rem 0.45rem;
+    border-radius: 999px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--muted-fg);
+}
+.events-status-chip.chip-linked {
+    background: var(--primary-bg);
+    color: var(--primary);
+    border-color: var(--primary);
+}
+.events-status-chip.chip-macro {
+    background: var(--warning-bg);
+    color: var(--warning);
+    border-color: var(--warning);
+}
+.events-status-chip.chip-analysis {
+    background: var(--success-bg, var(--surface));
+    color: var(--success, var(--muted-fg));
+    border-color: var(--success, var(--border));
+}
+
 /* Related analysis / alerts rows */
 .related-row {
     padding: 0.45rem 0.6rem;

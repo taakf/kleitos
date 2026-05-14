@@ -75,7 +75,28 @@ _OPERATOR_SUBTABS: frozenset[str] = frozenset({
 _APPROVED_FILTERS: dict[tuple[str, str | None], frozenset[str]] = {
     ("operator", "factors"):        frozenset({"factor"}),
     ("operator", "relationships"):  frozenset({"source"}),
-    ("events", "events"):           frozenset({"search"}),
+    # Phase 8 — the News (events) sub-tab gains a structured filter set
+    # so saved views can pin specific newsroom slices.  The keys mirror
+    # the ``GET /events`` query parameters one-for-one.
+    ("events", "events"):           frozenset({
+        "search",
+        "q",
+        "source",
+        "source_id",
+        "holding",
+        "holding_id",
+        "ticker",
+        "factor",
+        "factor_key",
+        "type",
+        "event_type",
+        "materiality",
+        "materiality_min",
+        "confidence",
+        "confidence_min",
+        "linked",
+        "linked_only",
+    }),
     ("alerts", None):               frozenset({"severity", "ack"}),
 }
 
@@ -154,12 +175,32 @@ _ACK_FILTER_LABELS: dict[str, str] = {
 }
 
 #: Human labels for filter keys → rendered filter descriptions.
+#:
+#: Phase 8 — the News sub-tab gains structured filter chips, so we
+#: register their saved-view keys here.  Both short forms (``ticker``,
+#: ``holding``, ``type``) and the API-aligned long forms (``holding_id``,
+#: ``event_type``, ``factor_key``, ``materiality_min`` …) map to the
+#: same compact human label so a hand-edited saved view degrades nicely.
 _FILTER_KEY_LABELS: dict[str, str] = {
-    "factor": "Factor",
-    "source": "Source",
-    "search": "Search",
-    "severity": "Severity",
-    "ack": "State",
+    "factor":          "Factor",
+    "factor_key":      "Factor",
+    "source":          "Source",
+    "source_id":       "Source",
+    "search":          "Search",
+    "q":               "Search",
+    "severity":        "Severity",
+    "ack":             "State",
+    "ticker":          "Ticker",
+    "holding":         "Holding",
+    "holding_id":      "Holding",
+    "type":            "Type",
+    "event_type":      "Type",
+    "materiality":     "Materiality",
+    "materiality_min": "Materiality",
+    "confidence":      "Confidence",
+    "confidence_min":  "Confidence",
+    "linked":          "Linked only",
+    "linked_only":     "Linked only",
 }
 
 
@@ -200,7 +241,7 @@ def describe_view(
     filters = payload.get("filters")
     if isinstance(filters, Mapping):
         for fk, fv in filters.items():
-            if not fk or not fv:
+            if not fk or fv is None or fv == "":
                 continue
             if fk == "severity":
                 sev_label = _SEVERITY_FILTER_LABELS.get(str(fv), str(fv))
@@ -208,8 +249,13 @@ def describe_view(
             elif fk == "ack":
                 ack_label = _ACK_FILTER_LABELS.get(str(fv), str(fv))
                 label += f" · {ack_label}"
-            elif fk == "search":
+            elif fk in ("search", "q"):
                 label += f" · Search: {fv}"
+            elif fk in ("linked", "linked_only"):
+                # Boolean toggle — render the label only when truthy.
+                truthy = str(fv).lower() in ("1", "true", "yes", "on")
+                if truthy:
+                    label += " · Linked only"
             else:
                 fk_label = _FILTER_KEY_LABELS.get(fk, fk.title())
                 label += f" · {fk_label}: {fv}"

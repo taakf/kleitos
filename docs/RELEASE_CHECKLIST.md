@@ -94,6 +94,22 @@ Run from the project root with the venv active.
   - Settings → Sources UI uses the Phase 7 status vocabulary and `Auth env var` column.
   - Customer docs name `NEWSAPI_KEY` and `FINNHUB_KEY` and never claim Bloomberg / FactSet / ATHEX corporate events.
 
+- [ ] **News-tab hardening regressions pass**
+  ```bash
+  python -m pytest -q tests/unit/test_phase8_news.py
+  ```
+  Must report all green. Covers:
+  - `_scrub_url()` masks `apiKey=`, `api_key=`, `token=`, `access_token=`, `auth=`, `secret=` query parameters and is idempotent on innocent URLs.
+  - `GET /api/v1/events` honours the new filters: `q`, `source_id`, `holding_id`, `ticker`, `event_type`, `factor_key`, `linked_only`, `materiality_min`, `confidence_min`, `date_from`.
+  - Default response stays a bare list; `?envelope=true` returns `{items, total, limit, offset, has_more}`.
+  - `X-Total-Count` / `X-Has-More` headers are always set and match the envelope shape.
+  - List + detail + recent endpoints all return scrubbed URLs.
+  - `describe_view` renders the new filter keys as `News · Source: …`, `News · Ticker: …`, `News · Type: …`, `News · Factor: …`, `News · Materiality: …`, `News · Linked only`, `News · Search: …`.
+  - `validate_filters` accepts the new News keys and still strips unknown keys.
+  - Dashboard markup carries the new filter ids and Reset button; the customer label stays **News** (the internal DOM ids stay `events-…`).
+  - The JS uses a debounced backend search; the legacy client-side `allEvents.filter` substring path is gone.
+  - The CSS exposes the filter-bar, range-pill, and status-chip classes the JS renderer emits.
+
 - [ ] **AI provider regressions pass**
   ```bash
   python -m pytest -q tests/unit/test_phase6_providers.py
