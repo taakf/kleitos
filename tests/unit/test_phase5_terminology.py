@@ -94,9 +94,15 @@ class TestTopLevelNavigation:
 
 
 class TestInsightsSubTabs:
-    """Insights sub-tab labels are News / Analysis / Digest / Inbox."""
+    """Insights sub-tab labels.
 
-    EXPECTED_SUBTABS = {"News", "Analysis", "Digest", "Inbox"}
+    Phase 12 added an **Overview** sub-tab at the front of the
+    Insights tab.  The Phase 5 invariant — News stays "News",
+    "Events" is reserved for the top-level corporate-calendar tab —
+    still holds.
+    """
+
+    EXPECTED_SUBTABS = {"Overview", "News", "Analysis", "Digest", "Inbox"}
 
     def _extract_insights_subtab_labels(self, html: str) -> list[str]:
         rx = re.compile(

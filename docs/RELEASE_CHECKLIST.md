@@ -94,6 +94,22 @@ Run from the project root with the venv active.
   - Settings → Sources UI uses the Phase 7 status vocabulary and `Auth env var` column.
   - Customer docs name `NEWSAPI_KEY` and `FINNHUB_KEY` and never claim Bloomberg / FactSet / ATHEX corporate events.
 
+- [ ] **Insights overview regressions pass**
+  ```bash
+  python -m pytest -q tests/unit/test_phase12_insights.py
+  ```
+  Must report all green. Covers:
+  - The :class:`InsightCard` Pydantic shape validates and the navigation helper recognises the new ``corporate-events`` and ``settings`` surfaces.
+  - Empty-portfolio insight response returns a helpful data-gap onboarding card with no fake content.
+  - High-materiality News linked to a holding produces a ``news_impact`` card with structured evidence + a deep link to the News detail modal.
+  - Upcoming Corporate Events produce a ``corporate_event`` card; alerts produce ``alert`` cards; macro-factor links produce ``factor_sensitivity`` cards.
+  - Listing-country and Revenue-geography cards stay separate; revenue-geography never carries listing-country evidence and vice-versa.
+  - Missing revenue-geography yields a clean data-gap card; an upload flips the card to a region-named insight.
+  - AI narrator: missing key path returns deterministic cards with ``grounding_status="ai_unavailable"``; mocked success preserves evidence + deep_links and flips ``source_type="ai_narrative"``; rewrites that mention untrusted tickers are discarded; raises become ``grounding_status="ai_failed"`` with a warning.
+  - ``/api/v1/intelligence/insights`` returns a stable shape with no secrets; the legacy ``/intelligence/summary`` shape is unchanged.
+  - Dashboard markup carries the new Overview sub-tab, coverage strip, grounding banner, refresh button, category + severity filters, AI-narrate toggle.
+  - Support bundle does not inline the narration prompt body or any insight card title.
+
 - [ ] **Revenue-geography AI extraction regressions pass**
   ```bash
   python -m pytest -q tests/unit/test_phase11_revenue_geography_ai.py

@@ -3389,3 +3389,139 @@ th.sortable.sort-desc::after { content: '\25BC'; opacity: 0.8; color: var(--prim
     color: var(--muted-fg);
     padding: 0.1rem 0.45rem;
 }
+
+/* ================================================================ */
+/* Phase 12 — Insights Overview cards                               */
+/* ================================================================ */
+
+.insights-coverage {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.55rem 0.85rem;
+    margin-bottom: 0.5rem;
+    font-size: 0.82rem;
+    color: var(--muted-fg);
+}
+.insights-coverage-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 1.1rem;
+}
+.insights-coverage-row strong {
+    color: var(--foreground);
+}
+
+.insights-grounding-banner {
+    padding: 0.4rem 0.7rem;
+    border-radius: var(--radius);
+    margin-bottom: 0.5rem;
+    font-size: 0.78rem;
+    background: var(--surface);
+    color: var(--muted-fg);
+    border-left: 3px solid var(--border);
+}
+.insights-grounding-banner[data-status="ai_grounded"] {
+    background: var(--primary-bg);
+    color: var(--primary);
+    border-left-color: var(--primary);
+}
+.insights-grounding-banner[data-status="ai_unavailable"],
+.insights-grounding-banner[data-status="ai_failed"] {
+    background: var(--warning-bg);
+    color: var(--warning);
+    border-left-color: var(--warning);
+}
+
+.insights-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+    gap: 0.6rem;
+}
+.insight-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 0.7rem 0.85rem;
+    background: var(--card);
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+}
+.insight-card.insight-sev-critical {
+    border-left: 3px solid var(--danger);
+}
+.insight-card.insight-sev-high {
+    border-left: 3px solid hsl(0, 60%, 60%);
+}
+.insight-card.insight-sev-medium {
+    border-left: 3px solid var(--warning);
+}
+.insight-card.insight-sev-low,
+.insight-card.insight-sev-info {
+    border-left: 3px solid var(--border);
+}
+.insight-card-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    align-items: center;
+}
+.insight-card-title {
+    font-weight: 600;
+    color: var(--foreground);
+    line-height: 1.35;
+}
+.insight-card-summary {
+    font-size: 0.86rem;
+    color: var(--foreground);
+    line-height: 1.45;
+}
+.insight-why {
+    font-size: 0.78rem;
+    color: var(--muted-fg);
+    line-height: 1.45;
+    border-left: 2px solid var(--border);
+    padding-left: 0.55rem;
+}
+.insight-tickers {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+}
+.insight-evidence {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.25rem;
+}
+.insight-evidence-chip {
+    font-size: 0.7rem;
+    padding: 0.12rem 0.5rem;
+    border-radius: 999px;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    color: var(--muted-fg);
+}
+.insight-action {
+    font-size: 0.8rem;
+    color: var(--muted-fg);
+    line-height: 1.4;
+}
+.insight-action strong { color: var(--foreground); }
+.insight-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    margin-top: 0.3rem;
+}
+.insight-ai-pill {
+    background: var(--primary-bg);
+    color: var(--primary);
+    border: 1px solid var(--primary);
+}
+.insights-ai-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    margin-right: 0.6rem;
+    cursor: pointer;
+}

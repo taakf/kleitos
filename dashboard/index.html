@@ -207,6 +207,7 @@
                 <!-- Intelligence Tab (parent) -->
                 <div id="tab-intelligence" class="tab-panel" role="tabpanel">
                     <div class="sub-tabs" role="tablist" aria-label="Intelligence sections">
+                        <button class="sub-tab" data-subtab="overview" data-parent="intelligence">Overview</button>
                         <button class="sub-tab active" data-subtab="events" data-parent="intelligence">News</button>
                         <button class="sub-tab" data-subtab="analysis" data-parent="intelligence">Analysis</button>
                         <button class="sub-tab" data-subtab="digest" data-parent="intelligence">Digest</button>
@@ -214,6 +215,51 @@
                             Inbox
                             <span id="inbox-unread-badge" class="inbox-badge" hidden>0</span>
                         </button>
+                    </div>
+
+                    <!--
+                      Phase 12 — Insights → Overview sub-tab.  Renders the
+                      deterministic InsightCard list with an optional
+                      grounded-AI narrator toggle.  Existing sub-tabs
+                      (News / Analysis / Digest / Inbox) are unchanged.
+                    -->
+                    <div id="subtab-overview" class="sub-panel">
+                        <div class="tab-header">
+                            <h2>Overview</h2>
+                            <div class="tab-actions">
+                                <label class="text-sm text-muted insights-ai-toggle">
+                                    <input type="checkbox" id="insights-include-ai">
+                                    AI narrate (optional)
+                                </label>
+                                <select id="insights-category-filter" class="select-input" aria-label="Category">
+                                    <option value="">All categories</option>
+                                    <option value="news_impact">News impact</option>
+                                    <option value="corporate_event">Corporate event</option>
+                                    <option value="revenue_geography">Revenue geography</option>
+                                    <option value="listing_country">Listing country</option>
+                                    <option value="factor_sensitivity">Factor sensitivity</option>
+                                    <option value="alert">Alert</option>
+                                    <option value="data_gap">Data gap</option>
+                                </select>
+                                <select id="insights-severity-filter" class="select-input" aria-label="Severity">
+                                    <option value="">All severities</option>
+                                    <option value="critical">Critical</option>
+                                    <option value="high">High</option>
+                                    <option value="medium">Medium</option>
+                                    <option value="low">Low</option>
+                                    <option value="info">Info</option>
+                                </select>
+                                <button id="insights-refresh-btn" class="btn btn-ghost btn-sm" type="button">Refresh</button>
+                            </div>
+                        </div>
+                        <p class="text-sm text-muted" style="margin:0 0 0.6rem 0;line-height:1.5;max-width:780px;">
+                            Deterministic, evidence-backed cards built from News, Corporate Events, Holdings, Listing country, Revenue geography, Alerts, Relationships, and Factor sensitivities. AI narrator is optional and never adds facts.
+                        </p>
+                        <div id="insights-coverage" class="insights-coverage" hidden></div>
+                        <div id="insights-grounding-banner" class="insights-grounding-banner" hidden></div>
+                        <div id="insights-cards" class="insights-cards">
+                            <div class="spinner">Loading insights...</div>
+                        </div>
                     </div>
 
                     <!-- Inbox sub-tab (Phase 9P) -->

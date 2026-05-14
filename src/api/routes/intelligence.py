@@ -1,15 +1,16 @@
-"""Phase 9G — Portfolio intelligence summary route.
+"""Phase 9G + Phase 12 — Portfolio intelligence routes.
 
-Provides a single thin endpoint — ``GET /api/v1/intelligence/summary``
-— that returns a premium overview of what matters for a given
-portfolio right now.  The route is a very thin wrapper around
-:func:`src.intelligence.summary.build_intelligence_summary`; all the
-aggregation + posture logic lives in the intelligence module so it
-can be tested without any HTTP machinery.
+Two endpoints share this router:
 
-Every field the endpoint returns is deterministic-first.  No LLM, no
-new scoring model, no new confidence math — just a rule-based roll-up
-of data that Phase 9A/9B/9C/9D/9E already produces.
+* ``GET /api/v1/intelligence/summary``  (Phase 9G) — premium overview
+  dict used by Portfolio → Holdings.  Stable shape; never changed.
+* ``GET /api/v1/intelligence/insights`` (Phase 12) — ranked list of
+  ``InsightCard`` rows used by the new Insights → Overview surface.
+  Deterministic-first; optional grounded-AI narration via
+  ``include_ai=true``.
+
+Both routes are thin HTTP wrappers; the aggregation lives in the
+intelligence module so it stays unit-testable.
 """
 
 from __future__ import annotations
@@ -20,6 +21,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_session
+from src.intelligence.insights import build_insights, narrate_insights
 from src.intelligence.summary import build_intelligence_summary
 
 router = APIRouter(prefix="/api/v1/intelligence", tags=["intelligence"])
@@ -76,3 +78,43 @@ async def intelligence_summary(
         session, portfolio_id=portfolio_id or "default",
     )
     return summary.to_dict()
+
+
+# ---------------------------------------------------------------------------
+# Phase 12 — Insights overview
+# ---------------------------------------------------------------------------
+
+
+@router.get("/insights")
+async def intelligence_insights(
+    portfolio_id: str = Query("default", description="Portfolio ID"),
+    limit: int = Query(12, ge=1, le=60),
+    include_ai: bool = Query(False, description=(
+        "If true and an AI provider is configured, narrate the deterministic "
+        "cards.  Always falls back to deterministic output silently."
+    )),
+    category: str | None = Query(None, description=(
+        "Optional category filter: news_impact | corporate_event | "
+        "concentration | revenue_geography | listing_country | "
+        "factor_sensitivity | relationship_chain | alert | data_gap."
+    )),
+    severity: str | None = Query(None, description=(
+        "Optional severity filter: critical | high | medium | low | info."
+    )),
+    time_window_days: int | None = Query(None, ge=1, le=365),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, Any]:
+    """Phase 12 — return a ranked list of deterministic insight cards.
+
+    Stable JSON shape (see :class:`InsightsResponse`).  Never raises;
+    on any backend hiccup returns an empty insight list with a
+    warning so the dashboard still renders.
+    """
+    response = await build_insights(
+        session,
+        portfolio_id=portfolio_id or "default",
+        limit=limit, category=category, severity=severity,
+        time_window_days=time_window_days,
+    )
+    response = await narrate_insights(response, include_ai=include_ai)
+    return response.to_dict()

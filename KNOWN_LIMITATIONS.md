@@ -25,6 +25,11 @@ the bundled source uses the general `/news` endpoint which works on the free tie
 ### OAuth — not implemented
 Axion does not yet ship any OAuth integration. There is no broker sync, no Google / Microsoft account linking, no paid-data-source authentication. Anthropic / OpenAI / Google Gemini AI providers use static API keys entered in **Settings → AI Configuration** and are the only credential type the customer has to manage today. See [`docs/OAUTH_ROADMAP.md`](docs/OAUTH_ROADMAP.md) for the design intent.
 
+### Insights → Overview — Phase 12, deterministic-first
+The **Insights → Overview** sub-tab is a deterministic, evidence-backed roll-up of News impact, Corporate Events, Alerts, Listing-country concentration, Revenue-geography coverage, Factor sensitivities, and data gaps. Every card carries its source rows as structured evidence. **Insights work without AI.** The optional AI narrator is grounded-only — it can rewrite wording but never adds new tickers, percentages, or claims; rewrites that mention untrusted tickers are dropped silently. With no AI provider configured, the page renders deterministic cards and the banner says so honestly.
+
+The page is not a market terminal. It does not show live prices, does not generate buy/sell recommendations, and does not infer revenue geography from listing country.
+
 ### Revenue geography — Phase 10 foundation shipped, manual CSV only
 The Portfolio → Exposures tab now has a separate **Revenue geography** card backed by the `revenue_geography` table, `/api/v1/exposures/revenue-geography`, and a CSV import drawer. The Phase 10 release ships:
 * Migration v10 (`revenue_geography` with indexes on portfolio_id, holding_id, ticker, isin, fiscal_year, region, country) and a CHECK that rejects negative shares.

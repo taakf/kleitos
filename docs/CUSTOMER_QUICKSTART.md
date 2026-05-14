@@ -84,6 +84,10 @@ For PDFs and scanned documents, see "AI features" below.
 | **Assistant** | Conversational queries (requires AI provider — disabled otherwise) |
 | **Settings** | API keys, provider selection, source health |
 
+### Insights → Overview
+
+The first sub-tab under **Insights** is the new Phase 12 Overview. It surfaces a ranked, evidence-backed list of insight cards drawn from News impact, upcoming Corporate Events, Revenue geography coverage, Listing-country concentration, Alerts, and Factor sensitivities. Every card shows its severity, category, the rows it came from, and a deep link to the surface that explains it. **No AI is required** — the AI narrate toggle is optional and never adds new facts.
+
 ### Reading the Exposures cards
 
 The Portfolio → Exposures tab now shows **Listing country** (instrument-listing exposure derived from ISIN/venue) and a separate **Revenue geography** card. Revenue geography is populated only when you upload a CSV via the card's *Import CSV* button — Axion never infers where a company earns money from where its shares are listed. CSV columns: `region`, `revenue_share`, plus at least one of `ticker` / `isin`. `revenue_share` accepts `0.45`, `45`, or `45%`. Holdings you haven't uploaded for show up in a "Holdings without revenue breakdowns" panel so the gap is visible at a glance.

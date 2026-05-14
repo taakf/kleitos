@@ -48,13 +48,26 @@ logger = logging.getLogger(__name__)
 # Surface registry
 # ---------------------------------------------------------------------------
 
-Surface = Literal["alerts", "digest", "events", "operator", "portfolio"]
+Surface = Literal[
+    "alerts", "digest", "events", "operator", "portfolio",
+    # Phase 12 — added the corporate-events tab (Phase 9) and the
+    # settings surface so Insights cards can deep-link to them.
+    "corporate-events", "settings",
+]
 
 #: Set of surface values the frontend dispatcher knows how to route to.
 #: Any other string is rejected by the shared validator so we can't
 #: emit a "jump to X" that the dashboard silently drops.
 _KNOWN_SURFACES: frozenset[str] = frozenset({
     "alerts", "digest", "events", "operator", "portfolio",
+    # Phase 12 additions (additive — no existing target schema breaks).
+    "corporate-events", "settings",
+})
+
+#: Settings sub-sections the frontend can focus.  Maps to anchor ids
+#: under ``#tab-settings``.
+_SETTINGS_SUBTABS: frozenset[str] = frozenset({
+    "sources", "ai", "providers",
 })
 
 #: Operator sub-sections the target can focus.  The frontend maps
@@ -138,6 +151,9 @@ _SURFACE_LABELS: dict[str, str] = {
     "events":    "News",
     "operator":  "Operator",
     "portfolio": "Portfolio",
+    # Phase 12 — clear customer-facing labels for the new surfaces.
+    "corporate-events": "Events",
+    "settings":         "Settings",
 }
 
 #: Human labels for subtabs. ``events`` subtab → "News" label, matching
@@ -151,6 +167,14 @@ _SUBTAB_LABELS: dict[str, str] = {
     "relationships": "Relationships",
     "maintenance":   "Maintenance",
     "recent-actions": "Recent Actions",
+    # Phase 12 additions
+    "overview":      "Overview",
+    "holdings":      "Holdings",
+    "exposures":     "Exposures",
+    "trades":        "Trades",
+    "sources":       "News Sources",
+    "ai":            "AI Configuration",
+    "providers":     "Providers",
 }
 
 #: Human labels for the severity filter options.  These map from the
@@ -353,6 +377,9 @@ def _safe_target(
         return None
     if surface == "operator" and subtab is not None and subtab not in _OPERATOR_SUBTABS:
         subtab = None
+    # Phase 12 — settings subtab validation mirrors operator's.
+    if surface == "settings" and subtab is not None and subtab not in _SETTINGS_SUBTABS:
+        subtab = None
     # Phase 9U — validate + strip unknown filter keys
     clean_filters: Mapping[str, str] | None = None
     if filters:
@@ -463,6 +490,53 @@ def target_for_event(
         open_modal=open_modal,
         highlight_key=f"event:{event_id}",
         label=label or "Open event",
+    )
+
+
+def target_for_corporate_event(
+    corporate_event_id: str | None,
+    portfolio_id: str,
+    *,
+    label: str | None = None,
+) -> NavigationTarget | None:
+    """Phase 12 — deep link into the top-level Events tab.
+
+    Distinct from :func:`target_for_event` (News).  Used by Insights
+    cards in the ``corporate_event`` category.
+    """
+    if not corporate_event_id:
+        return _safe_target(
+            surface="corporate-events", portfolio_id=portfolio_id,
+            label=label or "Open Events",
+        )
+    return _safe_target(
+        surface="corporate-events",
+        portfolio_id=portfolio_id,
+        entity_type="corporate_event",
+        entity_id=corporate_event_id,
+        highlight_key=f"corporate_event:{corporate_event_id}",
+        label=label or "Open in Events",
+    )
+
+
+def target_for_settings(
+    portfolio_id: str,
+    *,
+    subtab: str | None = None,
+    label: str | None = None,
+) -> NavigationTarget | None:
+    """Phase 12 — deep link into the Settings tab.
+
+    ``subtab`` may be ``"sources"`` (News Sources panel), ``"ai"``
+    (AI configuration), or ``"providers"`` (provider selection).
+    Unknown values are dropped to ``None`` so the dispatcher just
+    lands on the Settings panel.
+    """
+    return _safe_target(
+        surface="settings",
+        portfolio_id=portfolio_id,
+        subtab=subtab,
+        label=label or "Open Settings",
     )
 
 

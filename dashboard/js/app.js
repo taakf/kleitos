@@ -57,6 +57,8 @@
         exposuresRevenueGeoConfirm:     '/api/v1/exposures/revenue-geography/confirm-extraction',
         analysisNotes:'/api/v1/analysis/notes',
         intelligenceSummary: '/api/v1/intelligence/summary',
+        // Phase 12 — Insights → Overview surface.
+        intelligenceInsights: '/api/v1/intelligence/insights',
         // Phase 9I — Operator control surface (read + write)
         opFactorSensitivities:   '/api/v1/operator/factor-sensitivities',
         opFactorOverrides:       '/api/v1/operator/factor-sensitivities/overrides',
@@ -560,6 +562,8 @@
         analysis:  loadAnalysisNotes,
         digest:    loadDigest,
         inbox:     () => loadInbox(),
+        // Phase 12 — Insights → Overview sub-tab loader.
+        overview:  () => loadInsightsOverview(),
     };
 
     window.switchTab = switchTab;
@@ -3228,6 +3232,183 @@
     }
 
     // ================================================================
+    // Phase 12 — Insights Overview
+    // ================================================================
+    //
+    // Deterministic InsightCard renderer.  Fires on the Insights →
+    // Overview sub-tab loader and on the explicit Refresh button.
+    // Cards carry severity + category badges, evidence chips, and
+    // deep links to the surface that explains them.  AI narration
+    // is opt-in via the checkbox; deterministic output is always
+    // available.
+    // ----------------------------------------------------------------
+
+    const _insightsState = {
+        includeAi: false,
+        category: '',
+        severity: '',
+        wired: false,
+    };
+
+    function _renderInsightSeverityBadge(sev) {
+        const cls = ({
+            critical: 'badge-critical',
+            high:     'badge-high',
+            medium:   'badge-info',
+            low:      'badge-muted',
+            info:     'badge-muted',
+        })[sev] || 'badge-muted';
+        return `<span class="badge ${cls} insight-sev-${esc(sev)}">${esc(sev)}</span>`;
+    }
+
+    function _renderInsightCategoryBadge(cat) {
+        const labels = {
+            news_impact:        'News impact',
+            corporate_event:    'Corporate event',
+            concentration:      'Concentration',
+            revenue_geography:  'Revenue geography',
+            listing_country:    'Listing country',
+            factor_sensitivity: 'Factor',
+            relationship_chain: 'Relationship',
+            alert:              'Alert',
+            data_gap:           'Data gap',
+        };
+        return `<span class="badge badge-muted insight-cat insight-cat-${esc(cat)}">${esc(labels[cat] || cat)}</span>`;
+    }
+
+    function _renderInsightDeepLinks(links) {
+        if (!Array.isArray(links) || !links.length) return '';
+        return `<div class="insight-links">${links.map(l => {
+            const target = JSON.stringify({
+                surface: l.surface,
+                portfolio_id: _activePortfolioId,
+                subtab: l.subtab || null,
+                entity_type: l.entity_type || null,
+                entity_id: l.entity_id || null,
+                open_modal: false,
+                filters: l.filters || null,
+            });
+            return `<button type="button" class="btn btn-ghost btn-sm" data-nav-jump="1" data-nav-target="${escAttr(target)}">${esc(l.label || 'Open')} &rarr;</button>`;
+        }).join('')}</div>`;
+    }
+
+    function _renderInsightEvidence(rows) {
+        if (!Array.isArray(rows) || !rows.length) return '';
+        const top = rows.slice(0, 5);
+        const overflow = rows.length - top.length;
+        const chips = top.map(e => {
+            const detail = e.detail ? ` <span class="text-muted">· ${esc(e.detail)}</span>` : '';
+            return `<span class="insight-evidence-chip" title="${esc(e.ref)}"><strong>${esc(e.kind)}</strong>: ${esc(e.label)}${detail}</span>`;
+        }).join('');
+        const more = overflow > 0 ? `<span class="insight-evidence-chip">+${overflow} more</span>` : '';
+        return `<div class="insight-evidence">${chips}${more}</div>`;
+    }
+
+    function _renderInsightCard(c) {
+        const ai = c.source_type === 'ai_narrative'
+            ? '<span class="badge badge-muted insight-ai-pill" title="AI narrator rewrote the wording; evidence unchanged.">AI narrated</span>'
+            : '';
+        return `<div class="insight-card insight-sev-${esc(c.severity)}" data-insight-id="${esc(c.id)}">
+            <div class="insight-card-head">
+                ${_renderInsightSeverityBadge(c.severity)}
+                ${_renderInsightCategoryBadge(c.category)}
+                ${ai}
+            </div>
+            <div class="insight-card-title">${esc(c.title)}</div>
+            <div class="insight-card-summary">${esc(c.summary)}</div>
+            ${c.why_it_matters ? `<div class="insight-why">${esc(c.why_it_matters)}</div>` : ''}
+            ${c.affected_holdings && c.affected_holdings.length ? `<div class="insight-tickers">${c.affected_holdings.slice(0, 6).map(t => `<span class="badge badge-muted">${esc(t)}</span>`).join('')}</div>` : ''}
+            ${_renderInsightEvidence(c.evidence)}
+            ${c.recommended_action ? `<div class="insight-action"><strong>Next step:</strong> ${esc(c.recommended_action)}</div>` : ''}
+            ${_renderInsightDeepLinks(c.deep_links)}
+        </div>`;
+    }
+
+    function _renderInsightsCoverage(cov) {
+        const el = document.getElementById('insights-coverage');
+        if (!el) return;
+        if (!cov) { el.hidden = true; return; }
+        el.hidden = false;
+        const status = cov.revenue_geography_status || 'missing';
+        const ai = cov.ai_provider_available ? 'configured' : 'not configured';
+        el.innerHTML = `
+            <div class="insights-coverage-row">
+                <div><strong>${cov.holding_count}</strong> holdings</div>
+                <div><strong>${cov.news_count_7d}</strong> news (7d)</div>
+                <div><strong>${cov.corporate_event_count_30d}</strong> events (30d)</div>
+                <div><strong>${cov.active_alert_count}</strong> active alerts</div>
+                <div>Revenue geography: <strong>${esc(status)}</strong></div>
+                <div>AI provider: <strong>${esc(ai)}</strong></div>
+            </div>`;
+    }
+
+    function _renderInsightsGroundingBanner(status, warnings) {
+        const el = document.getElementById('insights-grounding-banner');
+        if (!el) return;
+        const reasons = {
+            deterministic_only: 'Deterministic cards only.',
+            ai_grounded:        'AI-narrated · evidence preserved.',
+            ai_unavailable:     'AI requested but no provider configured — deterministic output shown.',
+            ai_failed:          'AI narrator failed — deterministic output shown.',
+        };
+        const msg = reasons[status] || status;
+        const warnText = Array.isArray(warnings) && warnings.length
+            ? ` · ${warnings.join(' · ')}` : '';
+        el.hidden = false;
+        el.dataset.status = status;
+        el.textContent = `${msg}${warnText}`;
+    }
+
+    async function loadInsightsOverview() {
+        const el = document.getElementById('insights-cards');
+        if (!el) return;
+        el.innerHTML = '<div class="spinner">Loading insights...</div>';
+        const params = new URLSearchParams({
+            portfolio_id: _activePortfolioId,
+            limit: '12',
+        });
+        if (_insightsState.includeAi) params.set('include_ai', 'true');
+        if (_insightsState.category) params.set('category', _insightsState.category);
+        if (_insightsState.severity) params.set('severity', _insightsState.severity);
+        try {
+            const data = await fetchJSON(`${API.intelligenceInsights}?${params.toString()}`);
+            _renderInsightsCoverage(data.coverage);
+            _renderInsightsGroundingBanner(data.grounding_status, data.warnings);
+            const cards = Array.isArray(data.insights) ? data.insights : [];
+            if (!cards.length) {
+                el.innerHTML = `<div class="empty-state" style="padding:1.5rem"><p><strong>Nothing to surface yet.</strong></p><p class="text-sm">Add holdings or run a collection cycle to generate insights. Insights work without AI; AI narration is optional.</p></div>`;
+                return;
+            }
+            el.innerHTML = cards.map(_renderInsightCard).join('');
+        } catch (e) {
+            el.innerHTML = renderError('insights: ' + (e.message || 'unknown'));
+        }
+    }
+
+    function _wireInsightsOnce() {
+        if (_insightsState.wired) return;
+        _insightsState.wired = true;
+        const ai = document.getElementById('insights-include-ai');
+        if (ai) ai.addEventListener('change', () => {
+            _insightsState.includeAi = !!ai.checked;
+            loadInsightsOverview();
+        });
+        const cat = document.getElementById('insights-category-filter');
+        if (cat) cat.addEventListener('change', () => {
+            _insightsState.category = cat.value;
+            loadInsightsOverview();
+        });
+        const sev = document.getElementById('insights-severity-filter');
+        if (sev) sev.addEventListener('change', () => {
+            _insightsState.severity = sev.value;
+            loadInsightsOverview();
+        });
+        const refresh = document.getElementById('insights-refresh-btn');
+        if (refresh) refresh.addEventListener('click', loadInsightsOverview);
+    }
+    _wireInsightsOnce();
+
+    // ================================================================
     // Phase 9P — Notification Inbox
     // ================================================================
     //
@@ -3270,6 +3451,9 @@
         events:    'intelligence',
         operator:  'settings',
         portfolio: 'portfolio',
+        // Phase 12 — additive surface → top-tab mapping for Insights cards.
+        'corporate-events': 'corporate-events',
+        settings:  'settings',
     };
 
     function _inboxJumpDescriptor(item) {

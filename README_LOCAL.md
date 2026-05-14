@@ -254,6 +254,22 @@ CSV columns (case-insensitive): `event_type`, `title`, `event_date` (YYYY-MM-DD 
 
 **ATHEX automation status — honest:** Athens Exchange does not currently publish a stable public machine-readable corporate-events feed. The Sources panel marks `athex-corporate-events` as *Unsupported* and `Refresh ATHEX` returns a customer-safe explanation. The Phase 9 release ships the table, API, UI, and CSV pipeline so the feature is usable today; once a reliable endpoint exists, only `src/corporate_events/athex.py` needs to be implemented.
 
+## Insights overview (Phase 12)
+
+The **Insights → Overview** sub-tab is a deterministic, evidence-backed roll-up of everything else in the app: News impact on your holdings, upcoming Corporate Events, Revenue geography coverage, Listing-country concentration, Alerts, Factor sensitivities, and Data gaps (e.g. "Revenue geography not uploaded yet", "AI narrator optional and not configured"). Every card carries:
+
+* a severity badge (critical → info) derived from the source row;
+* a category badge (news_impact / corporate_event / revenue_geography / listing_country / factor_sensitivity / alert / data_gap);
+* an evidence chip list naming the rows the card came from (no claim without evidence);
+* deep links to the surface that explains the card (News detail / Events tab / Exposures → Revenue geography / Alerts / Settings → Sources / Settings → AI Configuration);
+* a "next step" line where one fits.
+
+**Insights work without AI.** The deterministic generator is the only ground truth. The optional "AI narrate" toggle asks a configured AI provider to rewrite the wording of the top cards — it cannot add holdings, percentages, dates, or new claims. If the rewrite mentions a ticker outside the deterministic card's affected-holdings list, that rewrite is dropped and the deterministic original survives. If no AI provider is configured, the banner reports `AI requested but no provider configured — deterministic output shown` and the cards render unchanged.
+
+The Coverage strip above the cards shows what inputs the generator had — holdings count, news (7d), corporate events (30d), active alerts, revenue-geography status, and AI provider state — so the operator can see the honest data-availability picture at a glance.
+
+Revenue geography is **never inferred from listing country**. The "Listing country" exposure card and the "Revenue geography" insight card live separately, and a Phase 12 test enforces that no listing-country evidence ever ends up in a revenue-geography card.
+
 ## What this is NOT
 
 - **Not** a cloud / multi-tenant service. Loopback-only, single user, single machine.

@@ -15,6 +15,12 @@ Conversational natural-language queries, per-holding impact analysis, richer nar
 **Which AI providers are supported?**
 Anthropic (Claude), OpenAI / ChatGPT, and Google Gemini. Pick one as primary in Settings → AI Configuration. Optionally set a second as backup; Axion will fall back automatically on rate-limit / 5xx / auth errors from the primary. Keys are stored at `~/.axion.env` with 600 permissions and never leave your machine except to call the provider you configured. The Settings UI has a **Test** button per key that reports a typed status (Active / Invalid key / Quota / Unreachable / Misconfigured / Error) without exposing the key.
 
+**What does the Insights → Overview sub-tab do?**
+It's a deterministic, evidence-backed roll-up of everything else in the app (Phase 12). Each card carries a severity, a category, the source rows it came from, and a deep link to the surface that explains it. The AI narrate toggle is optional — when enabled and a provider is configured, the wording can be rewritten, but the AI is constrained: it cannot add new holdings, new percentages, or new claims. Rewrites that mention an untrusted ticker are dropped. With no AI key, the page still works.
+
+**Does the Insights page give investment advice?**
+No. Axion's deterministic insights are operational signals — concentration warnings, upcoming corporate events, data gaps, factor touchpoints — grounded in your portfolio's stored rows. They are not personalised investment advice or buy/sell recommendations, and they never use live market prices.
+
 **Is OAuth supported?**
 No. Axion does not yet integrate with brokers, Google / Microsoft accounts, or any OAuth-authenticated data source. See `docs/OAUTH_ROADMAP.md` for the design intent.
 

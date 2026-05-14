@@ -65,6 +65,13 @@ http://localhost:7777/dashboard
 - Click a calendar chip → detail drawer with ISIN/ticker, exchange, match method, scrubbed source link.
 - "ATHEX automation is intentionally `unsupported` in this build because Athens Exchange has no stable public corporate-events feed. The Phase 9 release ships the full schema + UI + CSV pipeline so this works today without inventing data."
 
+### 2c. Insights → Overview (2 min, Phase 12)
+- Click **Insights → Overview** (the first sub-tab).
+- "Each card is deterministic, evidence-backed, and ranked. Severity comes from the source row — we never invent it."
+- Point out a News-impact card → click its **Open News item** deep link to land directly on the detail modal.
+- Toggle **AI narrate (optional)** to show the AI-grounded path. "AI can rewrite wording, never add facts. If it mentions a ticker outside the affected list, the rewrite is discarded automatically."
+- Point at the Coverage strip — holdings count, news (7d), events (30d), active alerts, revenue-geography status, AI provider state. "This is the honest data-availability picture."
+
 ### 3. News + Causal Chains (3 min)
 - Click **Insights → News**
 - Type "fed" in the search box — "**Server-side, debounced** — Source/Type/Factor/Materiality filters narrow the slice the same way."
