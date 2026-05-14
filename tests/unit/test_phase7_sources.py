@@ -455,9 +455,13 @@ class TestSourcesHealthEndpoint:
             r = client.get("/api/v1/sources/health")
         body = r.json()
         summary = body["summary"]
-        assert summary["total"] == 15
-        assert summary["unsupported"] >= 1  # sec-edgar
-        # Default-enabled RSS sources should be active.
+        # Phase 9 added the ATHEX corporate-events row (also unsupported)
+        # so the total floats with the YAML. The contract that matters is:
+        # at least the original 15 news sources are present, sec-edgar +
+        # athex-corporate-events are unsupported, and the default RSS feeds
+        # are active.
+        assert summary["total"] >= 15
+        assert summary["unsupported"] >= 2  # sec-edgar + athex-corporate-events
         assert summary["active"] >= 5
 
     def test_response_no_raw_url_query_keys(self):
@@ -537,7 +541,9 @@ class TestDiagnosticsSourceCounts:
                   "rate_limited", "unreachable", "parser_error",
                   "unsupported", "misconfigured", "error", "total"):
             assert k in s, f"missing {k!r} in sources_by_status"
-        assert s["total"] == 15  # 15 sources in YAML
+        # Phase 9 added athex-corporate-events to the YAML; the floor is
+        # still 15 (the Phase 7 news lineup).
+        assert s["total"] >= 15
 
 
 # ───────────────────────────────────────────────────────────────────────────

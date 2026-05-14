@@ -34,6 +34,7 @@
             <div class="nav-tabs" role="tablist" aria-label="Dashboard navigation">
                 <button class="tab-link active" data-tab="portfolio" role="tab" aria-selected="true">Portfolio</button>
                 <button class="tab-link" data-tab="intelligence" role="tab" aria-selected="false">Insights <span id="badge-events" class="tab-badge" hidden></span></button>
+                <button class="tab-link" data-tab="corporate-events" role="tab" aria-selected="false">Events <span id="badge-corporate-events" class="tab-badge" hidden></span></button>
                 <button class="tab-link" data-tab="alerts" role="tab" aria-selected="false">Alerts <span id="badge-alerts" class="tab-badge" hidden></span></button>
                 <button class="tab-link" data-tab="command" role="tab" aria-selected="false">Assistant</button>
                 <button class="tab-link" data-tab="settings" role="tab" aria-selected="false">Settings</button>
@@ -213,6 +214,82 @@
                         </div>
                         <div id="digest-content"><div class="spinner">Loading latest digest...</div></div>
                     </div>
+                </div>
+
+                <!-- Corporate Events Tab (top-level) -->
+                <!--
+                  Internal key: "corporate-events" / data-tab="corporate-events".
+                  Customer label: "Events". This is intentionally distinct from
+                  Insights → News (data-subtab="events") which surfaces the
+                  events table (news items).
+                -->
+                <div id="tab-corporate-events" class="tab-panel" role="tabpanel" aria-label="Corporate events calendar">
+                    <div class="tab-header">
+                        <h2>Events</h2>
+                        <div class="tab-actions">
+                            <select id="ce-event-type" class="select-input" aria-label="Event type">
+                                <option value="">All types</option>
+                                <option value="earnings">Earnings</option>
+                                <option value="dividend">Dividend</option>
+                                <option value="agm">AGM</option>
+                                <option value="egm">EGM</option>
+                                <option value="corporate_action">Corporate action</option>
+                                <option value="announcement">Announcement</option>
+                                <option value="other">Other</option>
+                            </select>
+                            <select id="ce-ticker-filter" class="select-input" aria-label="Holding / ticker"><option value="">All holdings</option></select>
+                            <select id="ce-exchange-filter" class="select-input" aria-label="Exchange">
+                                <option value="">All exchanges</option>
+                                <option value="ATHEX">ATHEX</option>
+                            </select>
+                            <button id="ce-refresh-btn" class="btn btn-ghost btn-sm" type="button" title="Try to refresh from ATHEX">Refresh ATHEX</button>
+                            <button id="ce-import-btn" class="btn btn-outline btn-sm" type="button" title="Import a corporate-events CSV">Import CSV</button>
+                        </div>
+                    </div>
+                    <div id="ce-status-banner" class="ce-status-banner" hidden></div>
+                    <div class="ce-calendar-wrap">
+                        <div class="ce-calendar-toolbar">
+                            <button id="ce-month-prev" class="btn btn-ghost btn-sm" type="button" aria-label="Previous month">&larr;</button>
+                            <h3 id="ce-month-label" class="ce-month-label">&nbsp;</h3>
+                            <button id="ce-month-next" class="btn btn-ghost btn-sm" type="button" aria-label="Next month">&rarr;</button>
+                            <button id="ce-month-today" class="btn btn-ghost btn-sm" type="button" aria-label="Jump to current month">Today</button>
+                        </div>
+                        <div id="ce-calendar" class="ce-calendar" role="grid" aria-label="Monthly corporate-events calendar"></div>
+                    </div>
+                    <div class="card">
+                        <h3 class="ce-list-heading">All events this month</h3>
+                        <div id="ce-list-table" role="region" aria-label="Corporate events list"><div class="spinner">Loading events...</div></div>
+                    </div>
+
+                    <!-- Import CSV drawer -->
+                    <dialog id="ce-import-dialog" class="ce-dialog" aria-labelledby="ce-import-title">
+                        <form method="dialog" onsubmit="return false;">
+                            <h3 id="ce-import-title">Import corporate events (CSV)</h3>
+                            <p class="text-sm text-muted">
+                                Required columns: <code>event_type</code>, <code>title</code>, <code>event_date</code>, and at least one of
+                                <code>ticker</code> / <code>isin</code>. Optional: <code>exchange</code>, <code>event_time</code>, <code>timezone</code>,
+                                <code>description</code>, <code>url</code>, <code>status</code>, <code>external_id</code>. Rows match to holdings by
+                                ISIN first, then ticker (per active portfolio).
+                            </p>
+                            <textarea id="ce-import-textarea" class="ce-import-textarea" rows="14" placeholder="event_type,title,ticker,isin,event_date,event_time,description,url"></textarea>
+                            <div id="ce-import-result" class="ce-import-result"></div>
+                            <div class="ce-dialog-actions">
+                                <button id="ce-import-cancel" class="btn btn-ghost" type="button">Cancel</button>
+                                <button id="ce-import-submit" class="btn btn-primary" type="button">Import</button>
+                            </div>
+                        </form>
+                    </dialog>
+
+                    <!-- Event detail drawer -->
+                    <dialog id="ce-detail-dialog" class="ce-dialog" aria-labelledby="ce-detail-title">
+                        <form method="dialog" onsubmit="return false;">
+                            <h3 id="ce-detail-title">Corporate event</h3>
+                            <div id="ce-detail-body"></div>
+                            <div class="ce-dialog-actions">
+                                <button id="ce-detail-close" class="btn btn-primary" type="button">Close</button>
+                            </div>
+                        </form>
+                    </dialog>
                 </div>
 
                 <!-- Alerts Tab -->

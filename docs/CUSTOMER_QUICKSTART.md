@@ -77,8 +77,9 @@ For PDFs and scanned documents, see "AI features" below.
 
 | Tab | Shows |
 |-----|-------|
-| **Portfolio** | Holdings, exposures (sector / geography / currency), trade history |
+| **Portfolio** | Holdings, exposures (sector / listing-country / currency), trade history. The "Geography" chart reflects **listing country**, not revenue geography (a dedicated revenue-geography phase is planned). |
 | **Insights** | News collected from RSS / API sources, ranked by impact on your holdings, plus deterministic analysis and digests. Sub-tabs: News, Analysis, Digest, Inbox. |
+| **Events** | Scheduled corporate / issuer events on a monthly calendar (earnings, dividends, AGMs, …). Phase 9 ships ATHEX-first; data is loaded via the **Import CSV** drawer until a stable upstream feed is available. |
 | **Alerts** | Concentration breaches, calendar clusters, stale data warnings |
 | **Assistant** | Conversational queries (requires AI provider — disabled otherwise) |
 | **Settings** | API keys, provider selection, source health |

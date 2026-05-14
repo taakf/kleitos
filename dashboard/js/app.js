@@ -37,6 +37,13 @@
         events:       '/api/v1/events',
         eventsRecent: '/api/v1/events/recent',
         eventById:    (id) => `/api/v1/events/${id}`,
+        // Phase 9 — Corporate / issuer events calendar.  Internal key
+        // "corporateEvents" so JS callers never confuse this with the
+        // News (events) surface above.
+        corporateEvents:        '/api/v1/corporate-events',
+        corporateEventById:     (id) => `/api/v1/corporate-events/${id}`,
+        corporateEventsImport:  '/api/v1/corporate-events/import',
+        corporateEventsRefresh: '/api/v1/corporate-events/refresh',
         analysisNotes:'/api/v1/analysis/notes',
         intelligenceSummary: '/api/v1/intelligence/summary',
         // Phase 9I — Operator control surface (read + write)
@@ -524,12 +531,13 @@
     // ================================================================
     const tabLoaded = {};
     const tabLoaders = {
-        portfolio:    function () { loadSubTab('portfolio', 'holdings'); },
-        intelligence: function () { loadSubTab('intelligence', 'events'); },
-        alerts:    loadAlerts,
-        audit:     loadAudit,
-        command:   loadCommand,
-        settings:  loadSettings,
+        portfolio:           function () { loadSubTab('portfolio', 'holdings'); },
+        intelligence:        function () { loadSubTab('intelligence', 'events'); },
+        'corporate-events':  function () { loadCorporateEvents(); },
+        alerts:              loadAlerts,
+        audit:               loadAudit,
+        command:             loadCommand,
+        settings:            loadSettings,
     };
 
     // Sub-tab loaders map
@@ -2039,6 +2047,361 @@
             p.classList.toggle('active', p.dataset.range === _eventsFilterState.range);
         });
     }
+
+    // ================================================================
+    // Phase 9 — Corporate Events Tab (top-level, separate from News)
+    // ================================================================
+    //
+    // Lives at top-level data-tab="corporate-events".  Renders a
+    // monthly calendar populated from /api/v1/corporate-events; an
+    // import CSV drawer for manual ingestion; an honest degraded
+    // banner when the ATHEX source is unsupported / returns no data.
+    // ----------------------------------------------------------------
+
+    const _ceState = {
+        month: null,             // 'YYYY-MM' currently displayed
+        events: [],
+        filter: {
+            event_type: '',
+            ticker: '',
+            exchange: '',
+        },
+        loading: false,
+        lastStatus: null,        // last /refresh result, if any
+    };
+
+    function _ceMonthOf(date) {
+        const d = date instanceof Date ? date : new Date();
+        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    }
+
+    function _ceMonthLabel(month) {
+        const [y, m] = month.split('-').map(Number);
+        const d = new Date(y, m - 1, 1);
+        return d.toLocaleString(undefined, { month: 'long', year: 'numeric' });
+    }
+
+    function _ceShiftMonth(month, delta) {
+        const [y, m] = month.split('-').map(Number);
+        const d = new Date(y, m - 1 + delta, 1);
+        return _ceMonthOf(d);
+    }
+
+    function _ceDayCells(month) {
+        // Build the 6×7 grid of day cells for the given YYYY-MM.
+        const [y, m] = month.split('-').map(Number);
+        const first = new Date(y, m - 1, 1);
+        const firstDow = first.getDay();      // 0 = Sun
+        const daysInMonth = new Date(y, m, 0).getDate();
+        const cells = [];
+        for (let i = 0; i < firstDow; i++) cells.push(null);
+        for (let day = 1; day <= daysInMonth; day++) {
+            const iso = `${y}-${String(m).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+            cells.push({ day, iso });
+        }
+        // Pad to a multiple of 7
+        while (cells.length % 7 !== 0) cells.push(null);
+        return cells;
+    }
+
+    function _ceEventTypeLabel(t) {
+        return ({
+            earnings: 'Earnings',
+            dividend: 'Dividend',
+            agm: 'AGM',
+            egm: 'EGM',
+            corporate_action: 'Corporate action',
+            announcement: 'Announcement',
+            other: 'Other',
+        })[t] || (t || 'Event');
+    }
+
+    function _ceBuildQuery(month) {
+        const p = new URLSearchParams();
+        p.set('portfolio_id', _activePortfolioId);
+        p.set('month', month);
+        p.set('limit', '500');
+        p.set('envelope', 'true');
+        if (_ceState.filter.event_type) p.set('event_type', _ceState.filter.event_type);
+        if (_ceState.filter.ticker) p.set('ticker', _ceState.filter.ticker);
+        if (_ceState.filter.exchange) p.set('exchange', _ceState.filter.exchange);
+        return p.toString();
+    }
+
+    async function _cePopulateTickerOptions() {
+        const sel = document.getElementById('ce-ticker-filter');
+        if (!sel || sel.dataset.populated === '1') return;
+        try {
+            const list = await fetchJSON(_pq(API.holdings)).catch(() => []);
+            const tickers = [...new Set((list || []).map(h => (h.ticker || '').toUpperCase()).filter(Boolean))].sort();
+            sel.insertAdjacentHTML('beforeend', tickers.map(t =>
+                `<option value="${esc(t)}">${esc(t)}</option>`
+            ).join(''));
+            sel.dataset.populated = '1';
+        } catch (_) { /* non-fatal */ }
+    }
+
+    function _ceRenderCalendar(month, eventsByDay) {
+        const grid = document.getElementById('ce-calendar');
+        if (!grid) return;
+        const label = document.getElementById('ce-month-label');
+        if (label) label.textContent = _ceMonthLabel(month);
+
+        const cells = _ceDayCells(month);
+        const todayIso = new Date().toISOString().slice(0, 10);
+        const header = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+            .map(d => `<div class="ce-cal-head">${d}</div>`).join('');
+        const body = cells.map(cell => {
+            if (!cell) return '<div class="ce-cal-cell ce-cal-pad"></div>';
+            const dayEvents = eventsByDay[cell.iso] || [];
+            const todayCls = cell.iso === todayIso ? ' ce-cal-today' : '';
+            const chips = dayEvents.slice(0, 4).map(e => {
+                const cls = `ce-cal-chip ce-chip-${esc(e.event_type)}`;
+                const ticker = e.ticker ? `<strong>${esc(e.ticker)}</strong> ` : '';
+                return `<button type="button" class="${cls}" data-ce-id="${esc(e.id)}" title="${esc(e.title || '')}">${ticker}${esc(_ceEventTypeLabel(e.event_type))}</button>`;
+            }).join('');
+            const overflow = dayEvents.length > 4
+                ? `<span class="ce-cal-chip ce-chip-more">+${dayEvents.length - 4} more</span>` : '';
+            return `<div class="ce-cal-cell${todayCls}" data-day="${esc(cell.iso)}">
+                <span class="ce-cal-day-num">${cell.day}</span>
+                ${chips}${overflow}
+            </div>`;
+        }).join('');
+        grid.innerHTML = `<div class="ce-cal-header-row">${header}</div><div class="ce-cal-body">${body}</div>`;
+    }
+
+    function _ceRenderList(events) {
+        const el = document.getElementById('ce-list-table');
+        if (!el) return;
+        if (!events.length) {
+            const reason = _ceState.lastStatus && _ceState.lastStatus.status !== 'active'
+                ? _ceState.lastStatus.reason
+                : 'No corporate events found for this month.';
+            el.innerHTML = `<div class="empty-state empty-inline">${esc(reason)}</div>`;
+            return;
+        }
+        const rows = events.map(e => {
+            const dayTime = e.event_time ? `${e.event_date} ${esc(e.event_time)}` : e.event_date;
+            const matched = e.holding_id
+                ? `<span class="badge badge-info">Matched</span>`
+                : `<span class="badge badge-muted">Unmatched</span>`;
+            return `<tr class="ce-list-row" data-ce-id="${esc(e.id)}">
+                <td class="text-sm">${esc(dayTime)}</td>
+                <td><strong>${esc(e.ticker || '—')}</strong></td>
+                <td><span class="badge badge-muted">${esc(_ceEventTypeLabel(e.event_type))}</span></td>
+                <td>${esc(e.title)}</td>
+                <td class="text-sm text-muted">${esc(e.exchange || '—')}</td>
+                <td class="text-sm">${matched}</td>
+            </tr>`;
+        }).join('');
+        el.innerHTML = `<div class="table-wrap"><table>
+            <thead><tr><th>When</th><th>Ticker</th><th>Type</th><th>Title</th><th>Exchange</th><th>Match</th></tr></thead>
+            <tbody>${rows}</tbody>
+        </table></div>`;
+    }
+
+    function _ceRenderStatusBanner(text, severity) {
+        const el = document.getElementById('ce-status-banner');
+        if (!el) return;
+        if (!text) {
+            el.hidden = true;
+            el.textContent = '';
+            return;
+        }
+        el.hidden = false;
+        el.dataset.severity = severity || 'info';
+        el.textContent = text;
+    }
+
+    async function loadCorporateEvents() {
+        const grid = document.getElementById('ce-calendar');
+        if (!grid) return;
+        if (_ceState.loading) return;
+        if (!_ceState.month) _ceState.month = _ceMonthOf(new Date());
+        _ceState.loading = true;
+        grid.innerHTML = '<div class="spinner">Loading calendar...</div>';
+        await _cePopulateTickerOptions();
+        try {
+            const url = `${API.corporateEvents}?${_ceBuildQuery(_ceState.month)}`;
+            const data = await fetchJSON(url);
+            const items = (data && Array.isArray(data.items)) ? data.items
+                : (Array.isArray(data) ? data : []);
+            _ceState.events = items;
+            const byDay = {};
+            for (const e of items) {
+                (byDay[e.event_date] = byDay[e.event_date] || []).push(e);
+            }
+            _ceRenderCalendar(_ceState.month, byDay);
+            _ceRenderList(items);
+            // Honest empty-state banner if the calendar has nothing.
+            if (!items.length) {
+                const last = _ceState.lastStatus;
+                const txt = last && last.status && last.status !== 'active'
+                    ? last.reason
+                    : 'No corporate events for this month. Use "Import CSV" to add some, or "Refresh ATHEX" to try the upstream source.';
+                _ceRenderStatusBanner(txt, last && last.status === 'unsupported' ? 'warn' : 'info');
+            } else if (_ceState.lastStatus && _ceState.lastStatus.status !== 'active') {
+                _ceRenderStatusBanner(_ceState.lastStatus.reason, 'warn');
+            } else {
+                _ceRenderStatusBanner('', 'info');
+            }
+        } catch (e) {
+            grid.innerHTML = renderError('corporate events: ' + (e.message || 'unknown'));
+        } finally {
+            _ceState.loading = false;
+        }
+    }
+
+    function _ceOpenDetail(id) {
+        const ev = _ceState.events.find(x => x.id === id);
+        if (!ev) return;
+        const dialog = document.getElementById('ce-detail-dialog');
+        const body = document.getElementById('ce-detail-body');
+        const title = document.getElementById('ce-detail-title');
+        if (!dialog || !body) return;
+        if (title) title.textContent = ev.title || 'Corporate event';
+        const when = ev.event_time ? `${ev.event_date} ${ev.event_time}` : ev.event_date;
+        const matched = ev.holding_id
+            ? `<span class="badge badge-info">Matched to holding</span>`
+            : `<span class="badge badge-muted">Unmatched (no holding in active portfolio)</span>`;
+        const src = ev.source_url
+            ? `<a class="link" href="${esc(ev.source_url)}" target="_blank" rel="noopener">Open source &nearr;</a>`
+            : `<span class="empty-inline">No source URL provided.</span>`;
+        body.innerHTML = `
+            <div class="ce-detail-grid">
+                <div><strong>When:</strong> ${esc(when)}${ev.timezone ? ' · ' + esc(ev.timezone) : ''}</div>
+                <div><strong>Type:</strong> ${esc(_ceEventTypeLabel(ev.event_type))}</div>
+                <div><strong>Ticker:</strong> ${esc(ev.ticker || '—')}${ev.isin ? ' · <strong>ISIN:</strong> ' + esc(ev.isin) : ''}</div>
+                <div><strong>Exchange:</strong> ${esc(ev.exchange || '—')}</div>
+                <div><strong>Match:</strong> ${matched} ${ev.match_method ? `<span class="text-sm text-muted">(${esc(ev.match_method)})</span>` : ''}</div>
+                <div><strong>Source:</strong> ${esc(ev.source_name || '—')} · ${src}</div>
+                ${ev.status ? `<div><strong>Status:</strong> ${esc(ev.status)}</div>` : ''}
+                ${ev.description ? `<div class="ce-detail-description">${esc(ev.description)}</div>` : ''}
+            </div>`;
+        if (typeof dialog.showModal === 'function') dialog.showModal();
+        else dialog.setAttribute('open', '');
+    }
+
+    async function _ceTryRefreshAthex() {
+        try {
+            const res = await postJSON(
+                `${API.corporateEventsRefresh}?portfolio_id=${encodeURIComponent(_activePortfolioId)}`,
+                {},
+            );
+            _ceState.lastStatus = res;
+            const sev = res.status === 'active' ? 'info' : 'warn';
+            _ceRenderStatusBanner(res.reason || res.status, sev);
+            await loadCorporateEvents();
+        } catch (e) {
+            _ceRenderStatusBanner('Refresh failed: ' + (e.message || 'unknown'), 'warn');
+        }
+    }
+
+    function _ceOpenImportDialog() {
+        const dlg = document.getElementById('ce-import-dialog');
+        if (!dlg) return;
+        const result = document.getElementById('ce-import-result');
+        if (result) result.innerHTML = '';
+        if (typeof dlg.showModal === 'function') dlg.showModal();
+        else dlg.setAttribute('open', '');
+    }
+
+    async function _ceSubmitImport() {
+        const ta = document.getElementById('ce-import-textarea');
+        const out = document.getElementById('ce-import-result');
+        if (!ta || !ta.value.trim()) {
+            if (out) out.innerHTML = '<span class="text-sm text-danger">Paste a CSV body first.</span>';
+            return;
+        }
+        try {
+            const res = await postJSON(API.corporateEventsImport, {
+                portfolio_id: _activePortfolioId,
+                csv_text: ta.value,
+            });
+            const errs = Array.isArray(res.errors) ? res.errors : [];
+            if (out) {
+                const errBlock = errs.length
+                    ? `<details class="ce-import-errors"><summary>${errs.length} row error(s)</summary>${
+                        errs.map(e => `<div class="text-sm">L${e.line_number} · ${esc(e.field)} — ${esc(e.message)}</div>`).join('')
+                    }</details>`
+                    : '';
+                out.innerHTML = `
+                    <div class="text-sm">
+                        Imported <strong>${res.imported}</strong> · matched ISIN <strong>${res.matched_by_isin}</strong> ·
+                        matched ticker <strong>${res.matched_by_ticker}</strong> · unmatched <strong>${res.unmatched}</strong> ·
+                        duplicates <strong>${res.skipped_duplicate}</strong>
+                    </div>
+                    ${errBlock}
+                `;
+            }
+            await loadCorporateEvents();
+        } catch (e) {
+            if (out) out.innerHTML = `<span class="text-sm text-danger">Import failed: ${esc(e.message || 'unknown')}</span>`;
+        }
+    }
+
+    function _ceCloseDialog(id) {
+        const dlg = document.getElementById(id);
+        if (!dlg) return;
+        if (typeof dlg.close === 'function') dlg.close();
+        else dlg.removeAttribute('open');
+    }
+
+    function _ceWireOnce() {
+        if (window._ceWired) return;
+        window._ceWired = true;
+
+        const bindMonth = (id, delta) => {
+            const b = document.getElementById(id);
+            if (!b) return;
+            b.addEventListener('click', () => {
+                _ceState.month = _ceShiftMonth(_ceState.month || _ceMonthOf(new Date()), delta);
+                loadCorporateEvents();
+            });
+        };
+        bindMonth('ce-month-prev', -1);
+        bindMonth('ce-month-next', 1);
+        const todayBtn = document.getElementById('ce-month-today');
+        if (todayBtn) todayBtn.addEventListener('click', () => {
+            _ceState.month = _ceMonthOf(new Date());
+            loadCorporateEvents();
+        });
+
+        const bindFilter = (id, key) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.addEventListener('change', () => {
+                _ceState.filter[key] = el.value;
+                loadCorporateEvents();
+            });
+        };
+        bindFilter('ce-event-type', 'event_type');
+        bindFilter('ce-ticker-filter', 'ticker');
+        bindFilter('ce-exchange-filter', 'exchange');
+
+        const refresh = document.getElementById('ce-refresh-btn');
+        if (refresh) refresh.addEventListener('click', _ceTryRefreshAthex);
+
+        const importBtn = document.getElementById('ce-import-btn');
+        if (importBtn) importBtn.addEventListener('click', _ceOpenImportDialog);
+        const cancelBtn = document.getElementById('ce-import-cancel');
+        if (cancelBtn) cancelBtn.addEventListener('click', () => _ceCloseDialog('ce-import-dialog'));
+        const submitBtn = document.getElementById('ce-import-submit');
+        if (submitBtn) submitBtn.addEventListener('click', _ceSubmitImport);
+        const detailClose = document.getElementById('ce-detail-close');
+        if (detailClose) detailClose.addEventListener('click', () => _ceCloseDialog('ce-detail-dialog'));
+
+        // Delegate click on calendar chips + list rows → open detail
+        const panel = document.getElementById('tab-corporate-events');
+        if (panel) {
+            panel.addEventListener('click', (ev) => {
+                const tgt = ev.target.closest('[data-ce-id]');
+                if (!tgt) return;
+                _ceOpenDetail(tgt.dataset.ceId);
+            });
+        }
+    }
+    _ceWireOnce();
 
     // ================================================================
     // Analysis Notes Tab

@@ -41,3 +41,12 @@ Go to **Insights → News**. The filter bar above the table is server-side: sear
 
 **Are source URLs safe to click?**
 Yes. Before any URL is shown in the UI or written to the support bundle, `apiKey=`, `api_key=`, `token=`, `Bearer …`, and similar parameters are replaced with `***`. The original key (if any) never leaves the local backend.
+
+**What is the difference between Insights → News and the top-level Events tab?**
+*News* (Insights → News) is the published news feed — stories collected from public sources, classified by macro factor, materiality, etc. *Events* (top-level Events tab) is the **scheduled** corporate / issuer calendar — earnings dates, dividends, AGMs, corporate actions. They live in two different tables and two different APIs (`/api/v1/events` vs `/api/v1/corporate-events`) so the lifecycles don't interfere.
+
+**Why is the ATHEX automation marked "unsupported"?**
+Athens Exchange does not currently publish a stable public machine-readable corporate-events feed. The Phase 9 release ships the full table + API + calendar UI plus a CSV-import drawer, so corporate events are usable today without inventing data. If you have an internal feed you trust, the source becomes a simple parser hook (`src/corporate_events/athex.py`).
+
+**Does the "Geography" chart on the Portfolio tab show where companies make money?**
+No — it shows the **listing country** (derived from the ISIN prefix or the exchange). Revenue geography is a separate concept that's documented but not implemented yet; treating the current chart as revenue would be misleading.

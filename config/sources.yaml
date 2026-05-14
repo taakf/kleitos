@@ -249,6 +249,40 @@ sources:
       category: general
 
   # ============================================
+  # PHASE 9 — CORPORATE EVENTS (separate from News pipeline)
+  # ============================================
+  #
+  # The ATHEX corporate-events source feeds the top-level "Events" tab,
+  # NOT the Insights → News surface.  It is `unsupported: true` in the
+  # default build because Athens Exchange does not publish a stable
+  # machine-readable corporate-events feed at a public URL — every
+  # attempt to scrape the HTML pages risks shape drift and breakage.
+  # Until a reliable endpoint is wired, the Events tab is fed by the
+  # manual CSV import path under /api/v1/corporate-events/import.
+  #
+  # Operators who do have a reliable internal endpoint can:
+  #   1. Flip `unsupported: false`
+  #   2. Set `url:` to that endpoint
+  #   3. Implement the parser hook in src/corporate_events/athex.py
+  # The Sources UI will surface this row with status="unsupported"
+  # until then, which is the honest customer-facing label.
+  - id: athex-corporate-events
+    name: ATHEX Corporate Events
+    domain: athexgroup.gr
+    type: corporate_events
+    url: https://www.athexgroup.gr/corporate-actions
+    parser: athex_corporate_events
+    priority: 3
+    trust_level: premium
+    enabled: false
+    unsupported: true
+    rate_limit_rpm: 4
+    requires_auth: false
+    tags: [corporate, calendar, greek, athex]
+    description: "Athens Exchange corporate / issuer events feed for Greek-listed holdings"
+    notes: "Phase 9 ships the table + UI + manual-import path. Automated ATHEX scraping is not enabled — Athens Exchange has no stable public machine-readable corporate-events endpoint. Use POST /api/v1/corporate-events/import to load a CSV."
+
+  # ============================================
   # TEMPLATE: Add your own sources below
   # ============================================
   # - id: my-custom-source

@@ -58,6 +58,13 @@ http://localhost:7777/dashboard
 - Show **recommended actions** with dismiss buttons
 - Dismiss one → "Stays hidden until the signal materially changes"
 
+### 2b. Corporate Events calendar (2 min, Phase 9)
+- Click the new top-level **Events** tab — separate from Insights → News.
+- Show the monthly calendar with day chips coloured by event type (earnings, dividend, AGM…).
+- Open **Import CSV** → paste a small CSV (`event_type,title,ticker,event_date` minimum) → import; show the matched / unmatched counters.
+- Click a calendar chip → detail drawer with ISIN/ticker, exchange, match method, scrubbed source link.
+- "ATHEX automation is intentionally `unsupported` in this build because Athens Exchange has no stable public corporate-events feed. The Phase 9 release ships the full schema + UI + CSV pipeline so this works today without inventing data."
+
 ### 3. News + Causal Chains (3 min)
 - Click **Insights → News**
 - Type "fed" in the search box — "**Server-side, debounced** — Source/Type/Factor/Materiality filters narrow the slice the same way."

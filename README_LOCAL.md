@@ -209,15 +209,25 @@ It does **not** include: your database file, any backup `.db` file, the raw `.en
 
 ## Terminology
 
-Three customer-facing terms that are easy to confuse — Axion uses them with these specific meanings:
+Customer-facing terms that are easy to confuse — Axion uses them with these specific meanings:
 
 | Term | What it means in the UI | Where you see it |
 |------|-------------------------|------------------|
 | **News** | Items collected from public news / regulatory / RSS / API sources (Fed press releases, market news, etc.). Each one is a record in the backend `events` table. | Dashboard → **Insights → News** sub-tab. |
 | **Insights** | The analysis layer that consumes your portfolio + news + alerts + relationships. Includes News, Analysis, Digest, and Inbox sub-tabs. | Dashboard → top-level **Insights** tab. |
-| **Corporate Events** | *Reserved for a future feature.* Will mean company-calendar items — earnings dates, dividends, general meetings, board announcements — fetched per-holding from sources like ATHEX. **Not implemented yet.** Do not confuse with News. |
+| **Events** | Scheduled corporate / issuer events — earnings dates, dividends, AGMs, corporate actions. Phase 9 targets ATHEX-listed holdings first; new sources will follow. Backed by the `corporate_events` table. | Dashboard → top-level **Events** tab (separate from Insights → News). |
+| **Listing country** | The country whose CSD issued the instrument's ISIN (or the exchange you trade it on). **Not** the company's revenue geography. Used by the ATHEX corporate-events fetcher to decide which holdings are Greek-listed. | Internal — surfaced indirectly via the Events tab. |
+| **Revenue geography** | Where the issuer actually sells. **Not implemented yet.** Will land in a dedicated future phase. Today, the "Geography" exposure chart is ISIN-derived listing country and should be read that way. | Internal — explicitly documented to prevent confusion. |
 
-The repo's backend keeps the table name `events` (matching the existing schema, API routes, and migrations); the customer-facing label for those rows is "News" / "news item". A future top-level **Events** tab will be added when corporate-calendar fetching exists.
+The repo's backend keeps the table name `events` for News (matching the existing schema, API routes, and migrations); the customer-facing label for those rows is "News" / "news item". The new top-level **Events** tab is a separate surface backed by `corporate_events` and accessed via `/api/v1/corporate-events`.
+
+### Working with the Events tab
+
+The Events tab opens on a monthly calendar; each day shows compact chips coloured by type (earnings, dividend, AGM, etc.). The filter row above the calendar narrows by **event type**, **holding**, and **exchange**; the **Refresh ATHEX** button asks the ATHEX source for fresh data; **Import CSV** opens a drawer that accepts a hand-prepared CSV.
+
+CSV columns (case-insensitive): `event_type`, `title`, `event_date` (YYYY-MM-DD or DD/MM/YYYY), at least one of `ticker` / `isin`. Optional: `exchange`, `event_time`, `timezone`, `description`, `url`, `status`, `external_id`. Rows match to holdings by ISIN first, then ticker, scoped to the active portfolio. Unmatched rows are still imported and tagged so an operator can audit them.
+
+**ATHEX automation status — honest:** Athens Exchange does not currently publish a stable public machine-readable corporate-events feed. The Sources panel marks `athex-corporate-events` as *Unsupported* and `Refresh ATHEX` returns a customer-safe explanation. The Phase 9 release ships the table, API, UI, and CSV pipeline so the feature is usable today; once a reliable endpoint exists, only `src/corporate_events/athex.py` needs to be implemented.
 
 ## What this is NOT
 

@@ -778,6 +778,110 @@ class SavedView(Base):
 
 
 # ---------------------------------------------------------------------------
+# Phase 9 — Corporate / issuer events
+#
+# Deliberately a separate table from ``events`` (news).  Rationale:
+#   * different lifecycle: corporate events are *scheduled* (have a
+#     forward-looking ``event_date``), news items are *published*.
+#   * different match key: corporate events match to a holding via
+#     ISIN→ticker, not via free-text title extraction.
+#   * different ownership: news rows may be portfolio-agnostic while
+#     corporate events are typed to a holding (or to a Greek-listed
+#     ticker the user may import in the future).
+# Keeping them apart means /api/v1/events behaviour is untouched by
+# Phase 9.  See docs/CUSTOMER_QUICKSTART.md for the customer-facing
+# distinction.
+# ---------------------------------------------------------------------------
+
+
+class CorporateEvent(Base):
+    """A scheduled corporate / issuer event (earnings, dividend, AGM, …).
+
+    Phase 9 — first source is ATHEX for Greek-listed holdings.  Other
+    exchanges may be added in later phases; the schema is exchange-
+    agnostic on purpose.
+
+    Match strategy
+    --------------
+    A row may be matched to a holding via ``holding_id`` (resolved at
+    import / fetch time using ISIN first, then ticker).  Unmatched rows
+    are still stored when the ticker / ISIN does not correspond to any
+    holding in the active portfolio — that lets the user keep an audit
+    trail and lets the UI render "for ticker X, no holding matched".
+
+    Source provenance
+    -----------------
+    ``source_id`` / ``source_name`` carry the registry id + display
+    name (e.g. ``athex-corporate-events`` / ``ATHEX Corporate Events``)
+    or ``manual_csv`` for operator-uploaded rows.  ``raw_payload`` is
+    the scrubbed source row in JSON form for full audit.
+    """
+
+    __tablename__ = "corporate_events"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+
+    # Portfolio scoping — corporate events ARE portfolio-scoped because
+    # the relevance of an event depends on whether the user holds the
+    # ticker.  The same upstream ATHEX feed can produce rows for
+    # multiple portfolios, each pinned via this FK.
+    portfolio_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("portfolios.id"), nullable=False
+    )
+    holding_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("holdings.id")
+    )
+
+    # Issuer identifiers — at least one of ticker / isin must be set
+    # by the importer; we keep both nullable so the matcher can choose.
+    ticker: Mapped[str | None] = mapped_column(Text)
+    isin: Mapped[str | None] = mapped_column(Text)
+    exchange: Mapped[str | None] = mapped_column(Text)  # ATHEX, …
+
+    # Source provenance
+    source_id: Mapped[str | None] = mapped_column(Text)
+    source_name: Mapped[str | None] = mapped_column(Text)
+    source_url: Mapped[str | None] = mapped_column(Text)
+    external_id: Mapped[str | None] = mapped_column(Text)
+
+    # Event body
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    event_date: Mapped[str] = mapped_column(Text, nullable=False)   # ISO date (YYYY-MM-DD)
+    event_time: Mapped[str | None] = mapped_column(Text)            # ISO time (HH:MM)
+    timezone: Mapped[str | None] = mapped_column(Text)              # IANA tz name
+    status: Mapped[str | None] = mapped_column(Text)                # raw vendor status, optional
+    confidence: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="unscored"
+    )
+    match_method: Mapped[str | None] = mapped_column(Text)          # isin | ticker | unmatched
+
+    # Audit / dedup
+    dedup_hash: Mapped[str | None] = mapped_column(Text)
+    raw_payload: Mapped[str | None] = mapped_column(Text)           # JSON, scrubbed
+    import_batch_id: Mapped[str | None] = mapped_column(Text)       # manual_csv batch grouping
+
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "portfolio_id", "dedup_hash",
+            name="uq_corporate_events_portfolio_dedup",
+        ),
+        Index("ix_corporate_events_portfolio_id", "portfolio_id"),
+        Index("ix_corporate_events_holding_id", "holding_id"),
+        Index("ix_corporate_events_ticker", "ticker"),
+        Index("ix_corporate_events_isin", "isin"),
+        Index("ix_corporate_events_event_date", "event_date"),
+        Index("ix_corporate_events_event_type", "event_type"),
+        Index("ix_corporate_events_source_id", "source_id"),
+        Index("ix_corporate_events_exchange", "exchange"),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Schema versioning
 # ---------------------------------------------------------------------------
 

@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Current schema version — increment this when adding a new migration step.
 # ---------------------------------------------------------------------------
-CURRENT_SCHEMA_VERSION = 8
+CURRENT_SCHEMA_VERSION = 9
 
 # ---------------------------------------------------------------------------
 # Migration steps
@@ -586,6 +586,71 @@ def _migrate_v8(sync_conn) -> None:
         logger.info("Created saved_views table (Phase 9U)")
 
 
+def _migrate_v9(sync_conn) -> None:
+    """V9: Phase 9 corporate-events calendar foundation.
+
+    1. Create ``corporate_events`` table if missing.
+    2. Add the indexes the API filters use: portfolio_id, holding_id,
+       ticker, isin, event_date, event_type, source_id, exchange.
+    3. Add the unique constraint on ``(portfolio_id, dedup_hash)`` so
+       repeated imports (manual CSV or ATHEX poll) stay idempotent.
+
+    All operations are additive and idempotent.  Nothing else is
+    touched — the existing ``events`` (news) table behaviour stays
+    byte-identical.
+    """
+    inspector = inspect(sync_conn)
+    existing_tables = set(inspector.get_table_names())
+
+    if "corporate_events" not in existing_tables:
+        sync_conn.execute(text("""
+            CREATE TABLE corporate_events (
+                id TEXT PRIMARY KEY,
+                portfolio_id TEXT NOT NULL,
+                holding_id TEXT,
+                ticker TEXT,
+                isin TEXT,
+                exchange TEXT,
+                source_id TEXT,
+                source_name TEXT,
+                source_url TEXT,
+                external_id TEXT,
+                event_type TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT,
+                event_date TEXT NOT NULL,
+                event_time TEXT,
+                timezone TEXT,
+                status TEXT,
+                confidence TEXT NOT NULL DEFAULT 'unscored',
+                match_method TEXT,
+                dedup_hash TEXT,
+                raw_payload TEXT,
+                import_batch_id TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (portfolio_id) REFERENCES portfolios(id),
+                FOREIGN KEY (holding_id) REFERENCES holdings(id),
+                CONSTRAINT uq_corporate_events_portfolio_dedup
+                    UNIQUE (portfolio_id, dedup_hash)
+            )
+        """))
+        for col, idx_name in (
+            ("portfolio_id", "ix_corporate_events_portfolio_id"),
+            ("holding_id",   "ix_corporate_events_holding_id"),
+            ("ticker",       "ix_corporate_events_ticker"),
+            ("isin",         "ix_corporate_events_isin"),
+            ("event_date",   "ix_corporate_events_event_date"),
+            ("event_type",   "ix_corporate_events_event_type"),
+            ("source_id",    "ix_corporate_events_source_id"),
+            ("exchange",     "ix_corporate_events_exchange"),
+        ):
+            sync_conn.execute(text(
+                f"CREATE INDEX {idx_name} ON corporate_events ({col})"
+            ))
+        logger.info("Created corporate_events table (Phase 9)")
+
+
 # ---------------------------------------------------------------------------
 # Migration registry
 # ---------------------------------------------------------------------------
@@ -598,6 +663,7 @@ _MIGRATIONS: list[tuple[int, str, callable]] = [
     (6, "add notification inbox read state (Phase 9P)", _migrate_v6),
     (7, "add recommended action dismiss/read state (Phase 9T)", _migrate_v7),
     (8, "add saved analytical views (Phase 9U)", _migrate_v8),
+    (9, "add corporate-events calendar (Phase 9)", _migrate_v9),
 ]
 
 

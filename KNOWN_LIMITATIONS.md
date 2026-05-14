@@ -25,8 +25,14 @@ the bundled source uses the general `/news` endpoint which works on the free tie
 ### OAuth — not implemented
 Axion does not yet ship any OAuth integration. There is no broker sync, no Google / Microsoft account linking, no paid-data-source authentication. Anthropic / OpenAI / Google Gemini AI providers use static API keys entered in **Settings → AI Configuration** and are the only credential type the customer has to manage today. See [`docs/OAUTH_ROADMAP.md`](docs/OAUTH_ROADMAP.md) for the design intent.
 
-### Corporate Events calendar — not implemented yet
-A future top-level **Events** tab is planned for company-calendar items (earnings dates, dividends, general meetings, board announcements, corporate actions). It will fetch per-holding from exchanges like ATHEX. **This feature does not exist yet.** The current "News" sub-tab under Insights shows news/regulatory items from RSS feeds — it does **not** show corporate calendar events. Do not market or document Axion as having a corporate events feed until the integration ships.
+### Corporate Events calendar — Phase 9 foundation shipped, ATHEX automation still degraded
+The top-level **Events** tab now exists (separate from Insights → News) and is backed by the `corporate_events` table, `/api/v1/corporate-events`, and a monthly calendar UI. The Phase 9 release ships:
+* Schema + migration `v9` (corporate_events with indexes on portfolio_id, holding_id, ticker, isin, event_date, event_type, exchange).
+* Listing/ATHEX detection (ISIN prefix `GR`, venue alias, ticker `.AT` suffix).
+* Manual CSV import path with ISIN-then-ticker matching, per-row validation, dedup, and URL scrubbing.
+* `POST /api/v1/corporate-events/refresh` returns a typed honest status — `unsupported` in the default build.
+
+**ATHEX automation is intentionally NOT enabled yet.** Athens Exchange does not currently publish a stable public machine-readable corporate-events feed; the Sources panel marks `athex-corporate-events` as **Unsupported** with a customer-safe note pointing at the CSV import. When a reliable upstream feed becomes available, only `src/corporate_events/athex.py` needs to be implemented — the schema, API, and UI are stable. Do not market or document Axion as having an automated ATHEX corporate-events feed until that work lands.
 
 ### Automated Price Data
 The `price_history` and `portfolio_snapshots` database tables exist but are not populated automatically.

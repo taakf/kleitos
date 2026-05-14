@@ -56,7 +56,10 @@ class TestTopLevelNavigation:
     introduced by Phase 5.
     """
 
-    EXPECTED_TABS = ["Portfolio", "Insights", "Alerts", "Assistant", "Settings"]
+    # Phase 9 inserted a new top-level "Events" tab between "Insights"
+    # (which still hosts the News sub-tab) and "Alerts" so corporate
+    # / issuer events have a first-class customer surface.
+    EXPECTED_TABS = ["Portfolio", "Insights", "Events", "Alerts", "Assistant", "Settings"]
 
     def _extract_top_tab_labels(self, html: str) -> list[str]:
         # Match <button class="tab-link …" …>Label optional<span…></span></button>
@@ -277,9 +280,16 @@ class TestApiRouteStability:
 
 
 class TestDocsTerminology:
-    """Customer-facing docs must not describe the current news feed as the
-    'Events tab'. Backend / developer docs may still mention 'events' the
-    table.
+    """Customer-facing docs must keep the News-vs-Events split clear.
+
+    Phase 5 banned the term "Events" for the news feed; Phase 9 *introduces*
+    a real top-level **Events** tab for scheduled corporate events.  The
+    invariants now are:
+
+    * The news feed is **never** called "Events sub-tab" or
+      "Intelligence → Events" / "Insights → Events".
+    * The phrase "Events tab" is now allowed because it refers to the new
+      top-level corporate-events surface.
     """
 
     CUSTOMER_DOCS = [
@@ -292,11 +302,13 @@ class TestDocsTerminology:
         "KNOWN_LIMITATIONS.md",
     ]
 
+    #: Phrases that would (re-)conflate the news feed with the Events tab.
     BANNED_PHRASES = [
-        "Events tab",
         "Events sub-tab",
         "Intelligence → Events",
         "Intelligence -> Events",
+        "Insights → Events",
+        "Insights -> Events",
     ]
 
     @pytest.mark.parametrize("doc_path", CUSTOMER_DOCS)
@@ -304,21 +316,26 @@ class TestDocsTerminology:
         full = (PROJECT_ROOT / doc_path).read_text(encoding="utf-8")
         for phrase in self.BANNED_PHRASES:
             assert phrase not in full, (
-                f"{doc_path} still uses {phrase!r} — Phase 5 renames customer-"
-                f"facing 'Events' to 'News' for the news feed."
+                f"{doc_path} still uses {phrase!r} — Phase 5/9 keeps the "
+                f"news feed labelled 'News' under Insights; the Events tab "
+                f"is the separate top-level corporate-events surface."
             )
 
     def test_readme_local_has_terminology_section(self):
         readme = (PROJECT_ROOT / "README_LOCAL.md").read_text(encoding="utf-8")
         assert "## Terminology" in readme
-        # The three terms must all be explicitly defined.
+        # All four customer-facing terms must be defined.
         assert "**News**" in readme
         assert "**Insights**" in readme
-        assert "**Corporate Events**" in readme
-        # And the reservation must be explicit — corporate events do not exist yet.
-        assert "Not implemented yet" in readme or "not implemented" in readme.lower()
+        assert "**Events**" in readme
+        # Phase 9 also documents the listing-country vs revenue-geography split.
+        assert "**Listing country**" in readme
+        assert "**Revenue geography**" in readme
 
     def test_known_limitations_mentions_corporate_events(self):
         kl = (PROJECT_ROOT / "KNOWN_LIMITATIONS.md").read_text(encoding="utf-8")
         assert "Corporate Events calendar" in kl
-        assert "does not exist yet" in kl.lower() or "not implemented" in kl.lower()
+        # Phase 9 shipped the foundation but ATHEX automation is intentionally
+        # not enabled yet — that honest framing must stay in the doc.
+        assert "Unsupported" in kl or "unsupported" in kl
+        assert "ATHEX" in kl

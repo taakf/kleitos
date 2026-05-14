@@ -3030,3 +3030,158 @@ th.sortable.sort-desc::after { content: '\25BC'; opacity: 0.8; color: var(--prim
     color: var(--muted-foreground);
     line-height: 1.4;
 }
+
+/* ================================================================ */
+/* Phase 9 — Corporate Events tab (top-level)                       */
+/* ================================================================ */
+
+.ce-status-banner {
+    border-radius: var(--radius);
+    padding: 0.55rem 0.85rem;
+    margin-bottom: 0.6rem;
+    font-size: 0.85rem;
+    background: var(--surface);
+    color: var(--muted-fg);
+    border-left: 4px solid var(--border);
+}
+.ce-status-banner[data-severity="warn"] {
+    background: var(--warning-bg);
+    color: var(--warning);
+    border-left-color: var(--warning);
+}
+
+.ce-calendar-wrap {
+    margin: 0.4rem 0 0.85rem;
+}
+.ce-calendar-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+}
+.ce-month-label {
+    flex: 1;
+    margin: 0;
+    text-align: center;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--foreground);
+}
+
+.ce-calendar {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    background: var(--card);
+}
+.ce-cal-header-row {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+}
+.ce-cal-head {
+    padding: 0.4rem 0.5rem;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--muted-fg);
+    text-align: center;
+}
+.ce-cal-body {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+}
+.ce-cal-cell {
+    min-height: 5.5rem;
+    padding: 0.4rem 0.45rem 0.35rem;
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    background: var(--card);
+}
+.ce-cal-cell:nth-child(7n) { border-right: none; }
+.ce-cal-pad { background: var(--surface); opacity: 0.5; }
+.ce-cal-today { background: var(--primary-bg); }
+.ce-cal-day-num {
+    font-size: 0.72rem;
+    color: var(--muted-fg);
+    font-weight: 600;
+}
+.ce-cal-chip {
+    text-align: left;
+    display: block;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--foreground);
+    border-radius: 999px;
+    padding: 0.12rem 0.45rem;
+    font-size: 0.66rem;
+    cursor: pointer;
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.ce-cal-chip:hover { background: var(--primary-bg); color: var(--primary); border-color: var(--primary); }
+.ce-cal-chip.ce-chip-earnings       { border-color: var(--primary); color: var(--primary); }
+.ce-cal-chip.ce-chip-dividend       { border-color: hsl(140, 50%, 55%); color: hsl(140, 60%, 50%); }
+.ce-cal-chip.ce-chip-agm,
+.ce-cal-chip.ce-chip-egm            { border-color: hsl(280, 50%, 60%); color: hsl(280, 60%, 60%); }
+.ce-cal-chip.ce-chip-corporate_action { border-color: hsl(30, 60%, 55%); color: hsl(30, 70%, 55%); }
+.ce-cal-chip.ce-chip-announcement   { border-color: var(--border); color: var(--muted-fg); }
+.ce-cal-chip.ce-chip-other          { border-color: var(--border); color: var(--muted-fg); }
+.ce-cal-chip.ce-chip-more           { background: var(--surface); color: var(--muted-fg); cursor: default; }
+
+.ce-list-heading {
+    margin: 0.4rem 0 0.6rem;
+    font-size: 0.95rem;
+    color: var(--muted-fg);
+    font-weight: 600;
+}
+.ce-list-row { cursor: pointer; }
+.ce-list-row:hover { background: var(--surface); }
+
+/* Drawers */
+.ce-dialog {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: var(--card);
+    color: var(--foreground);
+    padding: 1rem 1.1rem;
+    max-width: 720px;
+    width: 95vw;
+}
+.ce-dialog::backdrop { background: rgba(0,0,0,0.4); }
+.ce-import-textarea {
+    width: 100%;
+    margin-top: 0.6rem;
+    padding: 0.55rem 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--foreground);
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    font-size: 0.8rem;
+    resize: vertical;
+}
+.ce-import-result { margin: 0.6rem 0; }
+.ce-import-errors { margin-top: 0.4rem; }
+.ce-import-errors summary { cursor: pointer; font-size: 0.85rem; color: var(--warning); }
+.ce-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.5rem;
+    margin-top: 0.7rem;
+}
+
+.ce-detail-grid { display: flex; flex-direction: column; gap: 0.45rem; font-size: 0.88rem; }
+.ce-detail-description {
+    border-left: 3px solid var(--border);
+    padding-left: 0.6rem;
+    color: var(--muted-fg);
+    margin-top: 0.3rem;
+}
+

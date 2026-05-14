@@ -19,6 +19,7 @@ from src.api.routes import (
     analysis,
     audit,
     chat,
+    corporate_events,
     digests,
     events,
     export,
@@ -248,6 +249,7 @@ app.include_router(health.router)
 app.include_router(portfolios.router)
 app.include_router(portfolio.router)
 app.include_router(events.router)
+app.include_router(corporate_events.router)
 app.include_router(analysis.router)
 app.include_router(alerts.router)
 app.include_router(digests.router)

@@ -94,6 +94,23 @@ Run from the project root with the venv active.
   - Settings → Sources UI uses the Phase 7 status vocabulary and `Auth env var` column.
   - Customer docs name `NEWSAPI_KEY` and `FINNHUB_KEY` and never claim Bloomberg / FactSet / ATHEX corporate events.
 
+- [ ] **Corporate-events foundation regressions pass**
+  ```bash
+  python -m pytest -q tests/unit/test_phase9_corporate_events.py
+  ```
+  Must report all green. Covers:
+  - Migration `v9` creates `corporate_events` with the required columns and indexes; `run_migrations()` is idempotent.
+  - `ISIN_COUNTRY_MAP` now resolves `GR` → `greece` and the new `src.intelligence.listing` helper detects ATHEX-listed holdings via venue alias, ISIN prefix, and ticker suffix in that priority order.
+  - `config/sources.yaml` declares the `athex-corporate-events` row as `type: corporate_events`, `unsupported: true`, `enabled: false`, with a customer-safe note pointing at the manual-import path.
+  - `fetch_athex_events()` returns a typed `unsupported`/`degraded` result by default — no fake events, ever.
+  - `parse_csv()` enforces required fields, normalises canonical/aliased event types and ISO/European dates, scrubs URLs, and auto-fills `exchange=ATHEX` when the listing detector says so.
+  - `import_csv()` matches ISIN-first then ticker, keeps unmatched rows with `match_method='unmatched'`, and dedupes on repeated imports.
+  - `GET /api/v1/corporate-events` honours every filter (month, event_type, ticker, holding_id, isin, exchange, date_from/to), returns a bare list by default, an `{items,total,limit,offset,has_more}` envelope under `?envelope=true`, and always sets `X-Total-Count` / `X-Has-More`.
+  - `POST /api/v1/corporate-events/import` returns row-level errors; `POST /api/v1/corporate-events/refresh` returns the honest `unsupported`/`degraded` body.
+  - Multi-portfolio isolation: pA rows never bleed into pB queries.
+  - Source URLs are scrubbed of `apiKey=` / `token=` patterns on every list + detail response.
+  - Dashboard markup carries the top-level `Events` tab (`data-tab="corporate-events"`, `tab-corporate-events` panel), the calendar grid, filter controls, and the Import/Detail dialogs. The Insights → News surface is unchanged.
+
 - [ ] **News-tab hardening regressions pass**
   ```bash
   python -m pytest -q tests/unit/test_phase8_news.py
