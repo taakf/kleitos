@@ -23,6 +23,7 @@ never returns secrets and is safe to call from anywhere local.
 
 from __future__ import annotations
 
+import os
 import platform
 import sqlite3
 import sys
@@ -207,6 +208,12 @@ class DiagnosticsResponse(BaseModel):
     llm_provider: str | None
     telegram_configured: bool
 
+    # Phase 7: per-status source counts. Keys are the normalized
+    # vocabulary (active / disabled / missing_key / degraded /
+    # rate_limited / unreachable / parser_error / unsupported /
+    # misconfigured / error) plus ``total``.
+    sources_by_status: dict[str, int] = {}
+
     # If anything failed during collection, surface it here (no traceback).
     warnings: list[str]
 
@@ -323,6 +330,37 @@ async def get_diagnostics() -> DiagnosticsResponse:
     tg = settings.telegram
     telegram_configured = bool(tg.token and tg.chat_ids)
 
+    # ── Source status summary (Phase 7) ─────────────────────────────────
+    # Combine YAML metadata with whatever rows survived in the DB. The
+    # health list is the same data the dashboard renders, so the counts
+    # here will always match what the customer sees.
+    sources_by_status: dict[str, int] = {}
+    try:
+        from src.sources.registry import SourceRegistry
+        from src.sources.source_status import summarise_by_status
+        from src.config import PROJECT_ROOT
+
+        registry = SourceRegistry(PROJECT_ROOT / "config" / "sources.yaml")
+        # Lightweight summary — we don't need every field, just the
+        # status. For each YAML-declared source, derive the same
+        # status the sources/health endpoint would return, without
+        # opening a DB session (this endpoint must remain safe even
+        # when the DB is unreadable).
+        healths_lite: list[dict] = []
+        for cfg in registry.get_all_sources():
+            if cfg.unsupported:
+                status = "unsupported"
+            elif not cfg.enabled:
+                status = "disabled"
+            elif cfg.requires_auth and not os.environ.get(cfg.auth_env_var or "", ""):
+                status = "missing_key"
+            else:
+                status = "active"
+            healths_lite.append({"status": status})
+        sources_by_status = summarise_by_status(healths_lite)
+    except Exception as exc:  # noqa: BLE001
+        warnings.append(f"sources_by_status unavailable: {exc}")
+
     # ── App identity ────────────────────────────────────────────────────
     try:
         from src.config import Settings as _S  # noqa: F401  (just to anchor import)
@@ -356,5 +394,6 @@ async def get_diagnostics() -> DiagnosticsResponse:
         llm_configured=llm_configured,
         llm_provider=llm_provider,
         telegram_configured=telegram_configured,
+        sources_by_status=sources_by_status,
         warnings=warnings,
     )

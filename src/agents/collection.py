@@ -1210,6 +1210,7 @@ class CollectionAgent(BaseAgent):
         from src.sources.registry import SourceConfig, SourceRegistry
         from src.sources.parsers.rss_generic import RSSGenericParser
         from src.sources.parsers.newsapi import NewsAPIParser
+        from src.sources.parsers.finnhub import FinnhubParser
         from src.config import PROJECT_ROOT
 
         # Build a SourceConfig from the DB-sourced dict
@@ -1229,9 +1230,10 @@ class CollectionAgent(BaseAgent):
 
         fetcher = SourceFetcher(registry=registry, timeout=30.0, max_retries=3)
 
-        # Collect API keys from environment
+        # Collect API keys from environment. Phase 7: also pick up
+        # FINNHUB_KEY now that the finnhub parser ships.
         api_keys: dict[str, str] = {}
-        for var in ("NEWSAPI_KEY", "ALPHAVANTAGE_KEY"):
+        for var in ("NEWSAPI_KEY", "FINNHUB_KEY", "ALPHAVANTAGE_KEY"):
             val = os.environ.get(var, "")
             if val:
                 api_keys[var] = val
@@ -1246,10 +1248,12 @@ class CollectionAgent(BaseAgent):
                 logger.warning("Fetch failed for source %s: %s", source["id"], result.error)
             return []
 
-        # Dispatch to parser
+        # Dispatch to parser. Phase 7: ``finnhub`` parser added.
         parser_id = source.get("parser_id", "rss_generic")
         if parser_id == "newsapi":
             parser = NewsAPIParser()
+        elif parser_id == "finnhub":
+            parser = FinnhubParser()
         else:
             parser = RSSGenericParser()
 

@@ -1,7 +1,10 @@
 # Axion — Client FAQ
 
 **Is this live data?**
-Yes. News events are collected from real RSS feeds (Federal Reserve, ECB, Google News, MarketWatch). Holdings are imported from your portfolio file. All classifications run in real time.
+Yes. News is collected from real public RSS feeds (Federal Reserve, ECB, Google News, MarketWatch, WSJ Markets, Seeking Alpha, Investing.com). Holdings are imported from your portfolio file. All classifications run on the data Axion has actually fetched.
+
+**Which sources need a key?**
+Most don't. The bundled defaults are public RSS — no keys, no signup. Two optional API-key sources are wired up: **NewsAPI** (`NEWSAPI_KEY`) and **Finnhub** (`FINNHUB_KEY`). While the key is missing they show as *Missing key* in Settings → News Sources; that's expected, not an error. Subscription / paid sources (Bloomberg, FactSet, Refinitiv, S&P Capital IQ) are not bundled.
 
 **What works without AI?**
 Everything you see in the demo: macro factor classification, relationship graph, risk alerts, severity filtering, recommended actions, digest generation, inbox, operator overrides, audit trail, exports, deep links, and saved views. The core engine is fully deterministic.

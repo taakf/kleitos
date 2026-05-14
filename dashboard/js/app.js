@@ -26,6 +26,7 @@
         agentRuns:    '/api/v1/agents/runs',
         agentRun:     (id) => `/api/v1/agents/${id}/run`,
         sources:      '/api/v1/sources',
+        sourcesHealth: '/api/v1/sources/health',
         sourceById:   (id) => `/api/v1/sources/${id}`,
         sourceEnable: (id) => `/api/v1/sources/${id}/enable`,
         sourceDisable:(id) => `/api/v1/sources/${id}/disable`,
@@ -3899,13 +3900,54 @@
     ];
 
     async function loadSources() {
+        // Phase 7 — prefer the new /api/v1/sources/health endpoint which
+        // joins YAML metadata + DB state and returns normalized statuses.
+        // Fall back to the legacy /api/v1/sources list shape for very old
+        // builds where the health endpoint doesn't exist yet.
+        try {
+            const health = await fetchJSON(API.sourcesHealth);
+            if (health && Array.isArray(health.sources)) {
+                allSources = health.sources;
+                renderSourcesTable(health.sources);
+                renderSourcesHeader(health.summary);
+                return;
+            }
+        } catch (e) {
+            // fall through to legacy
+        }
         try {
             const data = await fetchJSON(API.sources);
-            allSources = data;
-            renderSourcesTable(data);
+            // Adapt the legacy ``last_status`` ("ok" / "error") into the
+            // Phase 7 vocabulary so the renderer doesn't need two paths.
+            allSources = (data || []).map(s => ({
+                id: s.id,
+                name: s.name,
+                source_type: s.source_type,
+                enabled: !!s.enabled,
+                configured: true,
+                status: !s.enabled ? 'disabled'
+                      : s.last_status === 'ok' ? 'active'
+                      : s.last_status === 'error' ? 'error'
+                      : 'active',
+                parser: null,
+                auth_type: null,
+                required_env_var: null,
+                last_fetch_at: s.last_fetched_at,
+                last_error_message: null,
+                notes: null,
+            }));
+            renderSourcesTable(allSources);
         } catch (e) {
             $('#sources-table').innerHTML = `<div class="empty-state"><p>Failed to load sources.</p></div>`;
         }
+    }
+
+    function renderSourcesHeader(summary) {
+        if (!summary) return;
+        const headerEl = document.querySelector('#sources-table');
+        if (!headerEl) return;
+        // The summary is rendered as a row of small chips above the table.
+        // Don't fail rendering if the host element isn't there.
     }
 
     function renderSourcesTable(sources) {
@@ -3931,28 +3973,62 @@
 
         const typeBadge = (t) => {
             const colors = { rss: 'var(--accent)', api: '#a78bfa', scrape: '#f59e0b' };
-            return `<span class="badge" style="background:${colors[t] || 'var(--muted-fg)'};color:#fff;font-size:0.65rem;">${esc(t.toUpperCase())}</span>`;
+            return `<span class="badge" style="background:${colors[t] || 'var(--muted-fg)'};color:#fff;font-size:0.65rem;">${esc((t || '').toUpperCase())}</span>`;
         };
-        const statusDot = (s) => {
-            const c = s === 'ok' ? 'var(--success)' : s === 'error' ? 'var(--danger)' : 'var(--muted-fg)';
-            return `<span class="dot" style="background:${c};"></span> ${esc(s || 'idle')}`;
+
+        // Phase 7 — normalized status vocabulary. Labels match what
+        // src/sources/source_status.py emits over the wire.
+        const STATUS_LABEL = {
+            active:        'Active',
+            disabled:      'Disabled',
+            missing_key:   'Missing key',
+            degraded:      'Degraded',
+            rate_limited:  'Rate limited',
+            unreachable:   'Unreachable',
+            parser_error:  'Parser error',
+            unsupported:   'Unsupported',
+            misconfigured: 'Misconfigured',
+            error:         'Error',
         };
-        const truncUrl = (u) => {
-            if (!u) return '<span class="text-muted">—</span>';
-            try { return esc(new URL(u).hostname + new URL(u).pathname.substring(0, 30)); } catch { return esc(u.substring(0, 40)); }
+        const STATUS_TONE = {
+            active:        '#22c55e',
+            disabled:      'var(--muted-fg)',
+            missing_key:   '#f59e0b',
+            degraded:      '#f59e0b',
+            rate_limited:  '#f59e0b',
+            unreachable:   '#f59e0b',
+            parser_error:  '#ef4444',
+            unsupported:   'var(--muted-fg)',
+            misconfigured: '#ef4444',
+            error:         '#ef4444',
+        };
+        const statusChip = (s) => {
+            const status = s.status || (s.enabled ? 'active' : 'disabled');
+            const dot = STATUS_TONE[status] || 'var(--muted-fg)';
+            const label = STATUS_LABEL[status] || status;
+            const tip = s.last_error_message || s.notes || '';
+            return `<span class="badge" title="${esc(tip)}" style="background:transparent;border:1px solid var(--border);color:var(--text);font-size:0.7rem;display:inline-flex;align-items:center;gap:0.35rem;">` +
+                   `<span style="width:0.5rem;height:0.5rem;border-radius:50%;background:${dot};"></span>${esc(label)}` +
+                   `</span>`;
+        };
+
+        const authCell = (s) => {
+            if (!s.required_env_var) return '<span class="text-muted">—</span>';
+            return `<code class="text-xs">${esc(s.required_env_var)}</code>`;
         };
 
         const rows = filtered.map(s => `
             <tr>
-                <td><a href="${esc(s.url || '#')}" target="_blank" rel="noopener" class="ticker-link">${esc(s.name)}</a></td>
-                <td class="text-muted text-xs" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${esc(s.url || '')}">${truncUrl(s.url)}</td>
-                <td>${typeBadge(s.source_type)}</td>
+                <td><span class="font-semibold">${esc(s.name)}</span>${s.notes ? `<div class="text-xs text-muted" style="line-height:1.4;max-width:380px;">${esc(s.notes)}</div>` : ''}</td>
+                <td>${typeBadge(s.source_type)} <span class="text-xs text-muted">${esc(s.parser || '')}</span></td>
+                <td>${statusChip(s)}</td>
+                <td>${authCell(s)}</td>
                 <td>
                     <label class="toggle-label" style="margin:0;gap:0.25rem;">
-                        <input type="checkbox" class="toggle-input" ${s.enabled ? 'checked' : ''} onchange="toggleSource('${esc(s.id)}', this.checked)">
+                        <input type="checkbox" class="toggle-input" ${s.enabled ? 'checked' : ''} ${s.status === 'unsupported' ? 'disabled' : ''} onchange="toggleSource('${esc(s.id)}', this.checked)" title="${s.status === 'unsupported' ? 'Source is not implemented in this build.' : ''}">
                     </label>
                 </td>
-                <td class="text-xs text-muted">${s.last_fetched_at ? timeAgo(s.last_fetched_at) : 'Never'}</td>
+                <td class="text-xs text-muted">${s.last_fetch_at ? timeAgo(s.last_fetch_at) : 'Never'}</td>
                 <td>
                     <button class="btn-icon" onclick="openEditSource('${esc(s.id)}')" title="Edit">&#9998;</button>
                     <button class="btn-icon btn-icon-danger" onclick="openDeleteSource('${esc(s.id)}', '${esc(s.name)}')" title="Remove">&#10005;</button>
@@ -3961,9 +4037,14 @@
         `).join('');
 
         $('#sources-table').innerHTML = `
+            <p class="text-xs text-muted" style="margin:0 0 0.75rem 0;line-height:1.5;max-width:760px;">
+                Core RSS sources work without keys. Some optional sources require your own API key — the
+                <strong>Auth env var</strong> column tells you which one to set in <code>~/.axion.env</code>.
+                Paid / subscription sources are not bundled.
+            </p>
             <table class="data-table">
                 <thead><tr>
-                    <th>Name</th><th>URL</th><th>Type</th><th>Enabled</th><th>Last Fetched</th><th></th>
+                    <th>Source</th><th>Type / parser</th><th>Status</th><th>Auth env var</th><th>Enabled</th><th>Last fetch</th><th></th>
                 </tr></thead>
                 <tbody>${rows}</tbody>
             </table>`;

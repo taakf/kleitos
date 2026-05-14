@@ -43,11 +43,13 @@ sources:
     parser: sec_edgar
     priority: 1
     trust_level: premium
-    enabled: false  # Parser not yet implemented (V2). Enable after sec_edgar parser is added.
+    enabled: false
+    unsupported: true
     rate_limit_rpm: 10
     requires_auth: false
     tags: [filings, regulatory, us, corporate]
     description: "US SEC filings and corporate disclosures"
+    notes: "Parser not implemented in this build. Toggling enabled has no effect; needs the sec_edgar parser before it can fetch."
 
   - id: fed-rss
     name: Federal Reserve Press Releases
@@ -213,32 +215,38 @@ sources:
     parser: newsapi
     priority: 3
     trust_level: standard
-    enabled: false   # Enable after adding NEWSAPI_KEY to .env
-    rate_limit_rpm: 2   # Free tier is limited
+    enabled: false
+    rate_limit_rpm: 2
     requires_auth: true
     auth_type: api_key
     auth_env_var: NEWSAPI_KEY
+    auth_param_name: apiKey
     tags: [general, corporate]
     description: "Aggregated news from multiple outlets"
+    notes: "Set NEWSAPI_KEY in ~/.axion.env and enable to fetch. NewsAPI's free tier is limited (~100 requests/day, development use); review newsapi.org for current terms."
     params:
       category: business
       language: en
 
   - id: finnhub-news
-    name: Finnhub Company News
+    name: Finnhub Market News
     domain: finnhub.io
     type: api
-    url: https://finnhub.io/api/v1/company-news
+    url: https://finnhub.io/api/v1/news
     parser: finnhub
     priority: 2
     trust_level: standard
-    enabled: false   # Enable after adding FINNHUB_KEY to .env
+    enabled: false
     rate_limit_rpm: 30
     requires_auth: true
     auth_type: api_key
     auth_env_var: FINNHUB_KEY
+    auth_param_name: token
     tags: [corporate, earnings, analyst]
-    description: "Company-specific news and events"
+    description: "Finnhub general market news"
+    notes: "Set FINNHUB_KEY in ~/.axion.env and enable. Uses the general /news endpoint (works with a free Finnhub key)."
+    params:
+      category: general
 
   # ============================================
   # TEMPLATE: Add your own sources below

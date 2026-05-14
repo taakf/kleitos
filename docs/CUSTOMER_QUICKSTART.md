@@ -104,9 +104,22 @@ Keys are stored at `~/.axion.env` with `600` permissions on your machine. They a
 
 ## 6. (Optional) Add news sources
 
-Axion ships with a curated allowlist in `config/sources.yaml`. Some sources are public RSS feeds and work immediately (e.g. Federal Reserve press releases). Others need an API key.
+Axion ships with a curated allowlist in `config/sources.yaml`. Seven public RSS feeds are enabled by default and work immediately (Federal Reserve, ECB, MarketWatch, Google News Business, WSJ Markets, Seeking Alpha, Investing.com).
 
-Go to **Settings → Sources** to see which are healthy. Disabled sources display a clear reason.
+Go to **Settings → News Sources** to see live status for each source. The **Status** column is a typed label — *Active*, *Disabled*, *Missing key*, *Degraded*, *Rate limited*, *Unreachable*, *Parser error*, *Unsupported*, *Misconfigured*, or *Error* — and the **Auth env var** column names the variable to set for any key-required source.
+
+### Optional API-key sources
+
+| Source | Env var | Where to get it |
+|--------|---------|-----------------|
+| NewsAPI Business | `NEWSAPI_KEY` | <https://newsapi.org/> (free dev tier) |
+| Finnhub Market News | `FINNHUB_KEY` | <https://finnhub.io/> (free tier) |
+
+Set the key in `~/.axion.env`, restart Axion, then toggle the source on. While the key is missing, the source shows **Missing key** in the table — that's the expected state, not an error.
+
+Paid / subscription sources (Bloomberg, FactSet, Refinitiv, S&P Capital IQ) are **not** bundled — see `docs/OAUTH_ROADMAP.md`.
+
+ATHEX corporate-events calendar is **not** part of this build — `KNOWN_LIMITATIONS.md` has the future plan.
 
 ## 7. Stopping and restarting
 

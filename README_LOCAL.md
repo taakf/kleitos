@@ -65,6 +65,46 @@ Stop with **Ctrl+C** in the PowerShell window.
 
 To import a portfolio, use the Portfolio tab in the dashboard or upload `sample_portfolio.csv` from the project root for a quick start.
 
+## News sources
+
+Out of the box, Axion collects from public RSS feeds — **no keys required**. The default-enabled sources are:
+
+- Federal Reserve press releases
+- European Central Bank press releases
+- Google News Business
+- WSJ Markets
+- MarketWatch Top Stories
+- Seeking Alpha Market News
+- Investing.com News
+
+Open **Settings → News Sources** to see live status for each one. Status follows the normalized vocabulary:
+
+| Status | What it means |
+|--------|---------------|
+| **Active** | Source is enabled and the last fetch succeeded. |
+| **Disabled** | You (or the config default) turned the source off. |
+| **Missing key** | The source requires a user-provided API key. Set the env var listed in the **Auth env var** column and restart. |
+| **Degraded** | The source responded but returned no items in the last run. |
+| **Rate limited** | The source returned HTTP 429 or hit the configured per-source ceiling. |
+| **Unreachable** | DNS, timeout, or 5xx response. Usually a network or vendor outage. |
+| **Parser error** | The source replied but the parser couldn't extract items — content shape changed. |
+| **Unsupported** | The source is declared in config but its parser isn't implemented in this build (the toggle is disabled). |
+| **Misconfigured** | Source config is invalid — wrong auth type, env var, or required field. |
+| **Error** | Anything else; the launcher log and `axion-server.log` have the scrubbed details. |
+
+### Optional API-key sources
+
+| Source | Env var | Notes |
+|--------|---------|-------|
+| **NewsAPI Business** (`newsapi-general`) | `NEWSAPI_KEY` | Free tier ~100 requests/day, development use. <https://newsapi.org/> |
+| **Finnhub Market News** (`finnhub-news`) | `FINNHUB_KEY` | Free tier with generous rate limit. <https://finnhub.io/> |
+
+Once the env var is set in `~/.axion.env` and you restart Axion, enable the source from **Settings → News Sources** and run a collection cycle.
+
+**Subscription / paid sources** (Bloomberg, FactSet, Refinitiv, S&P Capital IQ, etc.) are **not** included in this build. Their integration is tracked in [docs/OAUTH_ROADMAP.md](docs/OAUTH_ROADMAP.md).
+
+**ATHEX corporate-events calendar** is **not** part of this build — see [`KNOWN_LIMITATIONS.md`](KNOWN_LIMITATIONS.md).
+
 ## AI features (optional)
 
 Axion's core (portfolio management, exposures, alerts, source collection, deterministic risk rules) runs without any AI provider.

@@ -6,13 +6,21 @@ along with operational constraints that operators should be aware of.
 ## Features Not Included in V1.0
 
 ### SEC EDGAR Integration
-The SEC EDGAR source is defined in `config/sources.yaml` but the parser is not yet implemented.
-The source is disabled by default. **Do not enable it** — it will not parse EDGAR responses correctly.
-Planned for V2.
+The SEC EDGAR source is declared in `config/sources.yaml` with `unsupported: true` because its
+parser is not implemented in this build. Settings → News Sources shows it as **Unsupported** with
+a disabled toggle. **Do not remove the `unsupported` flag** until a real `sec_edgar` parser ships.
+
+### Subscription / paid news vendors
+This build does **not** include Bloomberg, FactSet, Refinitiv, S&P Capital IQ, or other paid /
+subscription data providers. Adding any of these requires OAuth or a vendor-specific client and
+is tracked in `docs/OAUTH_ROADMAP.md`. Do not market or document Axion as having these integrations
+before they ship.
 
 ### Finnhub Company News
-The Finnhub source is defined in `config/sources.yaml` but the parser is not yet implemented.
-The source is disabled by default. Planned for V2.
+Finnhub Market News is now wired up (Phase 7) and works with a `FINNHUB_KEY`. While the key is
+missing, the source shows **Missing key** in Settings → News Sources — the customer can set the
+env var, restart, and toggle the source on. Per-ticker Finnhub endpoints are not yet implemented;
+the bundled source uses the general `/news` endpoint which works on the free tier.
 
 ### OAuth — not implemented
 Axion does not yet ship any OAuth integration. There is no broker sync, no Google / Microsoft account linking, no paid-data-source authentication. Anthropic / OpenAI / Google Gemini AI providers use static API keys entered in **Settings → AI Configuration** and are the only credential type the customer has to manage today. See [`docs/OAUTH_ROADMAP.md`](docs/OAUTH_ROADMAP.md) for the design intent.

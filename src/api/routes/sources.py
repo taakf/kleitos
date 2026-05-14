@@ -1,17 +1,87 @@
 """Source management routes for Axion API."""
 
+import os
 import uuid
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_session
+from src.config import PROJECT_ROOT
 from src.database.models import Source as SourceModel
+from src.sources.registry import SourceConfig, SourceRegistry
+from src.sources.source_status import (
+    SourceHealth,
+    build_health,
+    summarise_by_status,
+)
 
 router = APIRouter(prefix="/api/v1/sources", tags=["sources"])
+
+# Singleton registry — read once per process. The YAML is the static
+# allowlist and metadata source; the DB row is the runtime state.
+_REGISTRY: SourceRegistry | None = None
+
+
+def _get_registry() -> SourceRegistry:
+    global _REGISTRY
+    if _REGISTRY is None:
+        _REGISTRY = SourceRegistry(PROJECT_ROOT / "config" / "sources.yaml")
+    return _REGISTRY
+
+
+def _resolve_source_status(
+    cfg: SourceConfig,
+    db_row: SourceModel | None,
+) -> tuple[str, str | None, str | None]:
+    """Compute (status, last_error_code, last_error_message) for a source.
+
+    Decision order:
+      1. ``unsupported`` in YAML → status="unsupported".
+      2. enabled=false on either side → "disabled".
+      3. requires_auth and env var not set → "missing_key".
+      4. DB row carries a non-trivial ``last_status`` → propagate it
+         (already a Phase 7 normalized status, e.g. ``rate_limited``).
+      5. DB row says ``ok`` → "active".
+      6. DB row says ``error`` (legacy) → "error".
+      7. No DB row yet → "active" if enabled+configured, else "disabled".
+    """
+    if cfg.unsupported:
+        return "unsupported", "parser_missing", None
+
+    # DB row is the runtime state — when a user toggles a source on in
+    # the UI, the YAML's ``enabled`` default is no longer relevant.
+    if db_row is not None:
+        enabled = bool(db_row.enabled)
+    else:
+        enabled = bool(cfg.enabled)
+    if not enabled:
+        return "disabled", None, None
+
+    if cfg.requires_auth:
+        env_var = cfg.auth_env_var or ""
+        if env_var and not os.environ.get(env_var, ""):
+            return "missing_key", "missing_key", None
+
+    if db_row is not None and db_row.last_status:
+        last = db_row.last_status
+        # Map legacy "ok" → normalized "active"; everything else passes
+        # through if it's already in the Phase 7 vocabulary, otherwise
+        # "error" with the raw string as the error code.
+        valid = {
+            "active", "disabled", "missing_key", "degraded", "rate_limited",
+            "unreachable", "parser_error", "unsupported", "misconfigured", "error",
+        }
+        if last == "ok":
+            return "active", None, None
+        if last in valid:
+            return last, None, None
+        return "error", last, None
+
+    return "active", None, None
 
 
 # ---------------------------------------------------------------------------
@@ -142,6 +212,104 @@ async def source_health(
         last_fetched_at=source.last_fetched_at,
         requires_auth=bool(source.requires_auth),
         rate_limit_rpm=source.rate_limit_rpm,
+    )
+
+
+class SourceHealthList(BaseModel):
+    """Phase 7 — normalized per-source health for the Settings/Sources UI.
+
+    Joins the YAML metadata (auth_type, required_env_var, parser, notes,
+    unsupported flag) with the DB runtime state (enabled toggle,
+    last_fetched_at, last_status). Status follows the vocabulary in
+    :mod:`src.sources.source_status`.
+    """
+
+    sources: list[SourceHealth]
+    summary: dict[str, int]
+
+
+@router.get("/health", response_model=SourceHealthList)
+async def all_sources_health(
+    session: AsyncSession = Depends(get_session),
+) -> SourceHealthList:
+    """Return normalized health for every configured source.
+
+    Lists every source declared in ``config/sources.yaml`` regardless of
+    whether the DB has caught up yet, plus any DB-only entries. Never
+    returns secrets or raw exception text — ``last_error_message`` is
+    pre-scrubbed by :func:`src.sources.source_status.build_health`.
+    """
+    registry = _get_registry()
+    db_rows = (await session.execute(select(SourceModel))).scalars().all()
+    db_by_id = {r.id: r for r in db_rows}
+
+    healths: list[SourceHealth] = []
+    seen: set[str] = set()
+
+    # YAML-declared sources first (preserves the registry order).
+    for cfg in registry.get_all_sources():
+        seen.add(cfg.id)
+        db = db_by_id.get(cfg.id)
+        status, err_code, err_msg = _resolve_source_status(cfg, db)
+        configured = (
+            not cfg.requires_auth
+            or bool(os.environ.get(cfg.auth_env_var or "", ""))
+        )
+        healths.append(build_health(
+            id=cfg.id,
+            name=cfg.name,
+            source_type=cfg.type,
+            enabled=bool(db.enabled) if db is not None else bool(cfg.enabled),
+            configured=configured,
+            status=status,
+            parser=cfg.parser,
+            auth_type=cfg.auth_type,
+            required_env_var=cfg.auth_env_var,
+            last_fetch_at=(db.last_fetched_at if db else None),
+            last_success_at=(db.last_fetched_at if db and (db.last_status in ("ok", "active")) else None),
+            last_error_at=None,
+            last_error_code=err_code,
+            last_error_message=err_msg,
+            events_fetched_last_run=None,
+            notes=(cfg.notes or None),
+        ))
+
+    # DB-only sources (added at runtime via POST /api/v1/sources).
+    for r in db_rows:
+        if r.id in seen:
+            continue
+        configured = (
+            not r.requires_auth
+            or bool(os.environ.get(getattr(r, "auth_env_var", "") or "", ""))
+        )
+        # Map the legacy "ok"/"error" tokens to normalized statuses.
+        if not bool(r.enabled):
+            status = "disabled"
+        elif r.last_status == "ok":
+            status = "active"
+        elif r.last_status in (
+            "active", "missing_key", "degraded", "rate_limited",
+            "unreachable", "parser_error", "unsupported", "misconfigured", "error",
+        ):
+            status = r.last_status
+        else:
+            status = "active"
+        healths.append(build_health(
+            id=r.id,
+            name=r.name,
+            source_type=r.source_type,
+            enabled=bool(r.enabled),
+            configured=configured,
+            status=status,
+            parser=r.parser_id,
+            auth_type=r.auth_type,
+            required_env_var=getattr(r, "auth_env_var", None),
+            last_fetch_at=r.last_fetched_at,
+        ))
+
+    return SourceHealthList(
+        sources=healths,
+        summary=summarise_by_status(healths),
     )
 
 

@@ -77,6 +77,23 @@ Run from the project root with the venv active.
   - `/api/v1/system/recovery` returns the correct structured state for ok / version_too_new / corrupt.
   - `scripts/migrate.py` exits 0 / 2 / 3 / 4 according to the documented contract.
 
+- [ ] **Source health regressions pass**
+  ```bash
+  python -m pytest -q tests/unit/test_phase7_sources.py
+  ```
+  Must report all green. Covers:
+  - `scrub_source_error()` masks URL-embedded keys, Bearer tokens, and vendor-token shapes.
+  - `classify_fetch_outcome()` maps HTTP 401/403/429/5xx + timeout / DNS / parser failures to the typed vocabulary.
+  - Every YAML-declared source has the required fields.
+  - `sec-edgar` carries `unsupported: true`; `finnhub-news` and `newsapi-general` declare `auth_env_var`.
+  - `GET /api/v1/sources/health` returns the normalized list + per-status summary; never includes raw API keys; reports `Unsupported` for sec-edgar with a disabled toggle; reports `Missing key` for newsapi/finnhub when their env vars are empty.
+  - Finnhub parser handles a valid array, an empty array, an error dict, and articles missing fields.
+  - One broken source does not stop collection for the others.
+  - Support bundle redacts URL-embedded keys + lists source health.
+  - `/api/v1/system/diagnostics` reports `sources_by_status` with the normalized vocabulary.
+  - Settings → Sources UI uses the Phase 7 status vocabulary and `Auth env var` column.
+  - Customer docs name `NEWSAPI_KEY` and `FINNHUB_KEY` and never claim Bloomberg / FactSet / ATHEX corporate events.
+
 - [ ] **AI provider regressions pass**
   ```bash
   python -m pytest -q tests/unit/test_phase6_providers.py

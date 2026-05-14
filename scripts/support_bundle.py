@@ -74,6 +74,31 @@ _SECRET_VALUE_PATTERNS = (
     re.compile(r"^[0-9]{8,}:[a-zA-Z0-9_\-]{30,}$"),       # Telegram bot token
 )
 
+# Phase 7: in-string patterns. Use these when a value isn't the whole
+# string (e.g. an error message that *contains* a URL with embedded key).
+_INLINE_PATTERNS = (
+    # ``?apiKey=foo`` / ``&token=bar`` / ``key=baz`` inside any URL.
+    re.compile(
+        r"(?P<name>(?:api[_-]?)?key|token|access[_-]?token|auth(?:orization)?|secret)"
+        r"=(?P<value>[^&\s\"']+)",
+        re.IGNORECASE,
+    ),
+    re.compile(r"Bearer\s+[A-Za-z0-9_\-.]+", re.IGNORECASE),
+)
+
+
+def _scrub_inline(text: str) -> str:
+    """Mask URL-embedded keys + Bearer tokens that appear inside a string."""
+    if not text:
+        return text
+    out = text
+    for pat in _INLINE_PATTERNS:
+        if "Bearer" in pat.pattern:
+            out = pat.sub("Bearer ***", out)
+        else:
+            out = pat.sub(lambda m: f"{m.group('name')}=***", out)
+    return out
+
 
 def _redact_value(key: str, value: str) -> str:
     """Return a redacted version of ``value`` if it looks sensitive."""
@@ -301,6 +326,44 @@ def build_bundle(data_dir: Path, output_path: Path) -> dict:
     backups = _list_backups(backup_dir)
     logs = _list_log_files(log_dir)
 
+    # ── Phase 7 — source health summary ──────────────────────────────────
+    # We derive status from YAML + env (no DB session) so the bundle is
+    # useful even when the DB is unreadable. Status follows the normalized
+    # Phase 7 vocabulary. Never includes URLs with embedded keys.
+    sources_health: list[dict] = []
+    sources_summary: dict[str, int] = {}
+    try:
+        from src.sources.registry import SourceRegistry
+        from src.sources.source_status import summarise_by_status
+        registry = SourceRegistry(PROJECT_ROOT / "config" / "sources.yaml")
+        for cfg in registry.get_all_sources():
+            if cfg.unsupported:
+                status = "unsupported"
+            elif not cfg.enabled:
+                status = "disabled"
+            elif cfg.requires_auth and not os.environ.get(cfg.auth_env_var or "", ""):
+                status = "missing_key"
+            else:
+                status = "active"
+            sources_health.append({
+                "id": cfg.id,
+                "name": cfg.name,
+                "parser": cfg.parser,
+                "source_type": cfg.type,
+                "enabled": bool(cfg.enabled),
+                "requires_auth": bool(cfg.requires_auth),
+                "required_env_var": cfg.auth_env_var,
+                "status": status,
+                "notes": cfg.notes or None,
+                # We intentionally do NOT serialise cfg.url here — if a
+                # future YAML embeds a key in the URL, we don't want it
+                # in the bundle. The status alone is the diagnostic.
+            })
+        sources_summary = summarise_by_status(sources_health)
+    except Exception as exc:  # noqa: BLE001
+        sources_health = []
+        sources_summary = {"error": str(exc)}
+
     # Settings summary via the config loader, with redaction. Never include
     # raw secrets. The config layer uses SecretStr for keys so they print as
     # "**********" — we additionally redact by structure.
@@ -340,13 +403,21 @@ def build_bundle(data_dir: Path, output_path: Path) -> dict:
             json.dumps(settings_dump or {"error": "unavailable"}, indent=2),
         )
 
-        # Last 200 KB of each log file (never the .db files).
+        # Phase 7 — source health summary (no URLs with embedded keys).
+        zf.writestr(
+            "sources_health.json",
+            json.dumps({"sources": sources_health, "summary": sources_summary}, indent=2),
+        )
+
+        # Last 200 KB of each log file (never the .db files). Phase 7
+        # inline-scrub also masks any URL-embedded API key that may have
+        # crept into a stack trace or error string in the logs.
         for log_meta in logs:
             name = log_meta.get("name")
             if not name:
                 continue
             path = log_dir / name
-            tail = _tail(path)
+            tail = _scrub_inline(_tail(path))
             zf.writestr(f"logs/{name}", tail)
 
         # requirements.txt for diff-against-installed
@@ -369,8 +440,10 @@ def build_bundle(data_dir: Path, output_path: Path) -> dict:
                 "  db_diagnostics.json        schema version + table counts\n"
                 "  backups.json               filenames + sizes of pre-upgrade backups\n"
                 "  logs_index.json            list of log files in the data dir\n"
-                "  logs/                      last ~200KB of each log file\n"
+                "  logs/                      last ~200KB of each log file (URL-embedded\n"
+                "                             keys + Bearer tokens scrubbed inline)\n"
                 "  settings.redacted.json     loaded settings (secrets masked)\n"
+                "  sources_health.json        per-source status (no URLs with keys)\n"
                 "  requirements.txt           expected dependencies\n\n"
                 "What is NOT included (by design):\n"
                 "  - your database file (kleitos.db) or any backup .db files\n"
