@@ -14,6 +14,9 @@ Planned for V2.
 The Finnhub source is defined in `config/sources.yaml` but the parser is not yet implemented.
 The source is disabled by default. Planned for V2.
 
+### OAuth — not implemented
+Axion does not yet ship any OAuth integration. There is no broker sync, no Google / Microsoft account linking, no paid-data-source authentication. Anthropic / OpenAI / Google Gemini AI providers use static API keys entered in **Settings → AI Configuration** and are the only credential type the customer has to manage today. See [`docs/OAUTH_ROADMAP.md`](docs/OAUTH_ROADMAP.md) for the design intent.
+
 ### Corporate Events calendar — not implemented yet
 A future top-level **Events** tab is planned for company-calendar items (earnings dates, dividends, general meetings, board announcements, corporate actions). It will fetch per-holding from exchanges like ATHEX. **This feature does not exist yet.** The current "News" sub-tab under Insights shows news/regulatory items from RSS feeds — it does **not** show corporate calendar events. Do not market or document Axion as having a corporate events feed until the integration ships.
 

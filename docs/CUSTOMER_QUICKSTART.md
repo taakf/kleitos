@@ -85,15 +85,22 @@ For PDFs and scanned documents, see "AI features" below.
 
 ## 5. (Optional) Configure an AI provider
 
-The core platform runs without AI. If you want LLM-enhanced impact scoring, narrative digests, and conversational queries:
+The core platform runs without AI. If you want LLM-enhanced impact scoring, narrative digests, AI vision PDF extraction, and the conversational Assistant tab:
 
-1. Get an API key from Anthropic, OpenAI, or Google.
-2. In the dashboard, go to **Settings → AI Provider**.
-3. Select the provider, paste the key, click **Save**.
-4. Restart Axion (Ctrl+C in the launcher window, then re-run the launcher).
-5. **Settings → AI Provider → Test** confirms the key works.
+1. Get an API key from one of the supported providers:
+   - **Anthropic (Claude)** — `ANTHROPIC_API_KEY` (`sk-ant-…`)
+   - **OpenAI / ChatGPT** — `OPENAI_API_KEY` (`sk-…` or `sk-proj-…`)
+   - **Google Gemini** — `GOOGLE_API_KEY` (`AIza…`)
+2. In the dashboard, go to **Settings → AI Configuration**.
+3. Pick the provider as **Primary**, paste the key, click **Save Key**, then **Save Provider Selection**.
+4. Click **Test** next to the key field. The button sends one minimal request and reports the result. Possible statuses: **Active**, **Not configured**, **Invalid key**, **Quota / rate-limit**, **Unreachable**, **Misconfigured**, **Error**.
+5. Restart Axion (Ctrl+C in the launcher window, then re-run the launcher) for the new key to take effect.
 
-Keys are stored at `~/.axion.env` with `600` permissions. They are never sent anywhere except to the chosen provider.
+You can optionally add a **Backup** provider — if the primary returns a rate-limit / auth / 5xx error, Axion automatically retries with the backup.
+
+Keys are stored at `~/.axion.env` with `600` permissions on your machine. They are never sent anywhere except to the chosen provider you configured. The support bundle (`scripts/support_bundle.py`) redacts key-shaped strings.
+
+> **OAuth is not yet supported.** Axion does not connect to brokers, Google / Microsoft accounts, or any OAuth-authenticated source. See [OAUTH_ROADMAP.md](OAUTH_ROADMAP.md) for the future plan.
 
 ## 6. (Optional) Add news sources
 

@@ -69,14 +69,27 @@ To import a portfolio, use the Portfolio tab in the dashboard or upload `sample_
 
 Axion's core (portfolio management, exposures, alerts, source collection, deterministic risk rules) runs without any AI provider.
 
-If you add an Anthropic / OpenAI / Google API key in the dashboard's **Settings → AI Provider** screen, you also get:
+If you add a key for one of the three supported providers in **Settings → AI Provider**, you also get LLM-enhanced impact scoring, daily narrative digests, the conversational Assistant tab, and AI vision extraction for scanned-PDF portfolio imports.
 
-- LLM-enhanced impact scoring
-- Daily narrative digests
-- Conversational assistant tab
-- AI vision extraction for scanned-PDF portfolio imports
+| Provider | Env var | Key format | Customer label |
+|----------|---------|------------|----------------|
+| Anthropic (Claude) | `ANTHROPIC_API_KEY` | `sk-ant-…` | Anthropic (Claude) |
+| OpenAI / ChatGPT | `OPENAI_API_KEY` | `sk-…` or `sk-proj-…` | OpenAI / ChatGPT |
+| Google Gemini | `GOOGLE_API_KEY` | `AIza…` | Google (Gemini) |
 
-Keys are stored at `~/.axion.env` with `600` permissions. Without a key, the related UI surfaces clearly indicate "disabled" — no fake output.
+Pick one as **Primary**. Optionally set a different **Backup** so Axion retries on rate-limit / 5xx / auth failures. Each saved key has a **Test** button that sends one minimal request and reports a typed status:
+
+- **Active** — the provider responded.
+- **Not configured** — no key for that provider.
+- **Invalid key** — the provider rejected the key.
+- **Quota / rate-limit** — billing or per-minute cap.
+- **Unreachable** — network or vendor outage.
+- **Misconfigured** — the provider SDK is not installed.
+- **Error** — anything else; the underlying exception is logged but never returned in the UI message.
+
+Keys live in `~/.axion.env` with `600` permissions. They never leave your machine except to call the provider you configured. Logs, diagnostics endpoints, and the support bundle (`scripts/support_bundle.py`) redact key-shaped strings before writing them anywhere.
+
+> **OAuth is not part of this build.** Axion does not yet integrate with brokers, Google/Microsoft accounts, or any OAuth-authenticated data source. See [docs/OAUTH_ROADMAP.md](docs/OAUTH_ROADMAP.md) for the future plan.
 
 ## Data, backups, and upgrades
 

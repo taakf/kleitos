@@ -77,6 +77,20 @@ Run from the project root with the venv active.
   - `/api/v1/system/recovery` returns the correct structured state for ok / version_too_new / corrupt.
   - `scripts/migrate.py` exits 0 / 2 / 3 / 4 according to the documented contract.
 
+- [ ] **AI provider regressions pass**
+  ```bash
+  python -m pytest -q tests/unit/test_phase6_providers.py
+  ```
+  Must report all green. Covers:
+  - Anthropic / OpenAI / Gemini `test_connection()` missing-key path.
+  - Mocked successful provider response → status `active`.
+  - Mocked auth failure → status `invalid_key` (no exception text leaked).
+  - Mocked rate-limit → status `quota_issue`.
+  - Mocked network error → status `unreachable`.
+  - `/api/v1/settings/test-provider` rejects unknown providers with 400.
+  - `/api/v1/settings/test-provider` never returns an API key string.
+  - `scrub_secrets()` removes Anthropic / OpenAI / Gemini / Telegram patterns.
+
 - [ ] **Support tooling regressions pass**
   ```bash
   python -m pytest -q tests/unit/test_phase4_support_diagnostics.py

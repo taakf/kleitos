@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -310,46 +309,126 @@ async def write_quit_signal():
         raise HTTPException(status_code=500, detail=str(e))
 
 
+_PROVIDER_ALIASES = {
+    "anthropic": "anthropic",
+    "claude": "anthropic",
+    "openai": "openai",
+    "chatgpt": "openai",
+    "gpt": "openai",
+    "gemini": "gemini",
+    "google": "gemini",
+}
+
+
 @router.post("/test-provider")
-async def test_provider():
-    """Test whether the configured AI provider is reachable and responding.
+async def test_provider(provider: str | None = None):
+    """Test an AI provider with a minimal call and return a typed status.
 
-    Sends a minimal request to verify the API key and provider are working.
-    Does not generate expensive content — just a quick ping.
+    Phase 6 contract — the response shape is stable and lives in
+    ``src.llm.provider_status.ProviderStatus``. Key fields::
+
+      provider       canonical provider name (anthropic / openai / gemini)
+      status         one of: active / disabled / missing_key / invalid_key /
+                     quota_issue / unreachable / misconfigured / error
+      configured     True if an API key is present (regardless of validity)
+      available      True only when status == "active"
+      model          the model used for the probe, if known
+      message        a one-line customer-facing summary (key fragments scrubbed)
+      detail_code    short machine-readable token for branching
+      checked_at     ISO-8601 UTC timestamp
+
+    Parameters
+    ----------
+    provider:
+        Optional. If supplied, test this specific provider regardless of
+        which one is currently selected as primary. Accepted values:
+        anthropic / openai / gemini (and friendly aliases like "chatgpt").
+        If omitted, tests the currently-selected primary provider.
     """
-    from src.llm.client import is_llm_available
+    from src.config import get_settings as _gs
+    from src.llm.provider_status import (
+        build_status,
+        scrub_secrets,
+        status_from_exception,
+    )
 
-    if not is_llm_available():
-        from src.config import get_settings
-        provider = getattr(get_settings().llm, 'provider', 'none')
-        if provider and provider != 'none':
-            return {
-                "status": "unreachable",
-                "provider": provider,
-                "message": f"{provider.title()} is configured but not responding. Check your API key and credits.",
-            }
-        return {
-            "status": "disabled",
-            "provider": None,
-            "message": "No AI provider configured. Select one in Settings.",
-        }
+    settings = _gs()
+    configured_primary = getattr(settings.llm, "provider", "") or ""
 
-    # Try a minimal API call
+    # Resolve which provider to test.
+    if provider is None or provider.strip() == "":
+        chosen = configured_primary.lower().strip()
+    else:
+        chosen = provider.lower().strip()
+
+    chosen = _PROVIDER_ALIASES.get(chosen, chosen)
+
+    if not chosen or chosen == "none":
+        return build_status(
+            provider="",
+            status="disabled",
+            configured=False,
+        ).model_dump()
+
+    if chosen not in ("anthropic", "openai", "gemini"):
+        # Invalid provider name → 400 with a clean message; never a 500.
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unknown provider '{provider}'. "
+                "Supported: anthropic, openai, gemini."
+            ),
+        )
+
+    # Hand off to the provider's typed test_connection.
     try:
-        from src.llm.client import call_llm
-        result = await call_llm("Respond with exactly: OK", max_tokens=5)
-        return {
-            "status": "active",
-            "provider": getattr(get_settings().llm, 'provider', 'unknown'),
-            "message": "AI provider is working.",
-            "test_response": str(result)[:50],
-        }
-    except Exception as e:
-        return {
-            "status": "error",
-            "provider": getattr(get_settings().llm, 'provider', 'unknown'),
-            "message": f"Provider responded with error: {str(e)[:100]}",
-        }
+        from src.llm.providers import get_provider
+        instance = get_provider(chosen)
+    except ModuleNotFoundError as exc:
+        return status_from_exception(
+            provider=chosen,
+            exc=exc,
+            configured=False,
+        ).model_dump()
+    except ValueError:
+        # get_provider raises ValueError for "none" or unknown names; the
+        # name check above already handled those, so this is defensive.
+        return build_status(
+            provider=chosen,
+            status="error",
+            configured=False,
+            detail_code="unknown_provider",
+        ).model_dump()
+    except Exception as exc:  # noqa: BLE001
+        return status_from_exception(
+            provider=chosen,
+            exc=exc,
+            configured=False,
+        ).model_dump()
+
+    try:
+        status = await instance.test_connection(provider_name=chosen)
+    except Exception as exc:  # noqa: BLE001 — defence-in-depth
+        # test_connection itself should never raise (it catches internally),
+        # but if a bug slips through we still want a customer-safe response.
+        logger.warning(
+            "test_connection unexpectedly raised for %s: %s",
+            chosen,
+            type(exc).__name__,
+        )
+        return status_from_exception(
+            provider=chosen,
+            exc=exc,
+            configured=False,
+        ).model_dump()
+
+    # Defence-in-depth scrub before serialising — providers should already
+    # have scrubbed via build_status(), but a belt-and-braces pass keeps
+    # any future direct-message override safe.
+    payload = status.model_dump()
+    if isinstance(payload.get("message"), str):
+        payload["message"] = scrub_secrets(payload["message"])
+    return payload
 
 
 @router.delete("/api-key", response_model=ApiKeySaveResponse)

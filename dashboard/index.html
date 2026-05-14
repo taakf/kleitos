@@ -289,11 +289,14 @@
                             <select id="setting-primary-provider" class="select-input" style="width:240px;">
                                 <option value="">None — AI disabled</option>
                                 <option value="anthropic">Anthropic (Claude)</option>
-                                <option value="openai">OpenAI (GPT)</option>
+                                <option value="openai">OpenAI / ChatGPT</option>
                                 <option value="google">Google (Gemini)</option>
                             </select>
                             <p class="text-xs text-muted" style="margin-top:0.25rem;">
-                                Powers smart event analysis, portfolio insights, and natural language queries.
+                                Optional. Powers narrative analysis, daily digest text, AI vision PDF/image import, and the Assistant tab. All deterministic features (alerts, exposures, CSV import, news collection) work without an AI key.
+                            </p>
+                            <p class="text-xs text-muted" style="margin-top:0.1rem;line-height:1.5;">
+                                Environment variables: <code>ANTHROPIC_API_KEY</code> · <code>OPENAI_API_KEY</code> · <code>GOOGLE_API_KEY</code>.
                             </p>
                         </div>
 
@@ -302,10 +305,12 @@
                             <div style="display:flex;gap:0.5rem;align-items:center;">
                                 <input type="password" id="setting-primary-key" class="select-input" style="flex:1;font-family:monospace;font-size:0.82rem;min-width:0;" placeholder="API key..." autocomplete="off" spellcheck="false">
                                 <button class="btn btn-primary" onclick="saveProviderKey('primary')" style="white-space:nowrap;">Save Key</button>
+                                <button class="btn btn-outline" onclick="testProvider('primary')" style="white-space:nowrap;" title="Send one minimal request to verify the saved key works">Test</button>
                             </div>
                             <div class="ai-provider-status" id="primary-key-status">
                                 <span class="text-xs text-muted">No key configured</span>
                             </div>
+                            <div class="ai-provider-test-result" id="primary-test-result" hidden style="margin-top:0.35rem;"></div>
                         </div>
 
                         <!-- Fallback AI -->
@@ -314,7 +319,7 @@
                             <select id="setting-backup-provider" class="select-input" style="width:240px;">
                                 <option value="">None</option>
                                 <option value="anthropic">Anthropic (Claude)</option>
-                                <option value="openai">OpenAI (GPT)</option>
+                                <option value="openai">OpenAI / ChatGPT</option>
                                 <option value="google">Google (Gemini)</option>
                             </select>
                             <p class="text-xs text-muted" style="margin-top:0.25rem;line-height:1.4;">
@@ -327,10 +332,12 @@
                             <div style="display:flex;gap:0.5rem;align-items:center;">
                                 <input type="password" id="setting-backup-key" class="select-input" style="flex:1;font-family:monospace;font-size:0.82rem;min-width:0;" placeholder="API key..." autocomplete="off" spellcheck="false">
                                 <button class="btn btn-primary" onclick="saveProviderKey('backup')" style="white-space:nowrap;">Save Key</button>
+                                <button class="btn btn-outline" onclick="testProvider('backup')" style="white-space:nowrap;" title="Send one minimal request to verify the saved key works">Test</button>
                             </div>
                             <div class="ai-provider-status" id="backup-key-status">
                                 <span class="text-xs text-muted">No key configured</span>
                             </div>
+                            <div class="ai-provider-test-result" id="backup-test-result" hidden style="margin-top:0.35rem;"></div>
                         </div>
 
                         <!-- Save provider selection -->

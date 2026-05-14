@@ -9,6 +9,12 @@ Everything you see in the demo: macro factor classification, relationship graph,
 **What does AI add?**
 Conversational natural-language queries, per-holding impact analysis, richer narrative digests, and PDF/image portfolio extraction. AI is additive — the core platform runs independently.
 
+**Which AI providers are supported?**
+Anthropic (Claude), OpenAI / ChatGPT, and Google Gemini. Pick one as primary in Settings → AI Configuration. Optionally set a second as backup; Axion will fall back automatically on rate-limit / 5xx / auth errors from the primary. Keys are stored at `~/.axion.env` with 600 permissions and never leave your machine except to call the provider you configured. The Settings UI has a **Test** button per key that reports a typed status (Active / Invalid key / Quota / Unreachable / Misconfigured / Error) without exposing the key.
+
+**Is OAuth supported?**
+No. Axion does not yet integrate with brokers, Google / Microsoft accounts, or any OAuth-authenticated data source. See `docs/OAUTH_ROADMAP.md` for the design intent.
+
 **Is it auditable?**
 Yes. Every classification traces back to a specific event and keyword match. Every operator action is logged with timestamps. Every recommendation links to its evidence via rationale references.
 
@@ -22,4 +28,4 @@ Yes. Operators can override any factor sensitivity weight, add or remove relatio
 Yes. The unified inbox aggregates alerts, digests, operator actions, and high-priority recommended actions with read/unread state. Actions can be dismissed and will reappear only when the underlying signal materially changes.
 
 **What happens after deployment?**
-Connect an Anthropic API key to unlock AI features. Configure Telegram for mobile delivery. Add custom news sources. Set up additional portfolios. The platform is ready for production use.
+Connect an AI key (Anthropic, OpenAI / ChatGPT, or Google Gemini) to unlock the optional AI features. Configure Telegram for mobile delivery if you want push notifications. Add custom news sources. Set up additional portfolios. The platform is ready for use whether you add AI or not.

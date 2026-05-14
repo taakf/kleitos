@@ -5208,6 +5208,70 @@
         keyInput.placeholder = _KEY_PLACEHOLDERS[providerSelect.value] || 'API key...';
     }
 
+    // Phase 6 — test an AI provider (primary or backup).
+    //
+    // Calls POST /api/v1/settings/test-provider?provider=<chosen> with the
+    // provider the user selected in the dropdown, so testing the primary
+    // doesn't have to disturb the persisted selection. The endpoint returns
+    // the normalized ProviderStatus shape (active / disabled / missing_key /
+    // invalid_key / quota_issue / unreachable / misconfigured / error). The
+    // UI renders the status with calm wording and dot colours; the raw key
+    // never leaves the browser.
+    const _STATUS_DOT_CLASS = {
+        active:        'status-dot status-ok',
+        disabled:      'status-dot status-stopped',
+        missing_key:   'status-dot status-stopped',
+        invalid_key:   'status-dot status-error',
+        quota_issue:   'status-dot status-warn',
+        unreachable:   'status-dot status-warn',
+        misconfigured: 'status-dot status-warn',
+        error:         'status-dot status-error',
+    };
+    const _STATUS_LABEL = {
+        active:        'Active',
+        disabled:      'Disabled',
+        missing_key:   'Not configured',
+        invalid_key:   'Invalid key',
+        quota_issue:   'Quota / rate-limit',
+        unreachable:   'Unreachable',
+        misconfigured: 'Misconfigured',
+        error:         'Error',
+    };
+
+    window.testProvider = async function (role) {
+        const providerSelect = document.getElementById('setting-' + role + '-provider');
+        const resultEl = document.getElementById(role + '-test-result');
+        const provider = providerSelect?.value || '';
+        if (!resultEl) return;
+        if (!provider) {
+            resultEl.hidden = false;
+            resultEl.innerHTML = '<span class="text-xs text-muted">Select a provider first.</span>';
+            return;
+        }
+        resultEl.hidden = false;
+        resultEl.innerHTML = '<span class="text-xs text-muted">Testing provider…</span>';
+        try {
+            const res = await fetch(
+                '/api/v1/settings/test-provider?provider=' + encodeURIComponent(provider),
+                { method: 'POST', headers: { 'Content-Type': 'application/json' } }
+            );
+            const data = await res.json();
+            if (!res.ok) {
+                resultEl.innerHTML = `<span class="text-xs" style="color:var(--color-error,#c44);">${esc(data.detail || 'Test failed.')}</span>`;
+                return;
+            }
+            const dotCls  = _STATUS_DOT_CLASS[data.status] || _STATUS_DOT_CLASS.error;
+            const label   = _STATUS_LABEL[data.status] || data.status;
+            const detail  = data.message || '';
+            const modelTxt = data.model ? ` <span class="text-muted">(model: ${esc(data.model)})</span>` : '';
+            resultEl.innerHTML =
+                `<span class="${dotCls}" style="display:inline-block;width:0.55rem;height:0.55rem;border-radius:50%;margin-right:0.4rem;"></span>` +
+                `<span class="text-xs"><strong>${esc(label)}</strong>${modelTxt} — ${esc(detail)}</span>`;
+        } catch (e) {
+            resultEl.innerHTML = '<span class="text-xs" style="color:var(--color-error,#c44);">Test failed: ' + esc(e.message) + '</span>';
+        }
+    };
+
     // Save provider key (multi-provider)
     window.saveProviderKey = async function (role) {
         const providerSelect = document.getElementById('setting-' + role + '-provider');
