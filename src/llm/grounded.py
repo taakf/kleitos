@@ -145,7 +145,22 @@ class GroundedEventContext:
     holding_ticker: str | None = None
     holding_portfolio_id: str | None = None
     holding_sector: str | None = None
+    # ``holding_listing_country`` is the ISIN-prefix / venue-derived
+    # country.  Phase 10 renames the public name (legacy alias
+    # ``holding_geography`` is still set to the same value for back-
+    # compat with prompts / consumers that haven't migrated).
+    holding_listing_country: str | None = None
     holding_geography: str | None = None
+    # Phase 10 — typed revenue-geography availability flag.
+    # Never inferred from listing country.
+    #   ``missing``    — no rows uploaded for this holding
+    #   ``partial``    — rows exist but allocations sum <95% (or some
+    #                    fiscal year is gappy)
+    #   ``available``  — full upload for this holding
+    # Surfaced to the LLM prompt so the model can say
+    # "revenue geography is not available" instead of guessing.
+    holding_revenue_geography_status: str = "missing"
+    holding_revenue_breakdown: list[dict[str, Any]] = field(default_factory=list)
     holding_themes: list[str] = field(default_factory=list)
 
     # Deterministic intelligence already computed for this event
@@ -249,6 +264,42 @@ async def assemble_event_context(
             except (json.JSONDecodeError, TypeError):
                 pass
 
+    # Phase 10 — read revenue-geography rows for this holding.  We
+    # NEVER fall back to ``geography`` (listing country) if no rows
+    # exist; the typed status flag tells the prompt builder so the
+    # LLM can honestly say "revenue geography has not been uploaded".
+    from src.database.models import RevenueGeography
+    rg_rows = (await session.execute(
+        select(RevenueGeography).where(
+            RevenueGeography.portfolio_id == holding.portfolio_id,
+            RevenueGeography.holding_id == holding.id,
+        )
+    )).scalars().all()
+    revenue_breakdown: list[dict[str, Any]] = []
+    revenue_status: str = "missing"
+    if rg_rows:
+        # Pick the latest fiscal year present.
+        latest_fy = max(
+            (r.fiscal_year for r in rg_rows if r.fiscal_year is not None),
+            default=None,
+        )
+        scoped = [r for r in rg_rows if (r.fiscal_year or None) == latest_fy] \
+                 if latest_fy is not None else list(rg_rows)
+        total_share = sum(float(r.revenue_share or 0.0) for r in scoped)
+        # > 95% counts as fully allocated; below = partial.
+        revenue_status = "available" if total_share >= 0.95 else "partial"
+        revenue_breakdown = [
+            {
+                "region": r.region,
+                "country": r.country,
+                "revenue_share": float(r.revenue_share or 0.0),
+                "fiscal_year": r.fiscal_year,
+                "period": r.period,
+                "source_type": r.source_type,
+            }
+            for r in scoped
+        ]
+
     # Factor tags from MacroFactorEvent rows
     mfe_rows = (await session.execute(
         select(MacroFactorEvent).where(MacroFactorEvent.event_id == event_id)
@@ -291,7 +342,10 @@ async def assemble_event_context(
         holding_ticker=holding.ticker,
         holding_portfolio_id=holding.portfolio_id,
         holding_sector=sector,
+        holding_listing_country=geography,
         holding_geography=geography,
+        holding_revenue_geography_status=revenue_status,
+        holding_revenue_breakdown=revenue_breakdown,
         holding_themes=themes,
         factor_tags=factor_tags,
         chains=chains,
@@ -739,8 +793,31 @@ def build_event_analysis_prompt(ctx: GroundedEventContext) -> str:
         f"holding.sector       : {ctx.holding_sector or 'Unknown'}"
     )
     data_lines.append(
-        f"holding.geography    : {ctx.holding_geography or 'Unknown'}"
+        f"holding.listing_country : {ctx.holding_listing_country or ctx.holding_geography or 'Unknown'}"
     )
+    # Phase 10 — surface revenue-geography availability honestly.
+    rg_status = ctx.holding_revenue_geography_status or "missing"
+    if rg_status == "available" and ctx.holding_revenue_breakdown:
+        regions_short = ", ".join(
+            f"{r['region']}={int(round(r['revenue_share'] * 100))}%"
+            for r in ctx.holding_revenue_breakdown[:5]
+        )
+        data_lines.append(
+            f"holding.revenue_geography : {regions_short}"
+        )
+    elif rg_status == "partial" and ctx.holding_revenue_breakdown:
+        regions_short = ", ".join(
+            f"{r['region']}={int(round(r['revenue_share'] * 100))}%"
+            for r in ctx.holding_revenue_breakdown[:5]
+        )
+        data_lines.append(
+            f"holding.revenue_geography : partial — {regions_short}"
+        )
+    else:
+        data_lines.append(
+            "holding.revenue_geography : (not uploaded — "
+            "do not infer from listing country)"
+        )
     if ctx.holding_themes:
         data_lines.append(
             f"holding.themes       : {', '.join(ctx.holding_themes[:6])}"

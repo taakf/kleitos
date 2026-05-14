@@ -48,5 +48,8 @@ Yes. Before any URL is shown in the UI or written to the support bundle, `apiKey
 **Why is the ATHEX automation marked "unsupported"?**
 Athens Exchange does not currently publish a stable public machine-readable corporate-events feed. The Phase 9 release ships the full table + API + calendar UI plus a CSV-import drawer, so corporate events are usable today without inventing data. If you have an internal feed you trust, the source becomes a simple parser hook (`src/corporate_events/athex.py`).
 
-**Does the "Geography" chart on the Portfolio tab show where companies make money?**
-No — it shows the **listing country** (derived from the ISIN prefix or the exchange). Revenue geography is a separate concept that's documented but not implemented yet; treating the current chart as revenue would be misleading.
+**Does the "Listing country" chart show where companies make money?**
+No — it shows where the **instrument is listed** (derived from the ISIN prefix or the exchange). The separate **Revenue geography** card answers the "where does the company earn money?" question, but only after you upload a CSV breakdown via its *Import CSV* button. Until you upload, Revenue geography shows an honest "No revenue geography uploaded yet" state — Axion will not infer revenue geography from listing country, sector, or any other proxy.
+
+**How do I upload revenue geography?**
+On the Portfolio → Exposures tab, click *Import CSV* in the Revenue geography card. Required columns: `region`, `revenue_share`, plus at least one of `ticker` / `isin`. Optional: `country`, `company_name`, `fiscal_year`, `period`, `currency`, `source_name`, `source_url`. `revenue_share` accepts `0.45`, `45`, or `45%`. Rows match to holdings by ISIN first, then ticker — scoped to the active portfolio. Per-row errors and per-company "sum < 100 %" warnings are returned without aborting the batch; the leftover flows into an *Other / unallocated* bucket so the chart still totals correctly.

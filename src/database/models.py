@@ -7,7 +7,7 @@ Uses DeclarativeBase with mapped_column for type-safe column definitions.
 
 from __future__ import annotations
 
-from sqlalchemy import ForeignKey, Index, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -878,6 +878,107 @@ class CorporateEvent(Base):
         Index("ix_corporate_events_event_type", "event_type"),
         Index("ix_corporate_events_source_id", "source_id"),
         Index("ix_corporate_events_exchange", "exchange"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 10 — Revenue geography
+#
+# Operators upload per-holding regional revenue breakdowns (CSV today,
+# AI-extracted from annual reports later).  Each row says "company X
+# earned Y% of its revenue in region R for fiscal year F".  The table
+# is deliberately separate from ``securities.geography`` (which is
+# **listing country**, derived from the ISIN prefix) so the two
+# concepts never collapse into one column.  See
+# ``src/intelligence/revenue_geography.py`` for the service that
+# turns rows into a weighted portfolio breakdown.
+# ---------------------------------------------------------------------------
+
+
+class RevenueGeography(Base):
+    """A single revenue-geography allocation row.
+
+    Phase 10 — manually uploaded via CSV (or operator entry).  Never
+    inferred from listing country, ISIN, or sector.  When no rows
+    exist for a holding, the service surfaces it as ``missing`` rather
+    than guessing.
+
+    Uniqueness
+    ----------
+    A holding can only have one row per ``(region, fiscal_year, period)``;
+    re-importing the same CSV is therefore idempotent.  We allow
+    different fiscal years / periods for time-series snapshots.
+
+    Match key
+    ---------
+    Rows are matched to holdings via ISIN first, then ticker, scoped
+    to the same portfolio (matching identical to corporate events).
+    Unmatched rows are kept with ``holding_id = NULL`` so the
+    operator can audit what came in.
+    """
+
+    __tablename__ = "revenue_geography"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+
+    # Portfolio scoping — revenue allocations are operator-supplied
+    # per-portfolio (same upstream company could be tagged differently
+    # in two portfolios with different sourcing).
+    portfolio_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("portfolios.id"), nullable=False
+    )
+    holding_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("holdings.id")
+    )
+
+    # Issuer identifiers
+    ticker: Mapped[str | None] = mapped_column(Text)
+    isin: Mapped[str | None] = mapped_column(Text)
+    company_name: Mapped[str | None] = mapped_column(Text)
+
+    # Geography
+    region: Mapped[str] = mapped_column(Text, nullable=False)
+    country: Mapped[str | None] = mapped_column(Text)
+
+    # Allocation
+    revenue_share: Mapped[float] = mapped_column(nullable=False)   # 0.0–1.0
+    fiscal_year: Mapped[int | None] = mapped_column()
+    period: Mapped[str | None] = mapped_column(Text)               # FY, Q1, …
+    currency: Mapped[str | None] = mapped_column(Text)
+
+    # Provenance
+    source_type: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="manual_csv"
+    )
+    source_name: Mapped[str | None] = mapped_column(Text)
+    source_url: Mapped[str | None] = mapped_column(Text)
+    confidence: Mapped[str | None] = mapped_column(Text)
+
+    # Audit
+    raw_payload: Mapped[str | None] = mapped_column(Text)
+    import_batch_id: Mapped[str | None] = mapped_column(Text)
+    match_method: Mapped[str | None] = mapped_column(Text)   # isin / ticker / unmatched
+
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "portfolio_id", "holding_id", "isin", "ticker",
+            "region", "fiscal_year", "period",
+            name="uq_revenue_geography_dedup",
+        ),
+        CheckConstraint(
+            "revenue_share >= 0",
+            name="ck_revenue_geography_share_non_negative",
+        ),
+        Index("ix_revenue_geography_portfolio_id", "portfolio_id"),
+        Index("ix_revenue_geography_holding_id", "holding_id"),
+        Index("ix_revenue_geography_ticker", "ticker"),
+        Index("ix_revenue_geography_isin", "isin"),
+        Index("ix_revenue_geography_fiscal_year", "fiscal_year"),
+        Index("ix_revenue_geography_region", "region"),
+        Index("ix_revenue_geography_country", "country"),
     )
 
 

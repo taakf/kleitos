@@ -25,6 +25,15 @@ the bundled source uses the general `/news` endpoint which works on the free tie
 ### OAuth — not implemented
 Axion does not yet ship any OAuth integration. There is no broker sync, no Google / Microsoft account linking, no paid-data-source authentication. Anthropic / OpenAI / Google Gemini AI providers use static API keys entered in **Settings → AI Configuration** and are the only credential type the customer has to manage today. See [`docs/OAUTH_ROADMAP.md`](docs/OAUTH_ROADMAP.md) for the design intent.
 
+### Revenue geography — Phase 10 foundation shipped, manual CSV only
+The Portfolio → Exposures tab now has a separate **Revenue geography** card backed by the `revenue_geography` table, `/api/v1/exposures/revenue-geography`, and a CSV import drawer. The Phase 10 release ships:
+* Migration v10 (`revenue_geography` with indexes on portfolio_id, holding_id, ticker, isin, fiscal_year, region, country) and a CHECK that rejects negative shares.
+* A clean separation between **Listing country** (ISIN-prefix / venue derived) and **Revenue geography** (operator-uploaded). Listing country is **never** used as a fallback when revenue geography is missing.
+* A manual CSV import path with ISIN-first matching, per-row errors, soft warnings when a company's allocations sum < 95% or > 105%, URL scrubbing of `apiKey=` / `token=` / `Bearer …` query params, and idempotent dedup on repeat uploads.
+* Grounded AI context now carries a typed `holding_revenue_geography_status` (`missing` / `partial` / `available`) so prompts honestly say "revenue geography has not been uploaded" instead of guessing.
+
+**Automated extraction (AI-vision from issuer annual reports) is NOT enabled in this build.** Manual CSV is the only supported ingestion path for Phase 10. A later phase will add an extractor with a clear "AI-extracted" provenance tag; the table already carries `source_type` so the schema is forward-compatible.
+
 ### Corporate Events calendar — Phase 9 foundation shipped, ATHEX automation still degraded
 The top-level **Events** tab now exists (separate from Insights → News) and is backed by the `corporate_events` table, `/api/v1/corporate-events`, and a monthly calendar UI. The Phase 9 release ships:
 * Schema + migration `v9` (corporate_events with indexes on portfolio_id, holding_id, ticker, isin, event_date, event_type, exchange).

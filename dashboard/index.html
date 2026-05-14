@@ -91,6 +91,54 @@
                             <div class="card"><div class="spinner">Loading...</div></div>
                             <div class="card"><div class="spinner">Loading...</div></div>
                         </div>
+
+                        <!--
+                          Phase 10 — Revenue geography card.  Deliberately
+                          separated from the legacy Listing-country card so
+                          operators see the difference at a glance.  Backed
+                          by /api/v1/exposures/revenue-geography (manual
+                          upload only — no listing-country fallback).
+                        -->
+                        <div class="card revenue-geo-card" id="revenue-geo-card">
+                            <div class="card-header revenue-geo-header">
+                                <span>Revenue geography</span>
+                                <span class="text-sm text-muted">Where companies actually earn money — separate from listing country.</span>
+                            </div>
+                            <div class="revenue-geo-toolbar">
+                                <span id="rg-status-badge" class="rg-status-badge" hidden></span>
+                                <select id="rg-fiscal-year" class="select-input" aria-label="Fiscal year">
+                                    <option value="">Latest fiscal year</option>
+                                </select>
+                                <button id="rg-import-btn" class="btn btn-outline btn-sm" type="button" title="Import a revenue-geography CSV">Import CSV</button>
+                                <button id="rg-refresh-btn" class="btn btn-ghost btn-sm" type="button" title="Reload">Refresh</button>
+                            </div>
+                            <div id="rg-empty" class="rg-empty" hidden></div>
+                            <div id="rg-chart" class="rg-chart" role="region" aria-label="Revenue geography breakdown"></div>
+                            <details id="rg-missing-details" class="rg-missing-details" hidden>
+                                <summary id="rg-missing-summary">Holdings without revenue breakdowns</summary>
+                                <div id="rg-missing-list"></div>
+                            </details>
+                            <div id="rg-notes" class="rg-notes text-sm text-muted"></div>
+                        </div>
+
+                        <!-- Import CSV drawer for revenue geography -->
+                        <dialog id="rg-import-dialog" class="ce-dialog" aria-labelledby="rg-import-title">
+                            <form method="dialog" onsubmit="return false;">
+                                <h3 id="rg-import-title">Import revenue geography (CSV)</h3>
+                                <p class="text-sm text-muted">
+                                    Required columns: <code>region</code>, <code>revenue_share</code>, and at least one of <code>ticker</code> / <code>isin</code>.
+                                    Optional: <code>country</code>, <code>company_name</code>, <code>fiscal_year</code>, <code>period</code>, <code>currency</code>, <code>source_name</code>, <code>source_url</code>.
+                                    <code>revenue_share</code> accepts <code>0.45</code>, <code>45</code>, or <code>45%</code>. Rows match holdings by ISIN first, then ticker, scoped to the active portfolio.
+                                    Listing country is <strong>not</strong> used to fill gaps.
+                                </p>
+                                <textarea id="rg-import-textarea" class="ce-import-textarea" rows="14" placeholder="ticker,isin,company_name,fiscal_year,period,region,country,revenue_share,source_name,source_url"></textarea>
+                                <div id="rg-import-result" class="ce-import-result"></div>
+                                <div class="ce-dialog-actions">
+                                    <button id="rg-import-cancel" class="btn btn-ghost" type="button">Cancel</button>
+                                    <button id="rg-import-submit" class="btn btn-primary" type="button">Import</button>
+                                </div>
+                            </form>
+                        </dialog>
                     </div>
 
                     <!-- Trades sub-tab -->

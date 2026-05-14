@@ -94,6 +94,21 @@ Run from the project root with the venv active.
   - Settings → Sources UI uses the Phase 7 status vocabulary and `Auth env var` column.
   - Customer docs name `NEWSAPI_KEY` and `FINNHUB_KEY` and never claim Bloomberg / FactSet / ATHEX corporate events.
 
+- [ ] **Revenue-geography foundation regressions pass**
+  ```bash
+  python -m pytest -q tests/unit/test_phase10_revenue_geography.py
+  ```
+  Must report all green. Covers:
+  - Migration `v10` creates `revenue_geography` with the required columns, indexes, unique constraint, and `CHECK (revenue_share >= 0)`.
+  - `parse_revenue_share` accepts `0.45` / `45` / `45%` and rejects negatives; `normalize_region` resolves common aliases (EMEA, APAC, US → North America, …).
+  - `validate_company_allocations` emits soft warnings for sum < 95 % and sum > 105 % without blocking the import.
+  - `compute_portfolio_revenue_exposure` aggregates by holding weight, surfaces an explicit `"Revenue geography not uploaded"` bucket for holdings without rows, and **never** falls back to listing country.
+  - Manual CSV import: ISIN-first then ticker matching, per-row errors, dedup on repeat upload, URL scrubbing of `apiKey=` / `token=` style query params.
+  - API: `GET /api/v1/exposures/listing-country` returns `data_source="isin_prefix_or_venue"`; `GET /api/v1/exposures/revenue-geography` returns the typed `status` (`missing` / `partial` / `available`); `POST /import` returns the per-row summary; `GET /missing` lists holdings without rows. Multi-portfolio isolation holds.
+  - Legacy `GET /api/v1/portfolio/exposure?dimension=geography` still works untouched (back-compat).
+  - Grounded AI context (`GroundedEventContext`) now carries `holding_revenue_geography_status` and `holding_revenue_breakdown`; prompts say "not uploaded — do not infer from listing country" when the status is `missing`.
+  - Dashboard markup carries the new Revenue geography card and CSV import dialog; the legacy "Geography" customer label is replaced by "Listing country" in `loadExposures`.
+
 - [ ] **Corporate-events foundation regressions pass**
   ```bash
   python -m pytest -q tests/unit/test_phase9_corporate_events.py

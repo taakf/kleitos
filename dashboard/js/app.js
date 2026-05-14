@@ -44,6 +44,14 @@
         corporateEventById:     (id) => `/api/v1/corporate-events/${id}`,
         corporateEventsImport:  '/api/v1/corporate-events/import',
         corporateEventsRefresh: '/api/v1/corporate-events/refresh',
+        // Phase 10 — exposure surfaces (listing country + revenue geography).
+        // The legacy /api/v1/portfolio/exposure?dimension=geography still works
+        // and returns the same listing-country payload for back-compat.
+        exposuresListingCountry:        '/api/v1/exposures/listing-country',
+        exposuresRevenueGeography:      '/api/v1/exposures/revenue-geography',
+        exposuresRevenueGeoMissing:     '/api/v1/exposures/revenue-geography/missing',
+        exposuresRevenueGeoImport:      '/api/v1/exposures/revenue-geography/import',
+        exposuresRevenueGeoRows:        '/api/v1/exposures/revenue-geography/rows',
         analysisNotes:'/api/v1/analysis/notes',
         intelligenceSummary: '/api/v1/intelligence/summary',
         // Phase 9I — Operator control surface (read + write)
@@ -1420,17 +1428,39 @@
     // ================================================================
     // Exposures Tab
     // ================================================================
+    //
+    // Phase 10 customer-facing relabeling:
+    //   * "Geography" card → "Listing country (where instruments trade)".
+    //   * New separate "Revenue geography" card driven by
+    //     /api/v1/exposures/revenue-geography (manual-upload only).
+    // The old API (/portfolio/exposure?dimension=geography) is still
+    // hit unchanged so the back-compat contract is preserved.
+    // ----------------------------------------------------------------
     async function loadExposures() {
         const container = $('#exposure-cards');
         const dims = ['sector', 'geography', 'currency', 'theme'];
-        const labels = { sector: 'Sector', geography: 'Geography', currency: 'Currency', theme: 'Theme' };
+        const headerLabels = {
+            sector: 'Sector exposure',
+            geography: 'Listing country',
+            currency: 'Currency exposure',
+            theme: 'Theme exposure',
+        };
+        const headerSubtitles = {
+            sector: 'GICS-aligned sector weights.',
+            geography: 'Where instruments are listed — derived from ISIN prefix / venue. Not revenue.',
+            currency: 'Settlement currency on each holding.',
+            theme: 'Strategy / theme tags applied to securities.',
+        };
         try {
             const results = await Promise.all(dims.map(d => fetchJSON(_pq(API.exposure(d))).catch(() => null)));
             container.innerHTML = dims.map((dim, i) => {
                 const data = results[i];
                 const buckets = data?.buckets || [];
                 return `<div class="card">
-                    <div class="card-header">${labels[dim]} Exposure</div>
+                    <div class="card-header">
+                        ${headerLabels[dim]}
+                        <span class="exposure-subtitle text-sm text-muted">${headerSubtitles[dim]}</span>
+                    </div>
                     ${buckets.length ? buckets.map(b => `
                         <div class="exposure-item">
                             <div class="exposure-label" title="${esc(b.label)}">${esc(titleCase(b.label))}</div>
@@ -1439,10 +1469,215 @@
                         </div>`).join('') : '<div class="empty-state" style="padding:1.5rem"><p class="text-sm">Upload a portfolio to see exposure breakdown.</p></div>'}
                 </div>`;
             }).join('');
+            // Always render the Revenue geography card right after.
+            await loadRevenueGeography();
         } catch (e) {
             container.innerHTML = renderError('exposures: ' + e.message);
         }
     }
+
+    // ================================================================
+    // Phase 10 — Revenue geography card
+    // ================================================================
+    const _rgState = {
+        fiscalYear: '',
+        lastReport: null,
+        wired: false,
+    };
+
+    function _rgStatusBadge(status) {
+        const el = document.getElementById('rg-status-badge');
+        if (!el) return;
+        if (!status) {
+            el.hidden = true; return;
+        }
+        el.hidden = false;
+        el.dataset.status = status;
+        el.textContent = {
+            missing:   'No revenue geography uploaded',
+            partial:   'Partial coverage',
+            available: 'Coverage complete',
+        }[status] || status;
+    }
+
+    function _rgRenderEmpty(reason) {
+        const empty = document.getElementById('rg-empty');
+        const chart = document.getElementById('rg-chart');
+        const missing = document.getElementById('rg-missing-details');
+        if (!empty || !chart) return;
+        empty.hidden = false;
+        chart.innerHTML = '';
+        if (missing) missing.hidden = true;
+        empty.innerHTML = `
+            <div class="empty-state" style="padding:1.25rem">
+                <p><strong>No revenue geography uploaded yet.</strong></p>
+                <p class="text-sm text-muted">${esc(reason || 'Revenue geography is the breakdown of where each company earns its money — different from listing country. Axion never infers this from ISIN, listing, or sector. Upload a CSV to populate it.')}</p>
+                <p class="text-sm" style="margin-top:0.5rem;">
+                    <button class="btn btn-primary btn-sm" type="button" onclick="document.getElementById('rg-import-btn').click()">Import CSV</button>
+                </p>
+            </div>`;
+    }
+
+    function _rgRenderChart(report) {
+        const empty = document.getElementById('rg-empty');
+        const chart = document.getElementById('rg-chart');
+        if (!chart) return;
+        if (empty) empty.hidden = true;
+        const buckets = report.buckets || [];
+        if (!buckets.length) {
+            chart.innerHTML = '<div class="empty-state" style="padding:1rem"><p class="text-sm">No regions matched the current filter.</p></div>';
+            return;
+        }
+        chart.innerHTML = buckets.map(b => {
+            const cls = b.region === 'Revenue geography not uploaded'
+                ? 'exposure-fill rg-bucket-missing'
+                : b.region === 'Other / unallocated'
+                ? 'exposure-fill rg-bucket-leftover'
+                : 'exposure-fill rg-bucket-data';
+            return `<div class="exposure-item">
+                <div class="exposure-label" title="${esc(b.region)}">${esc(b.region)} <span class="text-sm text-muted">(${b.holding_count} holding${b.holding_count === 1 ? '' : 's'})</span></div>
+                <div class="exposure-track"><div class="${cls}" style="width:${Math.min(b.weight_pct || 0, 100)}%"></div></div>
+                <div class="exposure-value">${(b.weight_pct || 0).toFixed(1)}%</div>
+            </div>`;
+        }).join('');
+    }
+
+    function _rgRenderMissing(missing) {
+        const details = document.getElementById('rg-missing-details');
+        const list = document.getElementById('rg-missing-list');
+        const summary = document.getElementById('rg-missing-summary');
+        if (!details || !list || !summary) return;
+        if (!missing || !missing.length) {
+            details.hidden = true; return;
+        }
+        details.hidden = false;
+        summary.textContent = `Holdings without revenue breakdowns (${missing.length})`;
+        list.innerHTML = `<ul class="rg-missing-ul">${missing.map(m => `
+            <li><strong>${esc(m.ticker)}</strong>${m.isin ? ` · <span class="text-mono text-sm">${esc(m.isin)}</span>` : ''} <span class="text-sm text-muted">(weight ${(m.weight_pct || 0).toFixed(1)}%)</span></li>
+        `).join('')}</ul>`;
+    }
+
+    function _rgRenderNotes(notes) {
+        const el = document.getElementById('rg-notes');
+        if (!el) return;
+        if (!notes || !notes.length) {
+            el.innerHTML = ''; return;
+        }
+        el.innerHTML = notes.map(n => `<div>· ${esc(n)}</div>`).join('');
+    }
+
+    function _rgPopulateFiscalYears(years) {
+        const sel = document.getElementById('rg-fiscal-year');
+        if (!sel) return;
+        // Keep the default option, append uniques.
+        const have = new Set(Array.from(sel.options).map(o => o.value));
+        for (const y of years) {
+            if (!have.has(String(y))) {
+                const opt = document.createElement('option');
+                opt.value = String(y); opt.textContent = String(y);
+                sel.appendChild(opt);
+            }
+        }
+    }
+
+    async function loadRevenueGeography() {
+        try {
+            const params = new URLSearchParams({ portfolio_id: _activePortfolioId });
+            if (_rgState.fiscalYear) params.set('fiscal_year', _rgState.fiscalYear);
+            const report = await fetchJSON(`${API.exposuresRevenueGeography}?${params.toString()}`);
+            _rgState.lastReport = report;
+            _rgStatusBadge(report.status);
+            _rgPopulateFiscalYears(report.fiscal_years_covered || []);
+            if (report.status === 'missing') {
+                _rgRenderEmpty('Listing country is shown above. Upload a revenue-geography CSV to populate this card.');
+                _rgRenderMissing(report.missing_holdings || []);
+                _rgRenderNotes(report.notes || []);
+                return;
+            }
+            _rgRenderChart(report);
+            _rgRenderMissing(report.missing_holdings || []);
+            _rgRenderNotes(report.notes || []);
+        } catch (e) {
+            const empty = document.getElementById('rg-empty');
+            if (empty) {
+                empty.hidden = false;
+                empty.innerHTML = renderError('revenue geography: ' + (e.message || 'unknown'));
+            }
+        }
+    }
+
+    function _rgOpenImport() {
+        const dlg = document.getElementById('rg-import-dialog');
+        if (!dlg) return;
+        const out = document.getElementById('rg-import-result');
+        if (out) out.innerHTML = '';
+        if (typeof dlg.showModal === 'function') dlg.showModal();
+        else dlg.setAttribute('open', '');
+    }
+
+    function _rgCloseImport() {
+        const dlg = document.getElementById('rg-import-dialog');
+        if (!dlg) return;
+        if (typeof dlg.close === 'function') dlg.close();
+        else dlg.removeAttribute('open');
+    }
+
+    async function _rgSubmitImport() {
+        const ta = document.getElementById('rg-import-textarea');
+        const out = document.getElementById('rg-import-result');
+        if (!ta || !ta.value.trim()) {
+            if (out) out.innerHTML = '<span class="text-sm text-danger">Paste a CSV body first.</span>';
+            return;
+        }
+        try {
+            const res = await postJSON(API.exposuresRevenueGeoImport, {
+                portfolio_id: _activePortfolioId,
+                csv_text: ta.value,
+            });
+            const errs = Array.isArray(res.errors) ? res.errors : [];
+            const warns = Array.isArray(res.warnings) ? res.warnings : [];
+            const errBlock = errs.length
+                ? `<details class="ce-import-errors"><summary>${errs.length} row error(s)</summary>${
+                    errs.map(e => `<div class="text-sm">L${e.line_number} · ${esc(e.field)} — ${esc(e.message)}</div>`).join('')
+                }</details>` : '';
+            const warnBlock = warns.length
+                ? `<details class="ce-import-errors"><summary>${warns.length} warning(s)</summary>${
+                    warns.map(w => `<div class="text-sm">${esc(w.kind)} — ${esc(w.message)}</div>`).join('')
+                }</details>` : '';
+            if (out) {
+                out.innerHTML = `
+                    <div class="text-sm">
+                        Imported <strong>${res.imported}</strong> · matched ISIN <strong>${res.matched_by_isin}</strong> ·
+                        matched ticker <strong>${res.matched_by_ticker}</strong> · unmatched <strong>${res.unmatched}</strong> ·
+                        duplicates <strong>${res.skipped_duplicate}</strong>
+                    </div>
+                    ${errBlock}${warnBlock}
+                `;
+            }
+            await loadRevenueGeography();
+        } catch (e) {
+            if (out) out.innerHTML = `<span class="text-sm text-danger">Import failed: ${esc(e.message || 'unknown')}</span>`;
+        }
+    }
+
+    function _rgWireOnce() {
+        if (_rgState.wired) return;
+        _rgState.wired = true;
+        const importBtn = document.getElementById('rg-import-btn');
+        if (importBtn) importBtn.addEventListener('click', _rgOpenImport);
+        const cancel = document.getElementById('rg-import-cancel');
+        if (cancel) cancel.addEventListener('click', _rgCloseImport);
+        const submit = document.getElementById('rg-import-submit');
+        if (submit) submit.addEventListener('click', _rgSubmitImport);
+        const refresh = document.getElementById('rg-refresh-btn');
+        if (refresh) refresh.addEventListener('click', loadRevenueGeography);
+        const fy = document.getElementById('rg-fiscal-year');
+        if (fy) fy.addEventListener('change', () => {
+            _rgState.fiscalYear = fy.value;
+            loadRevenueGeography();
+        });
+    }
+    _rgWireOnce();
 
     // ================================================================
     // Trade History Sub-Tab

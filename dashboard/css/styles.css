@@ -3185,3 +3185,85 @@ th.sortable.sort-desc::after { content: '\25BC'; opacity: 0.8; color: var(--prim
     margin-top: 0.3rem;
 }
 
+
+/* ================================================================ */
+/* Phase 10 — Revenue geography card                                */
+/* ================================================================ */
+
+.revenue-geo-card {
+    margin-top: 0.85rem;
+}
+.revenue-geo-header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 0.7rem;
+    align-items: baseline;
+}
+.revenue-geo-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.5rem;
+}
+.rg-status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.18rem 0.55rem;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--muted-fg);
+}
+.rg-status-badge[data-status="missing"]   { background: var(--warning-bg); color: var(--warning); border-color: var(--warning); }
+.rg-status-badge[data-status="partial"]   { background: var(--warning-bg); color: var(--warning); border-color: var(--warning); }
+.rg-status-badge[data-status="available"] { background: var(--primary-bg); color: var(--primary); border-color: var(--primary); }
+
+.rg-chart {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+    margin-top: 0.4rem;
+}
+.rg-empty {
+    margin-bottom: 0.5rem;
+}
+.rg-bucket-data {
+    background: var(--primary);
+    height: 100%;
+}
+.rg-bucket-leftover {
+    background: hsl(30, 60%, 55%);
+    height: 100%;
+}
+.rg-bucket-missing {
+    background: var(--muted-fg);
+    height: 100%;
+}
+.rg-missing-details {
+    margin-top: 0.7rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.5rem 0.75rem;
+    background: var(--surface);
+}
+.rg-missing-details summary {
+    cursor: pointer;
+    font-weight: 600;
+    color: var(--muted-fg);
+}
+.rg-missing-ul {
+    margin-top: 0.45rem;
+    padding-left: 1.1rem;
+}
+.rg-notes {
+    margin-top: 0.6rem;
+}
+
+.exposure-subtitle {
+    margin-left: 0.5rem;
+    font-weight: 400;
+}
+

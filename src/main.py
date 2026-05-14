@@ -23,6 +23,7 @@ from src.api.routes import (
     digests,
     events,
     export,
+    exposures,
     health,
     intelligence,
     notifications,
@@ -250,6 +251,7 @@ app.include_router(portfolios.router)
 app.include_router(portfolio.router)
 app.include_router(events.router)
 app.include_router(corporate_events.router)
+app.include_router(exposures.router)
 app.include_router(analysis.router)
 app.include_router(alerts.router)
 app.include_router(digests.router)

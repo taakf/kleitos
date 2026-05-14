@@ -216,10 +216,21 @@ Customer-facing terms that are easy to confuse — Axion uses them with these sp
 | **News** | Items collected from public news / regulatory / RSS / API sources (Fed press releases, market news, etc.). Each one is a record in the backend `events` table. | Dashboard → **Insights → News** sub-tab. |
 | **Insights** | The analysis layer that consumes your portfolio + news + alerts + relationships. Includes News, Analysis, Digest, and Inbox sub-tabs. | Dashboard → top-level **Insights** tab. |
 | **Events** | Scheduled corporate / issuer events — earnings dates, dividends, AGMs, corporate actions. Phase 9 targets ATHEX-listed holdings first; new sources will follow. Backed by the `corporate_events` table. | Dashboard → top-level **Events** tab (separate from Insights → News). |
-| **Listing country** | The country whose CSD issued the instrument's ISIN (or the exchange you trade it on). **Not** the company's revenue geography. Used by the ATHEX corporate-events fetcher to decide which holdings are Greek-listed. | Internal — surfaced indirectly via the Events tab. |
-| **Revenue geography** | Where the issuer actually sells. **Not implemented yet.** Will land in a dedicated future phase. Today, the "Geography" exposure chart is ISIN-derived listing country and should be read that way. | Internal — explicitly documented to prevent confusion. |
+| **Listing country** | The country whose CSD issued the instrument's ISIN (or the exchange you trade it on). **Not** the company's revenue geography. The "Listing country" exposure card on the Portfolio tab uses this. | Portfolio → Exposures → **Listing country** card. |
+| **Revenue geography** | Where the issuer actually earns money. Populated by **operator-uploaded CSV** (or, in a future phase, AI-extracted from annual reports). Axion **never infers** revenue geography from listing country, ISIN, sector, or any other proxy. | Portfolio → Exposures → **Revenue geography** card (separate from Listing country). |
 
 The repo's backend keeps the table name `events` for News (matching the existing schema, API routes, and migrations); the customer-facing label for those rows is "News" / "news item". The new top-level **Events** tab is a separate surface backed by `corporate_events` and accessed via `/api/v1/corporate-events`.
+
+### Listing country vs. Revenue geography
+
+Phase 10 introduces a clean separation between two questions that used to share a single "Geography" column:
+
+* **Where is this instrument listed?** — answered automatically from the ISIN prefix / venue / ticker suffix. The **Listing country** card on the Exposures tab is built from this.
+* **Where does the company earn revenue?** — answered **only** when an operator uploads a regional breakdown via the **Revenue geography → Import CSV** drawer (or via `POST /api/v1/exposures/revenue-geography/import`). With no upload, the card honestly reports *"No revenue geography uploaded yet"* and the AI prompts say so too. There is **no fallback** from listing country.
+
+CSV columns (case-insensitive): `region`, `revenue_share`, at least one of `ticker` / `isin`. Optional: `country`, `company_name`, `fiscal_year`, `period`, `currency`, `source_name`, `source_url`. `revenue_share` accepts `0.45`, `45`, or `45%`. Per-row errors are returned without aborting the batch; per-company sum-to-100 % checks emit soft warnings (a row that totals 87 % is kept and the leftover flows to *Other / unallocated*).
+
+Holdings without any upload appear in the **Holdings without revenue breakdowns** panel under the Revenue geography card and as a `Revenue geography not uploaded` bucket on the chart, so the totals always sum to ≈100 % of the portfolio without inventing data.
 
 ### Working with the Events tab
 

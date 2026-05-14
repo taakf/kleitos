@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Current schema version — increment this when adding a new migration step.
 # ---------------------------------------------------------------------------
-CURRENT_SCHEMA_VERSION = 9
+CURRENT_SCHEMA_VERSION = 10
 
 # ---------------------------------------------------------------------------
 # Migration steps
@@ -651,6 +651,72 @@ def _migrate_v9(sync_conn) -> None:
         logger.info("Created corporate_events table (Phase 9)")
 
 
+def _migrate_v10(sync_conn) -> None:
+    """V10: Phase 10 revenue-geography foundation.
+
+    1. Create ``revenue_geography`` table if missing.
+    2. Add indexes for the API filters: portfolio_id, holding_id,
+       ticker, isin, fiscal_year, region, country.
+    3. Add the unique constraint covering
+       ``(portfolio_id, holding_id, isin, ticker, region, fiscal_year, period)``
+       so the manual CSV import is idempotent on repeat uploads of the
+       same snapshot.
+
+    All operations are additive and idempotent.  The existing
+    ``securities.geography`` column — which carries listing country —
+    is deliberately untouched so legacy callers continue working.
+    """
+    inspector = inspect(sync_conn)
+    existing_tables = set(inspector.get_table_names())
+
+    if "revenue_geography" not in existing_tables:
+        sync_conn.execute(text("""
+            CREATE TABLE revenue_geography (
+                id TEXT PRIMARY KEY,
+                portfolio_id TEXT NOT NULL,
+                holding_id TEXT,
+                ticker TEXT,
+                isin TEXT,
+                company_name TEXT,
+                region TEXT NOT NULL,
+                country TEXT,
+                revenue_share REAL NOT NULL,
+                fiscal_year INTEGER,
+                period TEXT,
+                currency TEXT,
+                source_type TEXT NOT NULL DEFAULT 'manual_csv',
+                source_name TEXT,
+                source_url TEXT,
+                confidence TEXT,
+                raw_payload TEXT,
+                import_batch_id TEXT,
+                match_method TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                FOREIGN KEY (portfolio_id) REFERENCES portfolios(id),
+                FOREIGN KEY (holding_id) REFERENCES holdings(id),
+                CONSTRAINT uq_revenue_geography_dedup
+                    UNIQUE (portfolio_id, holding_id, isin, ticker,
+                            region, fiscal_year, period),
+                CONSTRAINT ck_revenue_geography_share_non_negative
+                    CHECK (revenue_share >= 0)
+            )
+        """))
+        for col, idx_name in (
+            ("portfolio_id", "ix_revenue_geography_portfolio_id"),
+            ("holding_id",   "ix_revenue_geography_holding_id"),
+            ("ticker",       "ix_revenue_geography_ticker"),
+            ("isin",         "ix_revenue_geography_isin"),
+            ("fiscal_year",  "ix_revenue_geography_fiscal_year"),
+            ("region",       "ix_revenue_geography_region"),
+            ("country",      "ix_revenue_geography_country"),
+        ):
+            sync_conn.execute(text(
+                f"CREATE INDEX {idx_name} ON revenue_geography ({col})"
+            ))
+        logger.info("Created revenue_geography table (Phase 10)")
+
+
 # ---------------------------------------------------------------------------
 # Migration registry
 # ---------------------------------------------------------------------------
@@ -664,6 +730,7 @@ _MIGRATIONS: list[tuple[int, str, callable]] = [
     (7, "add recommended action dismiss/read state (Phase 9T)", _migrate_v7),
     (8, "add saved analytical views (Phase 9U)", _migrate_v8),
     (9, "add corporate-events calendar (Phase 9)", _migrate_v9),
+    (10, "add revenue-geography exposure foundation (Phase 10)", _migrate_v10),
 ]
 
 
