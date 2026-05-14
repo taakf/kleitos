@@ -3267,3 +3267,125 @@ th.sortable.sort-desc::after { content: '\25BC'; opacity: 0.8; color: var(--prim
     font-weight: 400;
 }
 
+
+/* ================================================================ */
+/* Phase 11 — Review-first AI extraction tabs                       */
+/* ================================================================ */
+
+.rg-import-dialog {
+    max-width: 920px;
+}
+.rg-tabs {
+    display: flex;
+    gap: 0.4rem;
+    margin-bottom: 0.6rem;
+    border-bottom: 1px solid var(--border);
+}
+.rg-tab {
+    background: transparent;
+    border: 1px solid transparent;
+    border-bottom: none;
+    padding: 0.4rem 0.8rem;
+    cursor: pointer;
+    color: var(--muted-fg);
+    font-size: 0.85rem;
+    border-top-left-radius: var(--radius);
+    border-top-right-radius: var(--radius);
+}
+.rg-tab.active {
+    color: var(--foreground);
+    border-color: var(--border);
+    background: var(--card);
+    margin-bottom: -1px;
+}
+.rg-pane[hidden] { display: none; }
+
+.rg-ai-status {
+    padding: 0.45rem 0.7rem;
+    border-radius: var(--radius);
+    margin-bottom: 0.5rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    font-size: 0.85rem;
+    color: var(--muted-fg);
+}
+.rg-ai-status[data-status="success"] {
+    background: var(--primary-bg);
+    color: var(--primary);
+    border-color: var(--primary);
+}
+.rg-ai-status[data-status="no_revenue_geography_found"],
+.rg-ai-status[data-status="missing_key"],
+.rg-ai-status[data-status="disabled"],
+.rg-ai-status[data-status="unsupported_file"],
+.rg-ai-status[data-status="extraction_failed"],
+.rg-ai-status[data-status="error"] {
+    background: var(--warning-bg);
+    color: var(--warning);
+    border-color: var(--warning);
+}
+
+.rg-ai-inputs {
+    display: flex;
+    flex-direction: column;
+    gap: 0.6rem;
+}
+.rg-ai-label {
+    display: block;
+    font-weight: 600;
+    color: var(--muted-fg);
+    margin-bottom: 0.2rem;
+}
+.rg-ai-hints {
+    display: flex;
+    gap: 0.6rem;
+    flex-wrap: wrap;
+}
+.rg-ai-hints label { flex: 1; min-width: 180px; }
+
+.rg-ai-review { margin-top: 0.8rem; }
+.rg-ai-review-title {
+    margin: 0.4rem 0 0.3rem;
+    font-size: 1rem;
+    color: var(--foreground);
+}
+.rg-ai-candidates {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-top: 0.45rem;
+}
+.rg-ai-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+}
+.rg-ai-table th, .rg-ai-table td {
+    padding: 0.35rem 0.45rem;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+}
+.rg-ai-input {
+    width: 100%;
+    padding: 0.18rem 0.35rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+    color: var(--foreground);
+    font-size: 0.78rem;
+}
+.rg-ai-input-narrow { max-width: 8rem; }
+.rg-ai-conf {
+    font-variant-numeric: tabular-nums;
+    color: var(--muted-fg);
+}
+.rg-ai-evidence {
+    max-width: 320px;
+    color: var(--muted-fg);
+    font-size: 0.74rem;
+}
+.rg-ai-row-remove {
+    color: var(--muted-fg);
+    padding: 0.1rem 0.45rem;
+}

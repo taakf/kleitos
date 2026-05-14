@@ -232,6 +232,20 @@ CSV columns (case-insensitive): `region`, `revenue_share`, at least one of `tick
 
 Holdings without any upload appear in the **Holdings without revenue breakdowns** panel under the Revenue geography card and as a `Revenue geography not uploaded` bucket on the chart, so the totals always sum to ≈100 % of the portfolio without inventing data.
 
+#### Manual CSV vs AI extraction
+
+The Revenue-geography card's **Add revenue geography** dialog has two tabs:
+
+* **Manual CSV** — the primary, always-supported path. Same columns and rules described above. Works without any AI provider key.
+* **AI extract from report** — optional, review-first. Upload a PDF annual report (or paste the regional-revenue passage) and Axion calls the configured AI vision provider with a strict anti-hallucination prompt. The dialog shows you the candidate rows in an editable table; **nothing is saved until you click *Confirm***. AI extraction requires an API key in Settings → AI Configuration; without one the tab reports a clean `missing_key` status and the Manual CSV tab stays usable.
+
+What the AI extractor will *not* do:
+
+* It will not infer revenue geography from headquarters, listing exchange, ISIN prefix, customer names, or country of incorporation.
+* It will not invent percentages when the document has only narrative text.
+* It will not persist anything without an explicit operator confirmation.
+* The PDF bytes are processed entirely in memory and never written to disk.
+
 ### Working with the Events tab
 
 The Events tab opens on a monthly calendar; each day shows compact chips coloured by type (earnings, dividend, AGM, etc.). The filter row above the calendar narrows by **event type**, **holding**, and **exchange**; the **Refresh ATHEX** button asks the ATHEX source for fresh data; **Import CSV** opens a drawer that accepts a hand-prepared CSV.

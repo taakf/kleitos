@@ -94,6 +94,19 @@ Run from the project root with the venv active.
   - Settings → Sources UI uses the Phase 7 status vocabulary and `Auth env var` column.
   - Customer docs name `NEWSAPI_KEY` and `FINNHUB_KEY` and never claim Bloomberg / FactSet / ATHEX corporate events.
 
+- [ ] **Revenue-geography AI extraction regressions pass**
+  ```bash
+  python -m pytest -q tests/unit/test_phase11_revenue_geography_ai.py
+  ```
+  Must report all green. Covers:
+  - The extraction prompt forbids inference from headquarters, country of incorporation, ISIN prefix, listing exchange, and customer names; mandates explicit-only numbers; returns an empty candidate list when the report has no regional revenue.
+  - Typed status path: `missing_key` when no LLM provider is configured, `disabled`/`extraction_failed`/`unsupported_file`/`no_revenue_geography_found`/`success` map to the right outcomes.
+  - Mocked success preserves confidence + evidence text + page number per candidate; malformed LLM output → `extraction_failed`; negative shares are dropped with row errors.
+  - `POST /api/v1/exposures/revenue-geography/extract` never persists; `POST /confirm-extraction` persists with `source_type="ai_extracted"` and goes through the same ISIN-first matcher as Phase 10.
+  - Multi-portfolio isolation holds across both extract + confirm.
+  - The dashboard import dialog carries both tabs (Manual CSV + AI extract from report), the review table, and the *Nothing is saved until you click Confirm* language.
+  - The support bundle reports `revenue_geography` counts + `source_type` breakdown but never inlines uploaded PDF bytes or region row bodies.
+
 - [ ] **Revenue-geography foundation regressions pass**
   ```bash
   python -m pytest -q tests/unit/test_phase10_revenue_geography.py

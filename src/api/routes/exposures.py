@@ -32,7 +32,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, File, Form, HTTPException, Query, UploadFile
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,7 +41,11 @@ from src.api.deps import get_session
 from src.api.routes.events import _scrub_url
 from src.database.models import Holding, Portfolio, RevenueGeography, Security
 from src.intelligence.revenue_geography import (
+    EXTRACTION_PROMPT,                       # noqa: F401 — re-exported for tests
+    ExtractionResult,
     compute_portfolio_revenue_exposure,
+    extract_from_pdf_bytes,
+    extract_from_text,
     import_csv,
     list_missing_revenue_holdings,
 )
@@ -344,3 +348,247 @@ async def list_revenue_geography_rows(
         )
         for r in rows
     ]
+
+
+# ---------------------------------------------------------------------------
+# Phase 11 — AI-assisted extraction (review-first)
+# ---------------------------------------------------------------------------
+#
+# The extract route NEVER persists.  It returns a typed
+# :class:`ExtractionResult` (status + candidate list + validation
+# errors/warnings) for the operator to review in the UI.  Persistence
+# happens only when the operator calls ``/confirm-extraction`` with
+# the (possibly edited) candidate rows.
+#
+# Uploads are processed entirely in memory; PDF bytes never touch
+# disk and are not logged.  Logs record filename + byte count + status
+# only.  Anything user-facing is scrubbed via the Phase 8 helper.
+
+
+class ExtractedCandidateOut(BaseModel):
+    region: str
+    country: str | None = None
+    revenue_share: float
+    fiscal_year: int | None = None
+    period: str | None = None
+    currency: str | None = None
+    ticker: str | None = None
+    isin: str | None = None
+    company_name: str | None = None
+    evidence_text: str | None = None
+    page_number: int | None = None
+    confidence: float | None = None
+    share_note: str | None = None
+
+
+class ExtractionResponse(BaseModel):
+    status: str
+    reason: str
+    provider: str | None = None
+    model: str | None = None
+    source_filename: str | None = None
+    source_size_bytes: int | None = None
+    fiscal_year: int | None = None
+    period: str | None = None
+    currency: str | None = None
+    company_name: str | None = None
+    ticker: str | None = None
+    isin: str | None = None
+    candidates: list[ExtractedCandidateOut] = Field(default_factory=list)
+    validation_errors: list[dict[str, Any]] = Field(default_factory=list)
+    validation_warnings: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ExtractTextPayload(BaseModel):
+    portfolio_id: str
+    text: str
+    ticker: str | None = None
+    isin: str | None = None
+    source_filename: str | None = None
+
+
+def _result_to_response(result: ExtractionResult) -> ExtractionResponse:
+    return ExtractionResponse(
+        status=result.status,
+        reason=result.reason,
+        provider=result.provider,
+        model=result.model,
+        source_filename=result.source_filename,
+        source_size_bytes=result.source_size_bytes,
+        fiscal_year=result.fiscal_year,
+        period=result.period,
+        currency=result.currency,
+        company_name=result.company_name,
+        ticker=result.ticker,
+        isin=result.isin,
+        candidates=[
+            ExtractedCandidateOut(
+                region=c.region,
+                country=c.country,
+                revenue_share=c.revenue_share,
+                fiscal_year=c.fiscal_year,
+                period=c.period,
+                currency=c.currency,
+                ticker=c.ticker,
+                isin=c.isin,
+                company_name=c.company_name,
+                evidence_text=c.evidence_text,
+                page_number=c.page_number,
+                confidence=c.confidence,
+                share_note=c.share_note,
+            )
+            for c in result.candidates
+        ],
+        validation_errors=result.validation_errors,
+        validation_warnings=result.validation_warnings,
+    )
+
+
+@router.post("/revenue-geography/extract", response_model=ExtractionResponse)
+async def extract_revenue_geography(
+    portfolio_id: str = Form("default"),
+    ticker: str | None = Form(None),
+    isin: str | None = Form(None),
+    file: UploadFile | None = File(None),
+    text: str | None = Form(None),
+    session: AsyncSession = Depends(get_session),
+) -> ExtractionResponse:
+    """Phase 11 — AI extract a candidate review payload.  No persistence.
+
+    Either a PDF file (``multipart/form-data``) or a ``text`` field
+    must be supplied.  The route returns the typed
+    :class:`ExtractionResponse` straight back to the UI for review.
+    """
+    if not portfolio_id:
+        raise HTTPException(status_code=400, detail="portfolio_id is required")
+
+    # Portfolio must exist (no silent writes against ghost ids).
+    pf = (await session.execute(
+        select(Portfolio.id).where(Portfolio.id == portfolio_id)
+    )).first()
+    if pf is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+
+    if file is None and not (text and text.strip()):
+        raise HTTPException(
+            status_code=400,
+            detail="Provide either a 'file' upload or a 'text' field.",
+        )
+
+    if file is not None:
+        # Read fully into memory and discard the temp upload.  We
+        # don't keep the bytes anywhere after the call returns.
+        pdf_bytes = await file.read()
+        try:
+            await file.close()
+        except Exception:  # pragma: no cover — best-effort
+            pass
+        filename = file.filename or "uploaded.pdf"
+        logger.info(
+            "phase11 extract: %s (%d bytes) portfolio=%s",
+            filename, len(pdf_bytes), portfolio_id,
+        )
+        result = await extract_from_pdf_bytes(
+            pdf_bytes=pdf_bytes,
+            source_filename=filename,
+            ticker_hint=ticker, isin_hint=isin,
+        )
+    else:
+        logger.info(
+            "phase11 extract (text): %d chars portfolio=%s",
+            len(text or ""), portfolio_id,
+        )
+        result = await extract_from_text(
+            text=text or "",
+            source_filename=None,
+            ticker_hint=ticker, isin_hint=isin,
+        )
+
+    return _result_to_response(result)
+
+
+class ConfirmCandidateIn(BaseModel):
+    region: str
+    revenue_share: float = Field(..., ge=0)
+    country: str | None = None
+    fiscal_year: int | None = None
+    period: str | None = None
+    currency: str | None = None
+    ticker: str | None = None
+    isin: str | None = None
+    company_name: str | None = None
+    evidence_text: str | None = None
+    page_number: int | None = None
+    confidence: float | None = None
+
+
+class ConfirmExtractionPayload(BaseModel):
+    portfolio_id: str
+    candidates: list[ConfirmCandidateIn]
+    source_filename: str | None = None
+    source_name: str = "AI Extraction (operator-confirmed)"
+
+
+@router.post(
+    "/revenue-geography/confirm-extraction",
+    response_model=ImportResponse,
+)
+async def confirm_revenue_geography_extraction(
+    payload: ConfirmExtractionPayload = Body(...),
+    session: AsyncSession = Depends(get_session),
+) -> ImportResponse:
+    """Phase 11 — persist operator-confirmed AI-extracted rows.
+
+    Reuses the Phase 10 ``import_csv`` pipeline by building an
+    equivalent CSV body in memory.  This keeps the validation,
+    matching, dedup, and audit-log behaviour identical to the manual
+    CSV path.  Rows are stored with ``source_type="ai_extracted"`` so
+    they're visibly distinct from manual uploads in
+    ``/api/v1/exposures/revenue-geography/rows`` and in the support
+    bundle.
+    """
+    if not payload.portfolio_id:
+        raise HTTPException(status_code=400, detail="portfolio_id is required")
+    if not payload.candidates:
+        raise HTTPException(
+            status_code=400,
+            detail="candidates list is empty — nothing to confirm.",
+        )
+
+    pf = (await session.execute(
+        select(Portfolio.id).where(Portfolio.id == payload.portfolio_id)
+    )).first()
+    if pf is None:
+        raise HTTPException(status_code=404, detail="Portfolio not found")
+
+    # Build a CSV body so we reuse the Phase 10 importer wholesale.
+    import csv as _csv
+    import io as _io
+    buf = _io.StringIO()
+    writer = _csv.writer(buf)
+    headers = [
+        "ticker", "isin", "company_name", "fiscal_year", "period",
+        "region", "country", "revenue_share", "currency", "source_url",
+    ]
+    writer.writerow(headers)
+    for c in payload.candidates:
+        writer.writerow([
+            (c.ticker or "").strip().upper(),
+            (c.isin or "").strip().upper(),
+            c.company_name or "",
+            "" if c.fiscal_year is None else c.fiscal_year,
+            c.period or "",
+            c.region,
+            c.country or "",
+            f"{c.revenue_share:.6f}",
+            c.currency or "",
+            "",
+        ])
+    summary = await import_csv(
+        session,
+        portfolio_id=payload.portfolio_id,
+        csv_text=buf.getvalue(),
+        source_type="ai_extracted",
+        source_name=payload.source_name,
+    )
+    return ImportResponse(**summary.to_dict())

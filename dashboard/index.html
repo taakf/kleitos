@@ -121,21 +121,69 @@
                             <div id="rg-notes" class="rg-notes text-sm text-muted"></div>
                         </div>
 
-                        <!-- Import CSV drawer for revenue geography -->
-                        <dialog id="rg-import-dialog" class="ce-dialog" aria-labelledby="rg-import-title">
+                        <!--
+                          Import revenue-geography dialog.  Two tabs:
+                            * Manual CSV (Phase 10 — primary, always supported)
+                            * AI extract from report (Phase 11 — review-first;
+                              the operator edits + confirms before persistence)
+                        -->
+                        <dialog id="rg-import-dialog" class="ce-dialog rg-import-dialog" aria-labelledby="rg-import-title">
                             <form method="dialog" onsubmit="return false;">
-                                <h3 id="rg-import-title">Import revenue geography (CSV)</h3>
-                                <p class="text-sm text-muted">
-                                    Required columns: <code>region</code>, <code>revenue_share</code>, and at least one of <code>ticker</code> / <code>isin</code>.
-                                    Optional: <code>country</code>, <code>company_name</code>, <code>fiscal_year</code>, <code>period</code>, <code>currency</code>, <code>source_name</code>, <code>source_url</code>.
-                                    <code>revenue_share</code> accepts <code>0.45</code>, <code>45</code>, or <code>45%</code>. Rows match holdings by ISIN first, then ticker, scoped to the active portfolio.
-                                    Listing country is <strong>not</strong> used to fill gaps.
-                                </p>
-                                <textarea id="rg-import-textarea" class="ce-import-textarea" rows="14" placeholder="ticker,isin,company_name,fiscal_year,period,region,country,revenue_share,source_name,source_url"></textarea>
-                                <div id="rg-import-result" class="ce-import-result"></div>
-                                <div class="ce-dialog-actions">
-                                    <button id="rg-import-cancel" class="btn btn-ghost" type="button">Cancel</button>
-                                    <button id="rg-import-submit" class="btn btn-primary" type="button">Import</button>
+                                <h3 id="rg-import-title">Add revenue geography</h3>
+                                <div class="rg-tabs" role="tablist" aria-label="Add revenue geography mode">
+                                    <button type="button" id="rg-tab-csv" class="rg-tab active" role="tab" aria-selected="true" data-rg-tab="csv">Manual CSV</button>
+                                    <button type="button" id="rg-tab-ai" class="rg-tab" role="tab" aria-selected="false" data-rg-tab="ai">AI extract from report</button>
+                                </div>
+
+                                <!-- Tab 1: Manual CSV -->
+                                <div id="rg-pane-csv" class="rg-pane active" role="tabpanel">
+                                    <p class="text-sm text-muted">
+                                        Required columns: <code>region</code>, <code>revenue_share</code>, and at least one of <code>ticker</code> / <code>isin</code>.
+                                        Optional: <code>country</code>, <code>company_name</code>, <code>fiscal_year</code>, <code>period</code>, <code>currency</code>, <code>source_name</code>, <code>source_url</code>.
+                                        <code>revenue_share</code> accepts <code>0.45</code>, <code>45</code>, or <code>45%</code>. Rows match holdings by ISIN first, then ticker, scoped to the active portfolio.
+                                        Listing country is <strong>not</strong> used to fill gaps.
+                                    </p>
+                                    <textarea id="rg-import-textarea" class="ce-import-textarea" rows="14" placeholder="ticker,isin,company_name,fiscal_year,period,region,country,revenue_share,source_name,source_url"></textarea>
+                                    <div id="rg-import-result" class="ce-import-result"></div>
+                                    <div class="ce-dialog-actions">
+                                        <button id="rg-import-cancel" class="btn btn-ghost" type="button">Cancel</button>
+                                        <button id="rg-import-submit" class="btn btn-primary" type="button">Import</button>
+                                    </div>
+                                </div>
+
+                                <!-- Tab 2: AI extraction (review-first) -->
+                                <div id="rg-pane-ai" class="rg-pane" role="tabpanel" hidden>
+                                    <p class="text-sm text-muted">
+                                        Upload a PDF annual report (or paste the regional-revenue passage as text). Axion runs a strict, anti-hallucination extraction prompt and shows you the candidate rows. <strong>Nothing is saved until you click <em>Confirm</em>.</strong> AI extraction requires an API key (Settings → AI Configuration); the feature is optional, and manual CSV always works.
+                                    </p>
+                                    <div id="rg-ai-status" class="rg-ai-status" hidden></div>
+                                    <div class="rg-ai-inputs">
+                                        <label class="text-sm">
+                                            <span class="rg-ai-label">PDF file</span>
+                                            <input id="rg-ai-file" type="file" accept="application/pdf">
+                                        </label>
+                                        <label class="text-sm">
+                                            <span class="rg-ai-label">Or paste text (used if no file is selected)</span>
+                                            <textarea id="rg-ai-text" rows="6" class="ce-import-textarea" placeholder="e.g. 'FY2025 revenue by region: North America 60%, Europe 30%, Rest of world 10%'"></textarea>
+                                        </label>
+                                        <div class="rg-ai-hints">
+                                            <label class="text-sm"><span class="rg-ai-label">Ticker hint (optional)</span><input id="rg-ai-ticker" type="text" placeholder="AAPL" class="input"></label>
+                                            <label class="text-sm"><span class="rg-ai-label">ISIN hint (optional)</span><input id="rg-ai-isin" type="text" placeholder="US0378331005" class="input"></label>
+                                        </div>
+                                        <div class="ce-dialog-actions">
+                                            <button id="rg-ai-extract" class="btn btn-primary" type="button">Extract candidates</button>
+                                        </div>
+                                    </div>
+                                    <div id="rg-ai-review" class="rg-ai-review" hidden>
+                                        <h4 class="rg-ai-review-title">Review extracted rows</h4>
+                                        <p class="text-sm text-muted" id="rg-ai-review-meta"></p>
+                                        <div id="rg-ai-candidates" class="rg-ai-candidates"></div>
+                                        <div id="rg-ai-confirm-result" class="ce-import-result"></div>
+                                        <div class="ce-dialog-actions">
+                                            <button id="rg-ai-discard" class="btn btn-ghost" type="button">Discard</button>
+                                            <button id="rg-ai-confirm" class="btn btn-primary" type="button">Confirm &amp; save</button>
+                                        </div>
+                                    </div>
                                 </div>
                             </form>
                         </dialog>

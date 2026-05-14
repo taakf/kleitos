@@ -232,8 +232,26 @@ def _collect_db_diagnostics(db_path: Path) -> dict:
                 "notification_reads",
                 "action_states",
                 "saved_views",
+                # Phase 9 / 10 — counts only, never row bodies.
+                "corporate_events",
+                "revenue_geography",
             ]:
                 out["tables"][tbl] = _safe_count(cur, f"SELECT COUNT(*) FROM {tbl}")
+
+            # Phase 10/11 — surface revenue_geography source-type counts
+            # so a support engineer can see whether the operator is
+            # using manual CSV or AI extraction.  NEVER inline any
+            # uploaded report content.
+            try:
+                cur.execute(
+                    "SELECT source_type, COUNT(*) FROM revenue_geography "
+                    "GROUP BY source_type"
+                )
+                out["revenue_geography_source_types"] = {
+                    str(k or "unknown"): int(v) for k, v in cur.fetchall()
+                }
+            except sqlite3.DatabaseError as exc:
+                out["errors"].append(f"revenue_geography source_types: {exc}")
         finally:
             conn.close()
     except sqlite3.DatabaseError as exc:

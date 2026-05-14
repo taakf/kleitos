@@ -52,6 +52,9 @@
         exposuresRevenueGeoMissing:     '/api/v1/exposures/revenue-geography/missing',
         exposuresRevenueGeoImport:      '/api/v1/exposures/revenue-geography/import',
         exposuresRevenueGeoRows:        '/api/v1/exposures/revenue-geography/rows',
+        // Phase 11 — review-first AI extraction (no persistence on /extract).
+        exposuresRevenueGeoExtract:     '/api/v1/exposures/revenue-geography/extract',
+        exposuresRevenueGeoConfirm:     '/api/v1/exposures/revenue-geography/confirm-extraction',
         analysisNotes:'/api/v1/analysis/notes',
         intelligenceSummary: '/api/v1/intelligence/summary',
         // Phase 9I — Operator control surface (read + write)
@@ -1660,6 +1663,196 @@
         }
     }
 
+    // ----- Phase 11 — AI extraction (review-first) -----------------
+    const _rgAiState = {
+        candidates: [],
+        meta: {},
+        lastStatus: null,
+    };
+
+    function _rgSwitchTab(name) {
+        document.querySelectorAll('.rg-tab').forEach(t => {
+            const active = t.dataset.rgTab === name;
+            t.classList.toggle('active', active);
+            t.setAttribute('aria-selected', active ? 'true' : 'false');
+        });
+        document.querySelectorAll('.rg-pane').forEach(p => {
+            const want = p.id === `rg-pane-${name}`;
+            p.classList.toggle('active', want);
+            p.hidden = !want;
+        });
+    }
+
+    function _rgRenderAiStatus(status, reason) {
+        const el = document.getElementById('rg-ai-status');
+        if (!el) return;
+        if (!status) {
+            el.hidden = true; el.textContent = ''; return;
+        }
+        el.hidden = false;
+        el.dataset.status = status;
+        el.textContent = `${status}: ${reason || ''}`.trim();
+    }
+
+    function _rgRenderCandidates(result) {
+        const review = document.getElementById('rg-ai-review');
+        const wrap = document.getElementById('rg-ai-candidates');
+        const meta = document.getElementById('rg-ai-review-meta');
+        const confirmResult = document.getElementById('rg-ai-confirm-result');
+        if (!review || !wrap || !meta) return;
+        if (confirmResult) confirmResult.innerHTML = '';
+        const cands = result.candidates || [];
+        if (!cands.length) {
+            review.hidden = true;
+            wrap.innerHTML = '';
+            return;
+        }
+        review.hidden = false;
+        const metaParts = [];
+        if (result.company_name) metaParts.push(esc(result.company_name));
+        if (result.fiscal_year) metaParts.push(`FY ${result.fiscal_year}`);
+        if (result.period) metaParts.push(esc(result.period));
+        if (result.source_filename) metaParts.push(`Source: ${esc(result.source_filename)}`);
+        meta.textContent = metaParts.join(' · ');
+        wrap.innerHTML = `<table class="rg-ai-table"><thead><tr>
+            <th>Region</th><th>Country</th><th>Share %</th>
+            <th>FY</th><th>Period</th>
+            <th>Ticker / ISIN</th><th>Confidence</th><th>Evidence</th>
+            <th></th>
+        </tr></thead><tbody>${cands.map((c, i) => `
+            <tr data-cand-idx="${i}">
+                <td><input data-field="region" value="${esc(c.region || '')}" class="input rg-ai-input"></td>
+                <td><input data-field="country" value="${esc(c.country || '')}" class="input rg-ai-input"></td>
+                <td><input data-field="revenue_share" value="${(c.revenue_share != null ? (c.revenue_share * 100).toFixed(2) : '')}" class="input rg-ai-input rg-ai-input-narrow" title="Stored as fraction 0–1; UI shows %"></td>
+                <td><input data-field="fiscal_year" value="${c.fiscal_year != null ? c.fiscal_year : ''}" class="input rg-ai-input rg-ai-input-narrow"></td>
+                <td><input data-field="period" value="${esc(c.period || '')}" class="input rg-ai-input rg-ai-input-narrow"></td>
+                <td>
+                    <input data-field="ticker" value="${esc(c.ticker || '')}" class="input rg-ai-input rg-ai-input-narrow" placeholder="ticker">
+                    <input data-field="isin" value="${esc(c.isin || '')}" class="input rg-ai-input rg-ai-input-narrow" placeholder="isin">
+                </td>
+                <td class="rg-ai-conf">${c.confidence != null ? (c.confidence * 100).toFixed(0) + '%' : '—'}</td>
+                <td class="rg-ai-evidence" title="${esc(c.evidence_text || '')}">${esc((c.evidence_text || '').slice(0, 120))}${c.page_number ? ` · p.${c.page_number}` : ''}</td>
+                <td><button type="button" class="btn btn-ghost btn-sm rg-ai-row-remove" data-cand-idx="${i}" title="Remove row">×</button></td>
+            </tr>`).join('')}</tbody></table>`;
+    }
+
+    function _rgCollectEditedCandidates() {
+        const rows = document.querySelectorAll('#rg-ai-candidates tbody tr');
+        const out = [];
+        rows.forEach((tr) => {
+            const idx = Number(tr.dataset.candIdx);
+            const base = _rgAiState.candidates[idx] || {};
+            const get = (f) => {
+                const el = tr.querySelector(`[data-field="${f}"]`);
+                return el ? el.value.trim() : '';
+            };
+            const sharePct = get('revenue_share');
+            // The UI uses percent; the API expects a 0–1 fraction.
+            const share = sharePct === '' ? null : Number(sharePct) / 100.0;
+            const fy = get('fiscal_year');
+            out.push({
+                ...base,
+                region: get('region'),
+                country: get('country') || null,
+                revenue_share: share,
+                fiscal_year: fy === '' ? null : Number(fy),
+                period: get('period') || null,
+                ticker: get('ticker') || null,
+                isin: get('isin') || null,
+            });
+        });
+        return out;
+    }
+
+    async function _rgAiExtract() {
+        const file = document.getElementById('rg-ai-file')?.files?.[0] || null;
+        const text = document.getElementById('rg-ai-text')?.value || '';
+        const tickerHint = document.getElementById('rg-ai-ticker')?.value.trim() || '';
+        const isinHint = document.getElementById('rg-ai-isin')?.value.trim() || '';
+        const confirmResult = document.getElementById('rg-ai-confirm-result');
+        if (confirmResult) confirmResult.innerHTML = '';
+        if (!file && !text.trim()) {
+            _rgRenderAiStatus('error', 'Pick a PDF or paste some text first.');
+            return;
+        }
+        _rgRenderAiStatus('extracting', 'Calling the AI provider...');
+        const form = new FormData();
+        form.append('portfolio_id', _activePortfolioId);
+        if (tickerHint) form.append('ticker', tickerHint);
+        if (isinHint) form.append('isin', isinHint);
+        if (file) {
+            form.append('file', file);
+        } else {
+            form.append('text', text);
+        }
+        let result;
+        try {
+            const resp = await fetch(API.exposuresRevenueGeoExtract, {
+                method: 'POST', body: form,
+            });
+            result = await resp.json();
+        } catch (e) {
+            _rgRenderAiStatus('extraction_failed', e.message || 'network error');
+            return;
+        }
+        _rgAiState.candidates = result.candidates || [];
+        _rgAiState.meta = result;
+        _rgAiState.lastStatus = result.status;
+        _rgRenderAiStatus(result.status, result.reason);
+        _rgRenderCandidates(result);
+    }
+
+    async function _rgAiConfirm() {
+        const out = document.getElementById('rg-ai-confirm-result');
+        const edited = _rgCollectEditedCandidates();
+        if (!edited.length) {
+            if (out) out.innerHTML = '<span class="text-sm text-danger">Nothing to save.</span>';
+            return;
+        }
+        // Client-side sanity — refuse to send blank-region / negative-share rows.
+        const invalid = edited.find(c => !c.region || c.revenue_share == null || c.revenue_share < 0);
+        if (invalid) {
+            if (out) out.innerHTML = '<span class="text-sm text-danger">Each row needs a region and a non-negative share. Fix or remove invalid rows.</span>';
+            return;
+        }
+        try {
+            const res = await postJSON(API.exposuresRevenueGeoConfirm, {
+                portfolio_id: _activePortfolioId,
+                candidates: edited,
+                source_filename: _rgAiState.meta?.source_filename || null,
+            });
+            const errs = Array.isArray(res.errors) ? res.errors : [];
+            const errBlock = errs.length
+                ? `<details class="ce-import-errors"><summary>${errs.length} row error(s)</summary>${
+                    errs.map(e => `<div class="text-sm">L${e.line_number} · ${esc(e.field)} — ${esc(e.message)}</div>`).join('')
+                }</details>` : '';
+            if (out) {
+                out.innerHTML = `
+                    <div class="text-sm">
+                        Saved <strong>${res.imported}</strong> row(s) (source_type=ai_extracted) ·
+                        matched ISIN <strong>${res.matched_by_isin}</strong> ·
+                        matched ticker <strong>${res.matched_by_ticker}</strong> ·
+                        unmatched <strong>${res.unmatched}</strong> ·
+                        duplicates <strong>${res.skipped_duplicate}</strong>
+                    </div>${errBlock}`;
+            }
+            await loadRevenueGeography();
+        } catch (e) {
+            if (out) out.innerHTML = `<span class="text-sm text-danger">Save failed: ${esc(e.message || 'unknown')}</span>`;
+        }
+    }
+
+    function _rgAiDiscard() {
+        _rgAiState.candidates = [];
+        _rgAiState.meta = {};
+        _rgRenderCandidates({candidates: []});
+        const t = document.getElementById('rg-ai-text');
+        if (t) t.value = '';
+        const f = document.getElementById('rg-ai-file');
+        if (f) f.value = '';
+        _rgRenderAiStatus(null);
+    }
+
     function _rgWireOnce() {
         if (_rgState.wired) return;
         _rgState.wired = true;
@@ -1675,6 +1868,29 @@
         if (fy) fy.addEventListener('change', () => {
             _rgState.fiscalYear = fy.value;
             loadRevenueGeography();
+        });
+
+        // Phase 11 — tab switching + AI extract / confirm / discard
+        document.querySelectorAll('.rg-tab').forEach(t => {
+            t.addEventListener('click', () => _rgSwitchTab(t.dataset.rgTab));
+        });
+        const aiExtract = document.getElementById('rg-ai-extract');
+        if (aiExtract) aiExtract.addEventListener('click', _rgAiExtract);
+        const aiConfirm = document.getElementById('rg-ai-confirm');
+        if (aiConfirm) aiConfirm.addEventListener('click', _rgAiConfirm);
+        const aiDiscard = document.getElementById('rg-ai-discard');
+        if (aiDiscard) aiDiscard.addEventListener('click', _rgAiDiscard);
+        // Remove a row from the review table
+        document.addEventListener('click', (ev) => {
+            const btn = ev.target.closest('.rg-ai-row-remove');
+            if (!btn) return;
+            const idx = Number(btn.dataset.candIdx);
+            if (!Number.isFinite(idx)) return;
+            _rgAiState.candidates.splice(idx, 1);
+            _rgRenderCandidates({
+                ..._rgAiState.meta,
+                candidates: _rgAiState.candidates,
+            });
         });
     }
     _rgWireOnce();

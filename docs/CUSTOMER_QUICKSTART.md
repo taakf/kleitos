@@ -88,6 +88,10 @@ For PDFs and scanned documents, see "AI features" below.
 
 The Portfolio → Exposures tab now shows **Listing country** (instrument-listing exposure derived from ISIN/venue) and a separate **Revenue geography** card. Revenue geography is populated only when you upload a CSV via the card's *Import CSV* button — Axion never infers where a company earns money from where its shares are listed. CSV columns: `region`, `revenue_share`, plus at least one of `ticker` / `isin`. `revenue_share` accepts `0.45`, `45`, or `45%`. Holdings you haven't uploaded for show up in a "Holdings without revenue breakdowns" panel so the gap is visible at a glance.
 
+### Optional — extract from a PDF annual report (review-first)
+
+The same *Import CSV* dialog has a second tab: **AI extract from report**. Drop in an annual report PDF (or paste a regional-revenue passage as text), pick *Extract candidates*, and review the editable rows the AI proposes. Confidence and evidence quotes are shown per row. **Nothing is saved until you click *Confirm***. Without an AI key configured the tab reports `missing_key`; manual CSV always works.
+
 ### Filtering the News tab
 
 Above the table you'll see a filter bar with **Search**, **Source**, **Type**, **Factor**, **Materiality**, **24h / 7d / 30d / All** range pills, and a **Linked holdings only** toggle. Search is debounced and queries the backend; the other controls take effect immediately. The **Reset** button clears every filter. Each row carries small chips: **Linked** when the story matched a holding, **Macro signal** when the deterministic factor classifier tagged it. Click any row to open the news-item modal with the why-it-matters narrative, affected holdings, causal chains, and any related analyses or alerts.

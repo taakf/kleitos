@@ -48,8 +48,20 @@ from src.intelligence.revenue_geography.manual_import import (
     import_csv,
     parse_csv,
 )
+from src.intelligence.revenue_geography.extraction import (
+    EXTRACTION_PROMPT,
+    ExtractedCandidate,
+    ExtractionResult,
+    extract_from_pdf_bytes,
+    extract_from_text,
+)
 
 __all__ = [
+    "EXTRACTION_PROMPT",
+    "ExtractedCandidate",
+    "ExtractionResult",
+    "extract_from_pdf_bytes",
+    "extract_from_text",
     "ImportRowError",
     "ImportSummary",
     "RevenueExposureBucket",
