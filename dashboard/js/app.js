@@ -1188,9 +1188,9 @@
         });
         el.innerHTML = `<div class="table-wrap"><table>
             <thead><tr>
-                <th class="sortable" data-sort="ticker">Ticker</th><th class="sortable" data-sort="name">Name</th><th class="sortable" data-sort="sector">Sector</th>
-                <th class="num sortable" data-sort="quantity">Shares</th><th class="num sortable" data-sort="avg_cost_basis">Avg Cost</th><th class="num sortable" data-sort="current_price">Price</th>
-                <th class="num sortable" data-sort="_mv">Market Value</th><th class="num sortable" data-sort="_wt">Allocation</th><th class="num sortable" data-sort="_pnl">P&L</th><th class="num sortable" data-sort="_pnl_pct">P&L %</th>
+                <th scope="col" class="sortable" data-sort="ticker">Ticker</th><th scope="col" class="sortable" data-sort="name">Name</th><th scope="col" class="sortable" data-sort="sector">Sector</th>
+                <th scope="col" class="num sortable" data-sort="quantity">Shares</th><th scope="col" class="num sortable" data-sort="avg_cost_basis">Avg Cost</th><th scope="col" class="num sortable" data-sort="current_price">Price</th>
+                <th scope="col" class="num sortable" data-sort="_mv">Market Value</th><th scope="col" class="num sortable" data-sort="_wt">Allocation</th><th scope="col" class="num sortable" data-sort="_pnl">P&L</th><th scope="col" class="num sortable" data-sort="_pnl_pct">P&L %</th>
                 <th style="width:70px;"></th>
             </tr></thead>
             <tbody>${enriched.map(h => `<tr data-holding-id="${esc(h.id)}" data-ticker="${esc(h.ticker)}">
@@ -1966,7 +1966,7 @@
 
         el.innerHTML = `<div class="table-wrap"><table class="data-table">
             <thead><tr>
-                <th>Date</th><th>Ticker</th><th>Type</th><th class="text-right">Quantity</th><th class="text-right">Price</th><th class="text-right">Total</th><th>Notes</th>
+                <th scope="col">Date</th><th scope="col">Ticker</th><th scope="col">Type</th><th scope="col" class="text-right">Quantity</th><th scope="col" class="text-right">Price</th><th scope="col" class="text-right">Total</th><th scope="col">Notes</th>
             </tr></thead>
             <tbody>${rows}</tbody>
         </table></div>`;
@@ -2170,12 +2170,12 @@
         }
         el.innerHTML = `<div class="table-wrap"><table>
             <thead><tr>
-                <th class="sortable" data-sort="title">Title</th>
-                <th class="sortable" data-sort="event_type">Type</th>
-                <th class="sortable" data-sort="materiality">Materiality</th>
-                <th>Holdings</th>
-                <th>Source</th>
-                <th class="sortable" data-sort="published_at">Published</th>
+                <th scope="col" class="sortable" data-sort="title">Title</th>
+                <th scope="col" class="sortable" data-sort="event_type">Type</th>
+                <th scope="col" class="sortable" data-sort="materiality">Materiality</th>
+                <th scope="col">Holdings</th>
+                <th scope="col">Source</th>
+                <th scope="col" class="sortable" data-sort="published_at">Published</th>
             </tr></thead>
             <tbody>${list.map(e => {
                 const tags = renderFactorTagsMini(e.factor_tags || []);
@@ -7509,6 +7509,45 @@
             ws.close();
         };
     }
+
+    // ================================================================
+    // Phase 23 — Dialog focus return (accessibility)
+    // ================================================================
+    // Small additive helper: when a <dialog> opens via showModal(),
+    // remember whatever element had focus; when the dialog closes,
+    // return focus to that trigger if it is still safely focusable.
+    // The modal system itself is untouched — this only wraps the
+    // native showModal() to record the trigger and listens for the
+    // (non-bubbling) close event in the capture phase.
+    (function setupDialogFocusReturn() {
+        if (typeof HTMLDialogElement === 'undefined') return;
+        const proto = HTMLDialogElement.prototype;
+        if (proto._axFocusReturnWrapped) return;
+        proto._axFocusReturnWrapped = true;
+        const origShowModal = proto.showModal;
+        proto.showModal = function () {
+            try {
+                this._axReturnFocus = document.activeElement;
+            } catch (_e) {
+                this._axReturnFocus = null;
+            }
+            return origShowModal.apply(this, arguments);
+        };
+        // The dialog 'close' event does not bubble — listen in the
+        // capture phase so a document-level listener still sees it.
+        document.addEventListener('close', function (ev) {
+            const dlg = ev.target;
+            if (!dlg || dlg.tagName !== 'DIALOG') return;
+            const target = dlg._axReturnFocus;
+            dlg._axReturnFocus = null;
+            // Restore focus only when safe: the trigger still exists
+            // in the document and is focusable.
+            if (target && typeof target.focus === 'function'
+                    && document.contains(target)) {
+                try { target.focus(); } catch (_e) { /* ignore */ }
+            }
+        }, true);
+    })();
 
     // ================================================================
     // Keyboard Shortcuts

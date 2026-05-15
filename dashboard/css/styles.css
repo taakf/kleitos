@@ -3753,3 +3753,21 @@ th.sortable.sort-desc::after { content: '\25BC'; opacity: 0.8; color: var(--prim
     text-align: left;
     color: var(--muted-fg);
 }
+
+/* ============================================================
+   Phase 23 — Accessibility: visible keyboard focus ring.
+   Several input :focus rules above set `outline: none`. These
+   :focus-visible rules restore a real outline for KEYBOARD focus
+   only (mouse focus keeps the existing subtle border/box-shadow).
+   Placed at end-of-file so source order wins over the earlier
+   `:focus { outline: none }` rules at equal specificity.
+   ============================================================ */
+.input:focus-visible,
+.select-input:focus-visible,
+.cmd-input:focus-visible,
+.portfolio-select:focus-visible,
+.review-table input[type="text"]:focus-visible,
+.review-table input[type="number"]:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 1px;
+}

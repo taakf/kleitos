@@ -76,7 +76,7 @@
                             </div>
                         </div>
                         <div class="card">
-                            <div id="holdings-table"><div class="spinner">Loading holdings...</div></div>
+                            <div id="holdings-table" aria-live="polite"><div class="spinner">Loading holdings...</div></div>
                         </div>
                     </div>
 
@@ -298,7 +298,7 @@
                             <div id="insights-history-list" class="insights-history-list"></div>
                         </div>
 
-                        <div id="insights-cards" class="insights-cards">
+                        <div id="insights-cards" class="insights-cards" aria-live="polite">
                             <div class="spinner">Loading insights...</div>
                         </div>
                     </div>
@@ -367,7 +367,7 @@
                             </div>
                         </div>
                         <div class="card">
-                            <div id="events-table"><div class="spinner">Loading news...</div></div>
+                            <div id="events-table" aria-live="polite"><div class="spinner">Loading news...</div></div>
                         </div>
                     </div>
 
@@ -925,7 +925,7 @@
                     <h3 id="detail-title">Holding Detail</h3>
                     <div class="modal-header-actions">
                         <button class="btn btn-ghost btn-sm copy-link-btn" id="holding-detail-copy-link" title="Copy deep link">&#128279; Copy link</button>
-                        <button class="btn btn-ghost" onclick="closeHoldingDetail()">&times;</button>
+                        <button class="btn btn-ghost" onclick="closeHoldingDetail()" aria-label="Close">&times;</button>
                     </div>
                 </div>
                 <div id="detail-body"><div class="spinner">Loading...</div></div>
@@ -945,7 +945,7 @@
             <h3 id="event-detail-title">News item</h3>
             <div class="modal-header-actions">
                 <button class="btn btn-ghost btn-sm copy-link-btn" id="event-detail-copy-link" title="Copy deep link">&#128279; Copy link</button>
-                <button class="btn btn-ghost" data-close-modal>&times;</button>
+                <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
             </div>
         </div>
         <div class="modal-body" id="event-detail-body">
@@ -957,7 +957,7 @@
     <dialog id="reset-modal" aria-label="Reset Portfolio">
         <div class="modal-header">
             <h3 style="color:var(--danger);">Reset All Data</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
             <p>This will permanently delete <strong>all</strong> portfolio data:</p>
@@ -980,7 +980,7 @@
     <dialog id="upload-modal" aria-label="Upload Portfolio">
         <div class="modal-header">
             <h3>Upload Portfolio</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <form id="upload-form" enctype="multipart/form-data">
             <div class="drop-zone" id="drop-zone" onclick="document.getElementById('portfolio-file').click()">
@@ -1003,7 +1003,7 @@
     <dialog id="add-holding-modal" aria-label="Add Holding">
         <div class="modal-header">
             <h3 id="add-holding-title">Add Holding</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <form id="add-holding-form" class="modal-form" onsubmit="return false;">
             <div class="form-row">
@@ -1048,7 +1048,7 @@
     <dialog id="edit-holding-modal" aria-label="Edit Holding">
         <div class="modal-header">
             <h3 id="edit-holding-title">Edit Holding</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <form id="edit-holding-form" class="modal-form" onsubmit="return false;">
             <input type="hidden" id="eh-id">
@@ -1090,7 +1090,7 @@
     <dialog id="trade-modal" aria-label="Record Trade">
         <div class="modal-header">
             <h3>Record Trade</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <form id="trade-form" class="modal-form" onsubmit="return false;">
             <div class="form-row">
@@ -1143,7 +1143,7 @@
     <dialog id="delete-modal" aria-label="Confirm Delete">
         <div class="modal-header">
             <h3>Remove Holding</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
             <p>Are you sure you want to remove <strong id="delete-ticker"></strong> from the portfolio?</p>
@@ -1160,7 +1160,7 @@
     <dialog id="review-modal" aria-label="Review Import" class="review-modal">
         <div class="modal-header">
             <h3 id="review-modal-title">Review Extracted Data</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
             <p id="review-message" class="text-sm text-muted" style="margin-bottom:0.75rem;"></p>
@@ -1169,13 +1169,13 @@
                     <thead>
                         <tr>
                             <th></th>
-                            <th>Ticker</th>
-                            <th>Name</th>
-                            <th>Shares</th>
-                            <th>Price</th>
-                            <th>Cost</th>
-                            <th>Value</th>
-                            <th>Currency</th>
+                            <th scope="col">Ticker</th>
+                            <th scope="col">Name</th>
+                            <th scope="col">Shares</th>
+                            <th scope="col">Price</th>
+                            <th scope="col">Cost</th>
+                            <th scope="col">Value</th>
+                            <th scope="col">Currency</th>
                         </tr>
                     </thead>
                     <tbody id="review-tbody"></tbody>
@@ -1194,7 +1194,7 @@
     <dialog id="source-modal" aria-label="Add Source">
         <div class="modal-header">
             <h3 id="source-modal-title">Add News Source</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <form id="source-form" class="modal-form" onsubmit="return false;">
             <input type="hidden" id="src-id">
@@ -1225,7 +1225,7 @@
     <dialog id="delete-source-modal" aria-label="Delete Source">
         <div class="modal-header">
             <h3>Remove Source</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
             <p>Are you sure you want to remove <strong id="delete-source-name"></strong>?</p>
@@ -1242,7 +1242,7 @@
     <dialog id="quickadd-modal" aria-label="Quick Add Sources" class="review-modal">
         <div class="modal-header">
             <h3>Quick Add — Financial News Feeds</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
             <p class="text-sm text-muted" style="margin-bottom:0.75rem;">Select sources to add instantly. Already-added sources are marked.</p>
@@ -1257,7 +1257,7 @@
     <dialog id="create-portfolio-modal" aria-label="Create Portfolio">
         <div class="modal-header">
             <h3>Create Portfolio</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <form class="modal-form" onsubmit="return false;">
             <div class="form-group" style="width:100%">
@@ -1283,7 +1283,7 @@
     <dialog id="op-factor-modal" aria-label="Factor Override">
         <div class="modal-header">
             <h3 id="op-factor-modal-title">Factor Override</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <form class="modal-form" onsubmit="return false;">
             <div class="form-group" style="width:100%;">
@@ -1317,7 +1317,7 @@
     <dialog id="op-rel-modal" aria-label="Manual Relationship">
         <div class="modal-header">
             <h3 id="op-rel-modal-title">Manual Relationship</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <form class="modal-form" onsubmit="return false;">
             <div class="form-group" style="width:100%;">
