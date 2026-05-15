@@ -75,6 +75,16 @@ def _write_env_key(var_name: str, value: str) -> None:
         new_lines.append(f"{var_name}={value}\n")
     _ENV_FILE.write_text("".join(new_lines), encoding="utf-8")
 
+    # Phase 22 — this file holds AI provider API keys. Restrict it to the
+    # owner (0600) so the documented "~/.axion.env with 600 permissions"
+    # guarantee is enforced by the code, not merely claimed in the docs.
+    # Best-effort: on filesystems / platforms without POSIX modes (e.g.
+    # Windows) chmod is a harmless near no-op.
+    try:
+        os.chmod(_ENV_FILE, 0o600)
+    except OSError:
+        logger.debug("could not set 0600 permissions on %s", _ENV_FILE)
+
 
 # ---------------------------------------------------------------------------
 # Models
