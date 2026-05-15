@@ -73,7 +73,7 @@ or the dashboard, and are never refreshed automatically.
 1. Right-click `Axion.app` → **Open**.
 2. Click **Open** in the Gatekeeper dialog.
 
-Or, recommended: use `./scripts/run_local.sh` from a terminal — that path avoids Gatekeeper entirely. Signing/notarisation is on the installer roadmap (`docs/RELEASE_CHECKLIST.md`).
+Or, recommended: use `./scripts/run_local.sh` from a terminal — that path avoids Gatekeeper entirely. Signing and notarisation are a documented roadmap item, not part of this build — see [`docs/INSTALLER_ROADMAP.md`](docs/INSTALLER_ROADMAP.md) and [`docs/SIGNING_AND_NOTARIZATION.md`](docs/SIGNING_AND_NOTARIZATION.md).
 
 ### Event Clustering
 Events are deduplicated (exact hash and near-duplicate detection), but related events are not

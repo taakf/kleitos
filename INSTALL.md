@@ -125,3 +125,5 @@ It runs 16 end-to-end checks against a throwaway temp DB. `16/16 passed` means t
 - [docs/CUSTOMER_QUICKSTART.md](docs/CUSTOMER_QUICKSTART.md) — guided walkthrough
 - [docs/DEMO_RESET.md](docs/DEMO_RESET.md) — reset to a clean state
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — common issues
+- [docs/INSTALLER_ROADMAP.md](docs/INSTALLER_ROADMAP.md) — native-installer roadmap (why the macOS app is unsigned today)
+- [docs/SIGNING_AND_NOTARIZATION.md](docs/SIGNING_AND_NOTARIZATION.md) — code-signing requirements (roadmap)
