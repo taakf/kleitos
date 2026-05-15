@@ -60,8 +60,10 @@ The top-level **Events** tab now exists (separate from Insights → News) and is
 **ATHEX automation is intentionally NOT enabled yet.** Athens Exchange does not currently publish a stable public machine-readable corporate-events feed; the Sources panel marks `athex-corporate-events` as **Unsupported** with a customer-safe note pointing at the CSV import. When a reliable upstream feed becomes available, only `src/corporate_events/athex.py` needs to be implemented — the schema, API, and UI are stable. Do not market or document Axion as having an automated ATHEX corporate-events feed until that work lands.
 
 ### Automated Price Data
-The `price_history` and `portfolio_snapshots` database tables exist but are not populated automatically.
-Current prices must be set manually (via CSV upload, API, or dashboard). Planned for V2.
+There is **no `price_history` or `portfolio_snapshots` table** in this build — the
+schema (v11) has no historical-price storage at all. Each holding carries only the
+`current_price` value you imported; prices are set manually via CSV upload, the API,
+or the dashboard, and are never refreshed automatically.
 
 **There is no live market price feed.** Holdings rows carry only the `current_price` you imported. The dashboard does **not** call any market data vendor at runtime. Don't ship marketing copy that suggests otherwise.
 
@@ -84,9 +86,13 @@ external system that must be installed separately. The OpenClaw bridge API works
 OpenClaw itself is not bundled with Axion.
 
 ### Default News Sources
-V1 ships with 6 enabled RSS sources: Federal Reserve, ECB, MarketWatch, Seeking Alpha,
-Investing.com, and CNBC. CNBC may return HTTP 503 in some regions (geo-restriction).
-Reuters and Yahoo Finance feeds are disabled because their RSS endpoints are no longer active.
+V1 ships with **7 enabled RSS sources**: Federal Reserve, ECB, Google News Business,
+WSJ Markets, MarketWatch, Seeking Alpha, and Investing.com — all keyless public feeds.
+CNBC, Reuters, and Yahoo Finance feeds are present in `config/sources.yaml` but
+**disabled**: CNBC returns HTTP 503 in many regions (geo-restriction), and the Reuters
+and Yahoo Finance RSS endpoints are no longer active.
+The optional `NEWSAPI_KEY` (NewsAPI) and `FINNHUB_KEY` (Finnhub) sources are also
+disabled by default and require a key to enable.
 Operators can add additional RSS or API sources in `config/sources.yaml`.
 
 ## Operational Constraints
