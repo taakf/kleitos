@@ -7,7 +7,7 @@ Uses DeclarativeBase with mapped_column for type-safe column definitions.
 
 from __future__ import annotations
 
-from sqlalchemy import ForeignKey, Index, Text
+from sqlalchemy import CheckConstraint, ForeignKey, Index, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -236,6 +236,13 @@ class EventLink(Base):
     relevance_score: Mapped[float | None] = mapped_column()
     impact_channel: Mapped[str | None] = mapped_column(Text)
     link_source: Mapped[str | None] = mapped_column(Text)
+    # Phase 9A: optional structured context for factor-driven links.
+    # `channel` is a redundant-on-purpose human-friendly label (factor key
+    # for macro_factor links, free text otherwise); `details_json` carries
+    # the structured causal chain for macro_factor links and is otherwise
+    # null for backward-compatible link types.
+    channel: Mapped[str | None] = mapped_column(Text)
+    details_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[str] = mapped_column(Text, nullable=False)
 
     # Relationships
@@ -431,6 +438,616 @@ class SystemHealth(Base):
 # NOTE: PriceHistory and PortfolioSnapshot models were removed in v1.0
 # as they were unused placeholder tables.  They may be reintroduced in a
 # future release when price-data integration and daily snapshots are built.
+
+
+# ---------------------------------------------------------------------------
+# Phase 9A — deterministic macro factor reasoning
+# ---------------------------------------------------------------------------
+
+
+class HoldingFactorSensitivity(Base):
+    """Per-holding sensitivity to a named macro factor.
+
+    Sensitivity is a signed weight in [-1, 1]:
+        +1.0  holding benefits maximally from the factor going "up"
+         0.0  no first-order exposure
+        -1.0  holding is hurt maximally by the factor going "up"
+
+    A row is only required when the sensitivity differs from the
+    sector default (see ``src/intelligence/factors/sensitivity.py``).
+    Holdings without a row fall back to sector defaults at propagation
+    time; if neither is available, they are skipped entirely so the
+    system fails safe rather than emitting low-confidence noise.
+    """
+
+    __tablename__ = "holding_factor_sensitivities"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    holding_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("holdings.id"), nullable=False
+    )
+    factor: Mapped[str] = mapped_column(Text, nullable=False)
+    sensitivity: Mapped[float] = mapped_column(nullable=False)
+    source: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="default"
+    )  # default | ai_inferred | manual
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "holding_id", "factor",
+            name="uq_holding_factor_sensitivities_holding_factor",
+        ),
+        Index("ix_holding_factor_sensitivities_holding_id", "holding_id"),
+        Index("ix_holding_factor_sensitivities_factor", "factor"),
+    )
+
+
+class MacroFactorEvent(Base):
+    """An event's deterministic classification against a macro factor.
+
+    One row per (event, factor) pair; a single event can carry multiple
+    rows when it touches several factors simultaneously (e.g. a
+    pipeline attack in a sanctioned region is both ``oil_energy`` and
+    ``geopolitical_risk``).
+
+    These rows survive even when no holding-level link passes the
+    relevance gate — they are the persistent ground truth for what
+    factors the event touched, independent of the current portfolio
+    composition.
+    """
+
+    __tablename__ = "macro_factor_events"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    event_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("events.id"), nullable=False
+    )
+    factor: Mapped[str] = mapped_column(Text, nullable=False)
+    direction: Mapped[str] = mapped_column(Text, nullable=False)  # up | down | unknown
+    magnitude: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="unknown"
+    )  # minor | moderate | major | extreme | unknown
+    confidence: Mapped[float] = mapped_column(nullable=False)  # 0.0–1.0
+    rationale: Mapped[str | None] = mapped_column(Text)  # JSON array of matched patterns
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "event_id", "factor",
+            name="uq_macro_factor_events_event_factor",
+        ),
+        Index("ix_macro_factor_events_event_id", "event_id"),
+        Index("ix_macro_factor_events_factor", "factor"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 9D — deterministic relationship graph
+# ---------------------------------------------------------------------------
+
+
+class HoldingRelationship(Base):
+    """Structured relationship row anchoring a holding to a related entity.
+
+    Each row answers the question: "this holding is X to this related
+    entity (identified by ticker and/or stable entity key), with this
+    strength".  Relationship rows are anchored to a ``holding_id`` so
+    portfolio correctness flows naturally through the FK — an event
+    about a related entity only propagates to holdings whose portfolio
+    actually contains that row.
+
+    ``strength`` is a float in [0.0, 1.0] describing how tight the
+    relationship is (a holding's sole foundry vs. one customer of
+    many).  The propagator multiplies this in, plus a relationship-
+    type weight, plus a conservative indirectness decay.
+
+    Nothing in this model depends on an LLM or on an external
+    knowledge graph — rows are authored (seeded) from a repo-managed
+    registry or added by operators.  See
+    ``src/intelligence/relationships/seeds.py``.
+    """
+
+    __tablename__ = "holding_relationships"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    holding_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("holdings.id"), nullable=False
+    )
+    #: supplier | customer | competitor | regulator | parent | subsidiary
+    relationship_type: Mapped[str] = mapped_column(Text, nullable=False)
+    #: Optional ticker for the related entity — may be null for
+    #: non-listed entities (regulators, private companies).  When
+    #: present, ticker is the strongest match signal we can use.
+    related_ticker: Mapped[str | None] = mapped_column(Text)
+    #: Stable repo-controlled identifier for the related entity.
+    #: Used when ``related_ticker`` is null, or as a disambiguator.
+    related_entity_key: Mapped[str | None] = mapped_column(Text)
+    #: Human-readable name — surfaces in the causal chain summary and
+    #: can be used for name-based matching on company mentions.
+    related_name: Mapped[str | None] = mapped_column(Text)
+    #: 0.0–1.0 inclusive — strength of this relationship.
+    strength: Mapped[float] = mapped_column(nullable=False, server_default="0.5")
+    #: ``seed`` | ``manual`` | ``ai_inferred`` — Phase 9D only uses
+    #: ``seed`` at runtime; the others are reserved for future phases.
+    source: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="seed"
+    )
+    description: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "holding_id", "relationship_type", "related_ticker", "related_entity_key",
+            name="uq_holding_relationships_unique_edge",
+        ),
+        Index("ix_holding_relationships_holding_id", "holding_id"),
+        Index("ix_holding_relationships_related_ticker", "related_ticker"),
+        Index("ix_holding_relationships_related_entity_key", "related_entity_key"),
+        Index("ix_holding_relationships_type", "relationship_type"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 9F — Telegram session state + delivery bookkeeping
+# ---------------------------------------------------------------------------
+
+
+class TelegramSession(Base):
+    """Per-Telegram-chat session state.
+
+    Phase 9F pins each authorized Telegram chat to an *active portfolio*
+    so `/portfolio`, `/holdings`, `/alerts`, `/digest`, `/events` and the
+    free-text chat path all scope their reads to exactly that portfolio.
+
+    A missing row is interpreted as "active portfolio = 'default'" so
+    pre-9F installs keep working with zero configuration.  Writes only
+    happen when the user explicitly switches portfolio via
+    ``/portfolio_select <id>``.
+    """
+
+    __tablename__ = "telegram_sessions"
+
+    chat_id: Mapped[int] = mapped_column(primary_key=True)
+    active_portfolio_id: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="'default'"
+    )
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class TelegramDelivery(Base):
+    """Audit trail of every outbound Telegram alert delivery attempt.
+
+    Phase 9F uses this table as the source of truth for deduplication
+    and cooldown bookkeeping.  An alert is only considered "delivered"
+    once a row exists here with status='sent'; failed sends write a
+    status='failed' row without touching ``Alert.delivered``, so the
+    next poll cycle will retry.
+
+    Dedupe key = (chat_id, alert_id).  Cooldown key = (chat_id,
+    event_id, holding_id, channel) — so if the same
+    event+holding+channel tuple fires another alert within the cooldown
+    window, we collapse it.
+    """
+
+    __tablename__ = "telegram_deliveries"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    chat_id: Mapped[int] = mapped_column(nullable=False)
+    alert_id: Mapped[str] = mapped_column(Text, nullable=False)
+    portfolio_id: Mapped[str | None] = mapped_column(Text)
+    dedup_key: Mapped[str | None] = mapped_column(Text)  # event_id|holding_id|channel
+    status: Mapped[str] = mapped_column(Text, nullable=False)  # sent|failed|skipped
+    error: Mapped[str | None] = mapped_column(Text)
+    sent_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "chat_id", "alert_id",
+            name="uq_telegram_deliveries_chat_alert",
+        ),
+        Index("ix_telegram_deliveries_alert_id", "alert_id"),
+        Index("ix_telegram_deliveries_dedup_key", "dedup_key"),
+        Index("ix_telegram_deliveries_sent_at", "sent_at"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 9P — Notification Center read state
+# ---------------------------------------------------------------------------
+
+
+class NotificationRead(Base):
+    """Per-portfolio read state for Phase 9P inbox items.
+
+    Inbox items are composed on-the-fly from existing trusted rows
+    (alerts, digests, operator audit rows, recommended actions); they
+    do NOT live in their own table.  What we *do* need to persist is
+    the operator's read state per ``notification_key`` so marking an
+    item read survives reloads and tab switches.
+
+    Design rules:
+      * portfolio-safe — every row carries ``portfolio_id`` and the
+        unique constraint is per-portfolio, so marking an item read
+        in pA never affects pB.
+      * grounded — ``source_type`` + ``source_id`` back-reference the
+        row that produced the inbox item, so the audit trail stays
+        intact and we never drift from deterministic data.
+      * additive — nothing else in the schema changes.
+      * SQLite-safe — no compound foreign keys, no check constraints
+        that SQLite would reject.
+    """
+
+    __tablename__ = "notification_reads"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    portfolio_id: Mapped[str] = mapped_column(Text, nullable=False)
+    notification_key: Mapped[str] = mapped_column(Text, nullable=False)
+    source_type: Mapped[str] = mapped_column(Text, nullable=False)
+    source_id: Mapped[str] = mapped_column(Text, nullable=False)
+    read_at: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "portfolio_id", "notification_key",
+            name="uq_notification_reads_portfolio_key",
+        ),
+        Index("ix_notification_reads_portfolio_id", "portfolio_id"),
+        Index("ix_notification_reads_source_type", "source_type"),
+        Index("ix_notification_reads_read_at", "read_at"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 9T — Recommended action dismiss/read state
+# ---------------------------------------------------------------------------
+
+
+class ActionState(Base):
+    """Per-portfolio lifecycle state for Phase 9N recommended actions.
+
+    Each row tracks whether an operator has marked a specific action
+    key as ``read`` or ``dismissed``.  The ``fingerprint`` field
+    captures a deterministic hash of the action's grounded evidence
+    at dismiss time so the reappearance rule can detect material
+    changes: same key + same fingerprint → stays handled; same key +
+    different fingerprint → reappears as new.
+
+    Portfolio isolation is enforced by the unique constraint on
+    ``(portfolio_id, action_key)`` — dismissing an action in pA
+    never affects pB.
+    """
+
+    __tablename__ = "action_states"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    portfolio_id: Mapped[str] = mapped_column(Text, nullable=False)
+    action_key: Mapped[str] = mapped_column(Text, nullable=False)
+    state: Mapped[str] = mapped_column(Text, nullable=False)  # "read" | "dismissed"
+    fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "portfolio_id", "action_key",
+            name="uq_action_states_portfolio_key",
+        ),
+        Index("ix_action_states_portfolio_id", "portfolio_id"),
+        Index("ix_action_states_state", "state"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 9U — Saved analytical views
+# ---------------------------------------------------------------------------
+
+
+class SavedView(Base):
+    """Per-portfolio named saved view for Phase 9U.
+
+    Each row is a compact snapshot of a restorable analytical context
+    (surface, subtab, filters).  The ``payload_json`` field carries the
+    same shape as a ``NavigationTarget.to_dict()`` so restoring a saved
+    view is identical to following a deep link.
+
+    Portfolio isolation: unique on ``(portfolio_id, name)`` so pA's
+    saved views never clash with pB's.
+    """
+
+    __tablename__ = "saved_views"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    portfolio_id: Mapped[str] = mapped_column(Text, nullable=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    surface: Mapped[str] = mapped_column(Text, nullable=False)
+    payload_json: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "portfolio_id", "name",
+            name="uq_saved_views_portfolio_name",
+        ),
+        Index("ix_saved_views_portfolio_id", "portfolio_id"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 9 — Corporate / issuer events
+#
+# Deliberately a separate table from ``events`` (news).  Rationale:
+#   * different lifecycle: corporate events are *scheduled* (have a
+#     forward-looking ``event_date``), news items are *published*.
+#   * different match key: corporate events match to a holding via
+#     ISIN→ticker, not via free-text title extraction.
+#   * different ownership: news rows may be portfolio-agnostic while
+#     corporate events are typed to a holding (or to a Greek-listed
+#     ticker the user may import in the future).
+# Keeping them apart means /api/v1/events behaviour is untouched by
+# Phase 9.  See docs/CUSTOMER_QUICKSTART.md for the customer-facing
+# distinction.
+# ---------------------------------------------------------------------------
+
+
+class CorporateEvent(Base):
+    """A scheduled corporate / issuer event (earnings, dividend, AGM, …).
+
+    Phase 9 — first source is ATHEX for Greek-listed holdings.  Other
+    exchanges may be added in later phases; the schema is exchange-
+    agnostic on purpose.
+
+    Match strategy
+    --------------
+    A row may be matched to a holding via ``holding_id`` (resolved at
+    import / fetch time using ISIN first, then ticker).  Unmatched rows
+    are still stored when the ticker / ISIN does not correspond to any
+    holding in the active portfolio — that lets the user keep an audit
+    trail and lets the UI render "for ticker X, no holding matched".
+
+    Source provenance
+    -----------------
+    ``source_id`` / ``source_name`` carry the registry id + display
+    name (e.g. ``athex-corporate-events`` / ``ATHEX Corporate Events``)
+    or ``manual_csv`` for operator-uploaded rows.  ``raw_payload`` is
+    the scrubbed source row in JSON form for full audit.
+    """
+
+    __tablename__ = "corporate_events"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+
+    # Portfolio scoping — corporate events ARE portfolio-scoped because
+    # the relevance of an event depends on whether the user holds the
+    # ticker.  The same upstream ATHEX feed can produce rows for
+    # multiple portfolios, each pinned via this FK.
+    portfolio_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("portfolios.id"), nullable=False
+    )
+    holding_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("holdings.id")
+    )
+
+    # Issuer identifiers — at least one of ticker / isin must be set
+    # by the importer; we keep both nullable so the matcher can choose.
+    ticker: Mapped[str | None] = mapped_column(Text)
+    isin: Mapped[str | None] = mapped_column(Text)
+    exchange: Mapped[str | None] = mapped_column(Text)  # ATHEX, …
+
+    # Source provenance
+    source_id: Mapped[str | None] = mapped_column(Text)
+    source_name: Mapped[str | None] = mapped_column(Text)
+    source_url: Mapped[str | None] = mapped_column(Text)
+    external_id: Mapped[str | None] = mapped_column(Text)
+
+    # Event body
+    event_type: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    event_date: Mapped[str] = mapped_column(Text, nullable=False)   # ISO date (YYYY-MM-DD)
+    event_time: Mapped[str | None] = mapped_column(Text)            # ISO time (HH:MM)
+    timezone: Mapped[str | None] = mapped_column(Text)              # IANA tz name
+    status: Mapped[str | None] = mapped_column(Text)                # raw vendor status, optional
+    confidence: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="unscored"
+    )
+    match_method: Mapped[str | None] = mapped_column(Text)          # isin | ticker | unmatched
+
+    # Audit / dedup
+    dedup_hash: Mapped[str | None] = mapped_column(Text)
+    raw_payload: Mapped[str | None] = mapped_column(Text)           # JSON, scrubbed
+    import_batch_id: Mapped[str | None] = mapped_column(Text)       # manual_csv batch grouping
+
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "portfolio_id", "dedup_hash",
+            name="uq_corporate_events_portfolio_dedup",
+        ),
+        Index("ix_corporate_events_portfolio_id", "portfolio_id"),
+        Index("ix_corporate_events_holding_id", "holding_id"),
+        Index("ix_corporate_events_ticker", "ticker"),
+        Index("ix_corporate_events_isin", "isin"),
+        Index("ix_corporate_events_event_date", "event_date"),
+        Index("ix_corporate_events_event_type", "event_type"),
+        Index("ix_corporate_events_source_id", "source_id"),
+        Index("ix_corporate_events_exchange", "exchange"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 10 — Revenue geography
+#
+# Operators upload per-holding regional revenue breakdowns (CSV today,
+# AI-extracted from annual reports later).  Each row says "company X
+# earned Y% of its revenue in region R for fiscal year F".  The table
+# is deliberately separate from ``securities.geography`` (which is
+# **listing country**, derived from the ISIN prefix) so the two
+# concepts never collapse into one column.  See
+# ``src/intelligence/revenue_geography.py`` for the service that
+# turns rows into a weighted portfolio breakdown.
+# ---------------------------------------------------------------------------
+
+
+class RevenueGeography(Base):
+    """A single revenue-geography allocation row.
+
+    Phase 10 — manually uploaded via CSV (or operator entry).  Never
+    inferred from listing country, ISIN, or sector.  When no rows
+    exist for a holding, the service surfaces it as ``missing`` rather
+    than guessing.
+
+    Uniqueness
+    ----------
+    A holding can only have one row per ``(region, fiscal_year, period)``;
+    re-importing the same CSV is therefore idempotent.  We allow
+    different fiscal years / periods for time-series snapshots.
+
+    Match key
+    ---------
+    Rows are matched to holdings via ISIN first, then ticker, scoped
+    to the same portfolio (matching identical to corporate events).
+    Unmatched rows are kept with ``holding_id = NULL`` so the
+    operator can audit what came in.
+    """
+
+    __tablename__ = "revenue_geography"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+
+    # Portfolio scoping — revenue allocations are operator-supplied
+    # per-portfolio (same upstream company could be tagged differently
+    # in two portfolios with different sourcing).
+    portfolio_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("portfolios.id"), nullable=False
+    )
+    holding_id: Mapped[str | None] = mapped_column(
+        Text, ForeignKey("holdings.id")
+    )
+
+    # Issuer identifiers
+    ticker: Mapped[str | None] = mapped_column(Text)
+    isin: Mapped[str | None] = mapped_column(Text)
+    company_name: Mapped[str | None] = mapped_column(Text)
+
+    # Geography
+    region: Mapped[str] = mapped_column(Text, nullable=False)
+    country: Mapped[str | None] = mapped_column(Text)
+
+    # Allocation
+    revenue_share: Mapped[float] = mapped_column(nullable=False)   # 0.0–1.0
+    fiscal_year: Mapped[int | None] = mapped_column()
+    period: Mapped[str | None] = mapped_column(Text)               # FY, Q1, …
+    currency: Mapped[str | None] = mapped_column(Text)
+
+    # Provenance
+    source_type: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="manual_csv"
+    )
+    source_name: Mapped[str | None] = mapped_column(Text)
+    source_url: Mapped[str | None] = mapped_column(Text)
+    confidence: Mapped[str | None] = mapped_column(Text)
+
+    # Audit
+    raw_payload: Mapped[str | None] = mapped_column(Text)
+    import_batch_id: Mapped[str | None] = mapped_column(Text)
+    match_method: Mapped[str | None] = mapped_column(Text)   # isin / ticker / unmatched
+
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "portfolio_id", "holding_id", "isin", "ticker",
+            "region", "fiscal_year", "period",
+            name="uq_revenue_geography_dedup",
+        ),
+        CheckConstraint(
+            "revenue_share >= 0",
+            name="ck_revenue_geography_share_non_negative",
+        ),
+        Index("ix_revenue_geography_portfolio_id", "portfolio_id"),
+        Index("ix_revenue_geography_holding_id", "holding_id"),
+        Index("ix_revenue_geography_ticker", "ticker"),
+        Index("ix_revenue_geography_isin", "isin"),
+        Index("ix_revenue_geography_fiscal_year", "fiscal_year"),
+        Index("ix_revenue_geography_region", "region"),
+        Index("ix_revenue_geography_country", "country"),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Phase 13 — Insight snapshots (diff-aware notification state)
+#
+# One row per ``(portfolio_id, card_key)`` slot.  The notifier reads
+# the row to decide whether the current generator output is "new",
+# "escalated", or "unchanged" relative to the last persisted snapshot,
+# then upserts the row with the latest fingerprint + severity.
+#
+# We deliberately store **only** the deterministic shape needed to
+# diff and to render UI/Inbox/Telegram cues.  No AI prompt body, no
+# narration text, no uploaded document content ever flows in here.
+# ---------------------------------------------------------------------------
+
+
+class InsightSnapshot(Base):
+    """Latest persisted state of an :class:`InsightCard` slot.
+
+    Phase 13 — written by
+    :mod:`src.intelligence.insights.notifier.notify_new_or_escalated`
+    after each generator run.  The notifier never reads anything
+    beyond what's in this table; the customer-visible card body is
+    always re-rendered from live rows.
+
+    Status vocabulary:
+
+    * ``new``       — first time this card_key was generated (or
+                      re-emerged after dismissal).
+    * ``escalated`` — re-generated with strictly more important
+                      severity than the prior snapshot.
+    * ``notified``  — already emitted to Inbox/Telegram; the
+                      notifier suppresses repeat notifications.
+    * ``dismissed`` — operator dismissed the insight; the notifier
+                      respects this until the fingerprint changes.
+    """
+
+    __tablename__ = "insight_snapshots"
+
+    id: Mapped[str] = mapped_column(Text, primary_key=True)
+    portfolio_id: Mapped[str] = mapped_column(
+        Text, ForeignKey("portfolios.id"), nullable=False
+    )
+    card_key: Mapped[str] = mapped_column(Text, nullable=False)
+    category: Mapped[str] = mapped_column(Text, nullable=False)
+    severity: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(Text, nullable=False)
+    fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    last_seen_at: Mapped[str] = mapped_column(Text, nullable=False)
+    first_seen_at: Mapped[str] = mapped_column(Text, nullable=False)
+    notified_at: Mapped[str | None] = mapped_column(Text)
+    notified_severity: Mapped[str | None] = mapped_column(Text)
+    telegram_delivered_at: Mapped[str | None] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="new"
+    )
+    created_at: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_at: Mapped[str] = mapped_column(Text, nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint(
+            "portfolio_id", "card_key",
+            name="uq_insight_snapshots_portfolio_key",
+        ),
+        Index("ix_insight_snapshots_portfolio_id", "portfolio_id"),
+        Index("ix_insight_snapshots_status", "status"),
+        Index("ix_insight_snapshots_last_seen_at", "last_seen_at"),
+    )
 
 
 # ---------------------------------------------------------------------------

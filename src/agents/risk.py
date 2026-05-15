@@ -13,7 +13,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, ClassVar
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from src.database.models import (
     Alert,
@@ -568,6 +568,11 @@ class RiskAgent(BaseAgent):
         self._check_permission("alerts", "write")
         now = datetime.now(timezone.utc).isoformat()
 
+        # Track which alert rows landed so we can broadcast AFTER commit.
+        # Broadcasting from inside the `async with` block would be wrong —
+        # if the commit failed the WS clients would see a ghost alert.
+        freshly_created: list[dict[str, Any]] = []
+
         async with self._get_db() as session:
             # Fetch existing unacknowledged alert titles for dedup
             existing_stmt = select(Alert.title).where(
@@ -598,8 +603,32 @@ class RiskAgent(BaseAgent):
                 existing_titles.add(a["title"])  # Prevent within-batch dupes too
                 a["id"] = alert_id
                 created += 1
+                freshly_created.append({
+                    "id": alert_id,
+                    "title": a["title"],
+                    "severity": a["severity"],
+                })
 
             await session.commit()
 
         logger.info("Persisted %d risk alerts (%d duplicates skipped)",
                      created, len(alerts) - created)
+
+        # Phase 9M: broadcast a typed live-update event for every
+        # freshly-committed alert.  The broadcast is best-effort — if
+        # the WS surface is unhealthy or there are no connected
+        # clients the dashboard falls back to manual refresh + the
+        # existing polling.  The broadcast carries portfolio_id so
+        # the frontend dispatcher can scope refreshes correctly.
+        if freshly_created:
+            try:
+                from src.api.routes.ws import notify_alert
+                for row in freshly_created:
+                    notify_alert(
+                        alert_id=row["id"],
+                        title=row["title"],
+                        severity=row["severity"],
+                        portfolio_id=self._portfolio_id,
+                    )
+            except Exception as exc:  # pragma: no cover — defensive
+                logger.debug("notify_alert broadcast dropped: %s", exc)

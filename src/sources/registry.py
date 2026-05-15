@@ -25,9 +25,19 @@ class SourceConfig:
     requires_auth: bool = False
     auth_type: str | None = None
     auth_env_var: str | None = None
+    # Phase 7: name of the query-string parameter used to pass an
+    # api_key (e.g. ``apiKey`` for NewsAPI, ``token`` for Finnhub).
+    # When None, the fetcher defaults to ``apiKey``.
+    auth_param_name: str | None = None
     tags: list[str] = field(default_factory=list)
     description: str = ""
     params: dict = field(default_factory=dict)
+    # Phase 7: human notes shown in the Sources UI + support bundle.
+    notes: str = ""
+    # Phase 7: structurally unsupported (e.g. parser not implemented).
+    # When True the UI reports status="unsupported" and the collector
+    # skips it even if ``enabled`` flips on.
+    unsupported: bool = False
 
 
 class SourceRegistry:

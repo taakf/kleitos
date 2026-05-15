@@ -32,10 +32,17 @@ GEOGRAPHY_MAP = {
     "CA": "canada", "HK": "hong kong", "SG": "singapore",
     "NL": "netherlands", "SE": "sweden", "NO": "norway",
     "DK": "denmark", "FI": "finland", "IE": "ireland",
-    "IT": "italy", "ES": "spain",
+    "IT": "italy", "ES": "spain", "GR": "greece",
 }
 
-# Reverse map for ISIN prefix → geography
+# Reverse map for ISIN prefix → geography.
+#
+# IMPORTANT — Phase 9 distinction:
+# ``geography_from_isin`` returns the **listing / domicile country**
+# implied by the ISIN prefix.  This is the country whose CSD assigned
+# the identifier — it is **not** the company's revenue geography.
+# Revenue geography (where the issuer actually sells) is a separate,
+# unimplemented concept tracked in :mod:`src.intelligence.listing`.
 ISIN_COUNTRY_MAP = {
     "US": "united states", "GB": "united kingdom", "DE": "germany",
     "FR": "france", "CH": "switzerland", "JP": "japan",
@@ -49,6 +56,9 @@ ISIN_COUNTRY_MAP = {
     "IL": "israel", "ZA": "south africa", "MX": "mexico",
     "CL": "chile", "CO": "colombia", "PE": "peru",
     "AR": "argentina", "NZ": "new zealand",
+    # Phase 9 — required for ATHEX corporate-events fetcher to identify
+    # Greek-listed holdings by ISIN prefix.
+    "GR": "greece",
 }
 
 

@@ -14,9 +14,7 @@ Responsibilities:
 from __future__ import annotations
 
 import csv
-import hashlib
 import io
-import json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -25,7 +23,7 @@ from typing import Any, ClassVar
 
 from sqlalchemy import select
 
-from src.database.models import Holding, Trade, Security
+from src.database.models import Holding, Trade
 
 from .base import BaseAgent
 

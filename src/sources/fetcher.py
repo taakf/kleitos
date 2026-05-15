@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import httpx
 
 from src.sources.registry import SourceConfig, SourceRegistry
+from src.sources.source_status import scrub_source_error
 
 logger = logging.getLogger(__name__)
 
@@ -111,8 +112,9 @@ class SourceFetcher:
                     error=f"Missing API key: {source.auth_env_var}",
                 )
             if source.auth_type == "api_key":
-                # Use source-specific param name, defaulting to "apiKey"
-                param_name = getattr(source, "auth_param_name", None) or "apiKey"
+                # Phase 7: ``auth_param_name`` is now a real ``SourceConfig``
+                # field — NewsAPI uses ``apiKey``, Finnhub uses ``token``.
+                param_name = source.auth_param_name or "apiKey"
                 params[param_name] = key
             elif source.auth_type == "bearer":
                 headers["Authorization"] = f"Bearer {key}"
@@ -158,8 +160,19 @@ class SourceFetcher:
                     await asyncio.sleep(wait)
                     last_error = f"HTTP {response.status_code}: Rate limited"
                     continue  # skip the generic backoff below
+                elif response.status_code in (401, 403):
+                    # Auth-shaped 4xx — the customer-facing status maps
+                    # this to "misconfigured" (or "missing_key" upstream
+                    # if the request was made without a key at all).
+                    return FetchResult(
+                        source_id=source.id,
+                        success=False,
+                        status_code=response.status_code,
+                        error=f"HTTP {response.status_code}: auth rejected",
+                        fetch_duration_ms=duration_ms,
+                    )
                 elif 400 <= response.status_code < 500:
-                    # Client errors (except 429) are deterministic — don't retry
+                    # Client errors (except 401/403/429) are deterministic — don't retry
                     return FetchResult(
                         source_id=source.id,
                         success=False,
@@ -177,7 +190,11 @@ class SourceFetcher:
                 last_error = "Timeout"
                 logger.warning(f"Timeout fetching {source.id} ({duration_ms}ms)")
             except httpx.RequestError as e:
-                last_error = str(e)
+                # Phase 7: httpx's RequestError stringification can include
+                # the full URL with query parameters — that means an API key
+                # passed as ?apiKey=... would leak via this branch.
+                # scrub_source_error masks any token-shaped query value.
+                last_error = scrub_source_error(str(e))
                 logger.warning(f"Request error for {source.id}: {last_error}")
 
             # Backoff before retry
@@ -187,7 +204,9 @@ class SourceFetcher:
         return FetchResult(
             source_id=source.id,
             success=False,
-            error=f"Failed after {self._max_retries} attempts: {last_error}",
+            error=scrub_source_error(
+                f"Failed after {self._max_retries} attempts: {last_error}"
+            ),
         )
 
     async def fetch_all_enabled(self, api_keys: dict[str, str] | None = None) -> list[FetchResult]:

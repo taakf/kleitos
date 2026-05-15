@@ -120,12 +120,12 @@ def build_exe():
     exe_path = PROJECT_DIR / "dist" / "Axion.exe"
     if exe_path.exists():
         size_mb = exe_path.stat().st_size / (1024 * 1024)
-        print(f"\n  Build successful!")
+        print("\n  Build successful!")
         print(f"  Output: {exe_path}")
         print(f"  Size:   {size_mb:.1f} MB")
         print()
-        print(f"  To test: double-click dist\\Axion.exe")
-        print(f"  To distribute: copy dist\\Axion.exe + the project folder")
+        print("  To test: double-click dist\\Axion.exe")
+        print("  To distribute: copy dist\\Axion.exe + the project folder")
     else:
         print("\n  ERROR: Expected output not found!")
         sys.exit(1)

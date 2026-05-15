@@ -308,6 +308,117 @@ class AnthropicProvider(LLMProvider):
             logger.error("LLM text call failed: %s", exc)
             return f"[Axion] AI response unavailable: {exc}"
 
+    # -- provider status testing (Phase 6) ---------------------------------
+
+    async def test_connection(
+        self,
+        *,
+        provider_name: str = "anthropic",
+        model: str | None = None,
+    ):
+        """Probe the Anthropic API with a minimal call and return a typed status."""
+        from src.llm.provider_status import build_status, status_from_exception
+
+        settings = get_settings()
+        chosen_model = model or settings.llm.model
+
+        if not self.is_available():
+            return build_status(
+                provider=provider_name,
+                status="missing_key",
+                configured=False,
+                model=chosen_model,
+            )
+
+        try:
+            import anthropic
+        except ModuleNotFoundError as exc:
+            return status_from_exception(
+                provider=provider_name,
+                exc=exc,
+                configured=True,
+                model=chosen_model,
+            )
+
+        try:
+            client = self._get_client()
+            await client.messages.create(
+                model=chosen_model,
+                max_tokens=5,
+                messages=[{"role": "user", "content": "ping"}],
+            )
+        except anthropic.AuthenticationError:
+            return build_status(
+                provider=provider_name,
+                status="invalid_key",
+                configured=True,
+                model=chosen_model,
+                detail_code="auth_error",
+            )
+        except anthropic.PermissionDeniedError:
+            return build_status(
+                provider=provider_name,
+                status="invalid_key",
+                configured=True,
+                model=chosen_model,
+                detail_code="permission_denied",
+            )
+        except anthropic.RateLimitError:
+            return build_status(
+                provider=provider_name,
+                status="quota_issue",
+                configured=True,
+                model=chosen_model,
+                detail_code="rate_limit",
+            )
+        except anthropic.APIConnectionError:
+            return build_status(
+                provider=provider_name,
+                status="unreachable",
+                configured=True,
+                model=chosen_model,
+                detail_code="network",
+            )
+        except anthropic.APIStatusError as exc:
+            code = getattr(exc, "status_code", None)
+            if isinstance(code, int) and code >= 500:
+                return build_status(
+                    provider=provider_name,
+                    status="unreachable",
+                    configured=True,
+                    model=chosen_model,
+                    detail_code=f"http_{code}",
+                )
+            if code == 429:
+                return build_status(
+                    provider=provider_name,
+                    status="quota_issue",
+                    configured=True,
+                    model=chosen_model,
+                    detail_code="http_429",
+                )
+            return status_from_exception(
+                provider=provider_name,
+                exc=exc,
+                configured=True,
+                model=chosen_model,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return status_from_exception(
+                provider=provider_name,
+                exc=exc,
+                configured=True,
+                model=chosen_model,
+            )
+
+        return build_status(
+            provider=provider_name,
+            status="active",
+            configured=True,
+            model=chosen_model,
+            detail_code="ok",
+        )
+
     # -- lifecycle ----------------------------------------------------------
 
     async def close(self) -> None:

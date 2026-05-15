@@ -1,0 +1,164 @@
+# Axion Demo Runbook
+
+## One command to launch
+
+```bash
+bash scripts/demo_launch.sh
+```
+
+Then open **http://localhost:7777/dashboard**
+
+That's it. The script resets the database, loads demo data, starts the server, and confirms it's healthy. Press `Ctrl+C` when done.
+
+---
+
+## What the launcher does
+
+It runs `scripts/demo_prep.py --reset` (data prep) then starts uvicorn on port 7777. No AI API key needed — all core features work in deterministic mode.
+
+### Manual alternative (if you need separate steps)
+
+```bash
+.venv/bin/python scripts/demo_prep.py --reset
+.venv/bin/python -m uvicorn src.main:app --port 7777
+```
+
+This script:
+- Creates the database and runs migrations
+- Syncs news sources from `config/sources.yaml`
+- Imports 10 sample holdings (AAPL, MSFT, NVDA, AMZN, JPM, JNJ, PG, NESN, SHEL, GOOGL)
+- Seeds 6 deterministic relationships (AAPL→TSM, NVDA→TSM supplier chains, etc.)
+- Collects real news from live RSS feeds (~100-200 events)
+- Runs the deterministic factor + relationship link pipeline
+- Creates sample alerts
+- Generates a deterministic digest
+
+### Start the server
+```bash
+.venv/bin/python -m uvicorn src.main:app --port 7777
+```
+
+### Open the dashboard
+```
+http://localhost:7777/dashboard
+```
+
+---
+
+## Safe demo flow (15-20 minutes)
+
+### 1. Portfolio (3 min)
+- Show the **Holdings table** — 10 diversified holdings with P&L
+- Click a holding (e.g., AAPL) → **Holding detail slide-out** shows risk alerts, related events
+- Point out the **copy-link button** → "Every view is shareable"
+
+### 2. Portfolio posture band (4 min)
+- Return to Portfolio tab → show the **posture assessment** band at the top of Holdings
+- Point out: factor pressures, relationship touchpoints (AAPL→TSM supplier)
+- Show **recommended actions** with dismiss buttons
+- Dismiss one → "Stays hidden until the signal materially changes"
+- (This Portfolio-tab band is distinct from the **Insights → Overview** sub-tab covered in step 2c.)
+
+### 2b. Corporate Events calendar (2 min, Phase 9)
+- Click the new top-level **Events** tab — separate from Insights → News.
+- Show the monthly calendar with day chips coloured by event type (earnings, dividend, AGM…).
+- Open **Import CSV** → paste a small CSV (`event_type,title,ticker,event_date` minimum) → import; show the matched / unmatched counters.
+- Click a calendar chip → detail drawer with ISIN/ticker, exchange, match method, scrubbed source link.
+- "ATHEX automation is intentionally `unsupported` in this build because Athens Exchange has no stable public corporate-events feed. The Phase 9 release ships the full schema + UI + CSV pipeline so this works today without inventing data."
+
+### 2c. Insights → Overview (2 min, Phase 12)
+- Click **Insights → Overview** (the first sub-tab).
+- "Each card is deterministic, evidence-backed, and ranked. Severity comes from the source row — we never invent it."
+- Point out a News-impact card → click its **Open News item** deep link to land directly on the detail modal.
+- Toggle **AI narrate (optional)** to show the AI-grounded path. "AI can rewrite wording, never add facts. If it mentions a ticker outside the affected list, the rewrite is discarded automatically."
+- Point at the Coverage strip — holdings count, news (7d), events (30d), active alerts, revenue-geography status, AI provider state. "This is the honest data-availability picture."
+
+### 2d. Insights history deck + saved views (2 min, Phase 14)
+- Above the card grid, point at the **What changed** panel.
+- Click between **7d / 30d / 90d** pills — sparkline + summary chips refresh from local snapshots only. "No live prices. No AI inference. Just what Phase 13 wrote to disk."
+- Toggle **New only** / **Escalated only** — list filters in place.
+- Click a row's deep link → land on the underlying News / Events / Alerts / Exposures surface.
+- Click **Save current view** — show the auto-suggested name (e.g. *"Insights · Overview · Critical · Last 7 days"*).
+- Restore another saved Insights view → category + severity + window + AI toggle restore in one click.
+
+### 2e. Insights export + shareable state (1 min, Phase 15)
+- With a filter active (e.g. **Severity: critical** + **New only**) click **Export CSV** in the Overview toolbar — a file named `axion-insights-overview-YYYYMMDD-HHMMSS.csv` downloads. Open it: header row with one column per field, rows tagged `section=current` and `section=history`.
+- Click **Export JSON** — same merged payload as JSON.
+- Click **Copy share link** — paste the URL into a fresh browser tab. The Overview restores with the same category / severity / time window / history-state filters. "No keys, no prompt bodies, just the filter dimensions we already approved."
+
+### 3. News + Causal Chains (3 min)
+- Click **Insights → News**
+- Type "fed" in the search box — "**Server-side, debounced** — Source/Type/Factor/Materiality filters narrow the slice the same way."
+- Toggle **Linked holdings only** — "Now we're looking at just the news that hit our book."
+- Point at a row's **Linked** and **Macro signal** chips — "Two glanceable trust signals: did this story match a holding, and did the deterministic factor classifier tag it?"
+- Open a Fed/ECB news item → **detail modal** with factor tags, causal chains, affected holdings
+- Show the **"Why Axion flagged this"** block
+- Click a grounded evidence chip → deep-link jumps to the relevant surface
+- Click **Reset** in the filter bar to clear back to the full feed
+
+### 4. Alerts + Filtering (2 min)
+- Click **Alerts tab**
+- Show the **severity filter** → "Critical & High"
+- Show the **acknowledged filter** → "open only vs all"
+- Point out per-alert "Next step" suggestions
+
+### 5. Operator Controls (3 min)
+- **Settings → Operator**
+- Show factor sensitivities — "Override any factor weight"
+- Show relationship graph — "Seed from YAML, plus manual entries"
+- Show recent operator actions — "Every change is audited"
+
+### 6. Inbox (2 min)
+- **Intelligence → Inbox**
+- "One unified view of everything that needs attention"
+- Mark one item read → badge updates
+- Click a jump button → navigates to the exact alert/event
+
+### 7. Saved Views (1 min)
+- **Settings → Saved Views**
+- "Save current view" → auto-suggests a name
+- Switch away → restore → filters reapply
+
+### 8. Assistant (1 min)
+- **Command tab**
+- Type "What matters most today?"
+- Show the deterministic response with "Standard" mode badge
+- "The intelligence engine runs without AI. Connect a key for conversational queries."
+
+---
+
+## What to skip in demo (no AI key)
+
+| Surface | Why | What to say if asked |
+|---|---|---|
+| Analysis Notes tab | Empty without LLM | "Analysis notes are generated by the AI layer — we'll connect that next." |
+| PDF/image portfolio extraction | Needs LLM vision | "Structured CSVs import directly. Scanned PDFs use AI vision." |
+| Digest "Generate Fresh" button | May produce minimal content without events | Show the pre-generated digest from demo-prep instead. |
+| Telegram delivery | Needs bot token setup | "Telegram delivery is available — we'll configure the bot token." |
+
+---
+
+## Recovery
+
+### Reset to clean state
+```bash
+.venv/bin/python scripts/demo_prep.py --reset
+```
+
+### If the server won't start
+```bash
+# Kill any stale process
+lsof -ti:7777 | xargs kill -9 2>/dev/null
+# Restart
+.venv/bin/python -m uvicorn src.main:app --port 7777
+```
+
+---
+
+## Key talking points
+
+- "Every recommendation traces back to a specific event, factor, or relationship — nothing is hallucinated"
+- "The deterministic engine runs independently. AI is additive and optional"
+- "Portfolio isolation is enforced at every layer — portfolios never leak data"
+- "Every operator action is audited with full traceability"
+- "Deep links are shareable — copy any view and send it to a colleague"

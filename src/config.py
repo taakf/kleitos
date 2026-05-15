@@ -21,6 +21,8 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
+from src.version import APP_VERSION
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -60,7 +62,10 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 class SystemSettings(BaseModel):
     name: str = "axion"
-    version: str = "1.0.0"
+    # Phase 17 — default sourced from the single version module so the
+    # version is never hard-coded in more than one place.  A config file
+    # may still override it explicitly.
+    version: str = APP_VERSION
     environment: str = "production"
 
 
@@ -73,7 +78,31 @@ class ApiSettings(BaseModel):
     )
     auth_enabled: bool = True
     api_key: str = ""  # Set via KLEITOS_API_KEY env var (kept for backward compat)
-    rate_limit_rpm: int = 100
+
+    # -----------------------------------------------------------------
+    # Rate-limit policy (Phase 9K hardening)
+    # -----------------------------------------------------------------
+    # Axion now enforces three buckets instead of one catch-all:
+    #
+    #   * dashboard_read  — GET /api/v1/* requests coming from the
+    #                       loopback interface (the local dashboard JS).
+    #                       Generous limit so normal tab-switching +
+    #                       auto-refresh + operator panel never trip it.
+    #   * mutation        — POST / PUT / DELETE / PATCH against
+    #                       /api/v1/* from any origin.  Moderate limit
+    #                       that allows operator workflows but still
+    #                       blocks write-flood abuse.
+    #   * public          — everything else (non-loopback GETs, abuse
+    #                       path).  Same ceiling as the pre-9K default
+    #                       (``rate_limit_rpm``) for backward compat.
+    #
+    # ``rate_limit_rpm`` is kept as the legacy knob so pre-9K configs
+    # keep working.  If operators bump the legacy value up, the
+    # ``public`` bucket inherits the new value.  The two new fields
+    # default to safe production-grade ceilings.
+    rate_limit_rpm: int = 100  # legacy: public bucket ceiling
+    rate_limit_dashboard_read_rpm: int = 1_200
+    rate_limit_mutation_rpm: int = 240
 
 
 class DatabaseSettings(BaseModel):

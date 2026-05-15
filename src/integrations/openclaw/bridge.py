@@ -16,7 +16,6 @@ Each Axion agent becomes a set of tools that OpenClaw can call:
 
 from __future__ import annotations
 
-import json
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -52,7 +51,6 @@ def tool(name: str, description: str, agent: str = "commander"):
 # ---------------------------------------------------------------------------
 @tool("portfolio.summary", "Get portfolio summary stats (total value, P&L, holding count, sectors)")
 async def tool_portfolio_summary(**kwargs) -> dict:
-    from src.ledger.portfolio import PortfolioLedger
     from src.database.connection import get_db
     from src.database.models import Holding, Security
     from sqlalchemy import select
@@ -93,7 +91,7 @@ async def tool_portfolio_holdings(limit: int = 50, **kwargs) -> list[dict]:
 async def tool_portfolio_exposure(dimension: str = "sector", **kwargs) -> dict:
     import httpx
     async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(f"http://localhost:7777/api/v1/portfolio/exposure", params={"dimension": dimension})
+        r = await client.get("http://localhost:7777/api/v1/portfolio/exposure", params={"dimension": dimension})
         r.raise_for_status()
         return r.json()
 

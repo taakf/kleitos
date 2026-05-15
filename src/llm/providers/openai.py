@@ -299,6 +299,119 @@ class OpenAIProvider(LLMProvider):
             logger.error("OpenAI text call failed: %s", exc)
             return f"[Axion] AI response unavailable: {exc}"
 
+    # -- provider status testing (Phase 6) ---------------------------------
+
+    async def test_connection(
+        self,
+        *,
+        provider_name: str = "openai",
+        model: str | None = None,
+    ):
+        """Probe the OpenAI API with a minimal call and return a typed status.
+
+        Uses ``openai.AuthenticationError`` / ``RateLimitError`` /
+        ``APIConnectionError`` / ``APIStatusError`` for precise mapping
+        before falling back to the generic classifier.
+        """
+        from src.llm.provider_status import build_status, status_from_exception
+
+        if not self.is_available():
+            return build_status(
+                provider=provider_name,
+                status="missing_key",
+                configured=False,
+                model=model or _DEFAULT_MODEL,
+            )
+
+        try:
+            import openai
+        except ModuleNotFoundError as exc:
+            return status_from_exception(
+                provider=provider_name,
+                exc=exc,
+                configured=True,
+                model=model or _DEFAULT_MODEL,
+            )
+
+        try:
+            client = self._get_client()
+            await client.chat.completions.create(
+                model=model or _DEFAULT_MODEL,
+                max_tokens=5,
+                messages=[{"role": "user", "content": "ping"}],
+            )
+        except openai.AuthenticationError:
+            return build_status(
+                provider=provider_name,
+                status="invalid_key",
+                configured=True,
+                model=model or _DEFAULT_MODEL,
+                detail_code="auth_error",
+            )
+        except openai.PermissionDeniedError:
+            return build_status(
+                provider=provider_name,
+                status="invalid_key",
+                configured=True,
+                model=model or _DEFAULT_MODEL,
+                detail_code="permission_denied",
+            )
+        except openai.RateLimitError:
+            return build_status(
+                provider=provider_name,
+                status="quota_issue",
+                configured=True,
+                model=model or _DEFAULT_MODEL,
+                detail_code="rate_limit",
+            )
+        except openai.APIConnectionError:
+            return build_status(
+                provider=provider_name,
+                status="unreachable",
+                configured=True,
+                model=model or _DEFAULT_MODEL,
+                detail_code="network",
+            )
+        except openai.APIStatusError as exc:
+            code = getattr(exc, "status_code", None)
+            if isinstance(code, int) and code >= 500:
+                return build_status(
+                    provider=provider_name,
+                    status="unreachable",
+                    configured=True,
+                    model=model or _DEFAULT_MODEL,
+                    detail_code=f"http_{code}",
+                )
+            if code == 429:
+                return build_status(
+                    provider=provider_name,
+                    status="quota_issue",
+                    configured=True,
+                    model=model or _DEFAULT_MODEL,
+                    detail_code="http_429",
+                )
+            return status_from_exception(
+                provider=provider_name,
+                exc=exc,
+                configured=True,
+                model=model or _DEFAULT_MODEL,
+            )
+        except Exception as exc:  # noqa: BLE001
+            return status_from_exception(
+                provider=provider_name,
+                exc=exc,
+                configured=True,
+                model=model or _DEFAULT_MODEL,
+            )
+
+        return build_status(
+            provider=provider_name,
+            status="active",
+            configured=True,
+            model=model or _DEFAULT_MODEL,
+            detail_code="ok",
+        )
+
     # -- lifecycle ----------------------------------------------------------
 
     async def close(self) -> None:

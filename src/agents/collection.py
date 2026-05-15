@@ -25,7 +25,32 @@ from urllib.parse import urlparse
 
 from sqlalchemy import select, update
 
-from src.database.models import Holding, Security, Source, Event, EventLink
+from src.database.models import (
+    Event,
+    EventLink,
+    Holding,
+    HoldingFactorSensitivity,
+    HoldingRelationship,
+    MacroFactorEvent,
+    Security,
+    Source,
+)
+from src.intelligence.factors.classifier import (
+    FactorClassification,
+    FactorClassifier,
+)
+from src.intelligence.factors.propagation import (
+    FactorImpact,
+    FactorPropagator,
+)
+from src.intelligence.factors.sensitivity import SensitivityResolver
+from src.intelligence.relationships.matcher import RelationshipEntityMatcher
+from src.intelligence.relationships.propagation import (
+    RELATIONSHIP_MIN_EMIT,
+    RelationshipImpact,
+    RelationshipPropagator,
+    RelationshipRow,
+)
 
 from .base import BaseAgent
 
@@ -99,8 +124,20 @@ class CollectionAgent(BaseAgent):
     """Collects events from registered external sources."""
 
     agent_name: ClassVar[str] = "collection"
-    read_permissions: ClassVar[list[str]] = ["holdings", "securities", "sources"]
-    write_permissions: ClassVar[list[str]] = ["events", "event_links", "sources", "agent_runs"]
+    read_permissions: ClassVar[list[str]] = [
+        "holdings",
+        "securities",
+        "sources",
+        "holding_factor_sensitivities",
+        "holding_relationships",
+    ]
+    write_permissions: ClassVar[list[str]] = [
+        "events",
+        "event_links",
+        "sources",
+        "agent_runs",
+        "macro_factor_events",
+    ]
 
     async def run(self, **kwargs: Any) -> dict[str, Any]:
         """Entry point -- delegates to :meth:`collect_all`."""
@@ -231,6 +268,23 @@ class CollectionAgent(BaseAgent):
             enriched = self._enrich_event_metadata(raw)
             link_count = await self._link_event_to_holdings(event_id, enriched)
             links += link_count
+
+            # Phase 9M: emit a live-update event broadcast ONLY when
+            # the new event actually linked to at least one holding.
+            # Events that land but touch no portfolio are not worth
+            # broadcasting — they'd just flicker the UI without
+            # delivering signal.  Broadcast is best-effort; failures
+            # are absorbed in ``broadcast_sync``.
+            if link_count > 0:
+                try:
+                    from src.api.routes.ws import notify_event
+                    notify_event(
+                        event_id=event_id,
+                        title=(raw.get("title") or "")[:200],
+                        linked_holding_count=link_count,
+                    )
+                except Exception as exc:  # pragma: no cover — defensive
+                    logger.debug("notify_event broadcast dropped: %s", exc)
 
         # Mark source as successfully fetched
         await self._update_source_status(source["id"], "ok")
@@ -509,10 +563,393 @@ class CollectionAgent(BaseAgent):
                             linked_holding_ids.add(h.id)
                             link_count += 1
 
-            if link_count:
+            # Phase 9A: deterministic macro factor reasoning.
+            # Runs AFTER direct matching so any ticker/sector-geo hits
+            # are already in place; factor links are additive and never
+            # block or rewrite the direct-match output above.
+            factor_rows_added = 0
+            try:
+                factor_link_count, factor_rows_added = await self._link_event_to_factors(
+                    session=session,
+                    event_id=event_id,
+                    raw=raw,
+                    all_holdings=all_holdings,
+                )
+                link_count += factor_link_count
+            except Exception as exc:
+                # Factor pipeline is best-effort.  Never fail direct
+                # matching or the whole collection cycle because of a
+                # problem in deterministic reasoning.
+                logger.warning(
+                    "Factor pipeline failed for event %s (non-fatal): %s",
+                    event_id, exc,
+                )
+
+            # Phase 9D: deterministic relationship graph propagation.
+            # Runs AFTER factor reasoning so relationship links
+            # augment (never overwrite) the existing direct + factor
+            # output.  Same best-effort discipline as the factor
+            # pipeline — never fails collection.
+            try:
+                rel_link_count = await self._link_event_to_relationships(
+                    session=session,
+                    event_id=event_id,
+                    raw=raw,
+                    all_holdings=all_holdings,
+                    portfolio_tickers=portfolio_tickers,
+                )
+                link_count += rel_link_count
+            except Exception as exc:
+                logger.warning(
+                    "Relationship pipeline failed for event %s (non-fatal): %s",
+                    event_id, exc,
+                )
+
+            # Commit if we added ANY rows: direct links, factor links,
+            # or MacroFactorEvent ground-truth rows (which must persist
+            # even when no holding-level link passes the emit gate).
+            if link_count or factor_rows_added:
                 await session.commit()
 
         return link_count
+
+    # -- Phase 9A: deterministic macro factor reasoning --------------------
+
+    async def _link_event_to_factors(
+        self,
+        *,
+        session,
+        event_id: str,
+        raw: dict[str, Any],
+        all_holdings: list[Holding],
+    ) -> tuple[int, int]:
+        """Run the deterministic factor pipeline for a single event.
+
+        Pipeline steps (all inline, no LLM, no network):
+
+        1. Classify the event against the 10-factor taxonomy.
+        2. Persist surviving classifications to ``macro_factor_events``
+           regardless of whether any holding link passes the relevance
+           gate — the factor touch-points are useful even if the
+           current portfolio happens to have no exposure.
+        3. Load sensitivity overrides and sector metadata.
+        4. Propagate each classification to each holding.
+        5. Persist only impacts with ``holding_confidence >= 0.5`` as
+           ``EventLink(link_type="macro_factor")`` rows — below that
+           threshold we keep the factor row but don't add a link, so
+           the downstream analysis agent's ``_MIN_ANALYSIS_RELEVANCE``
+           gate isn't flooded with low-confidence noise.
+
+        Returns a tuple ``(links_created, factor_rows_added)`` so the
+        caller can decide whether to commit even when no holding-level
+        links passed the emission gate.
+        """
+        title = raw.get("title", "") or ""
+        summary = raw.get("summary", "") or ""
+        content = raw.get("content", "") or ""
+
+        classifier = FactorClassifier()
+        classifications: list[FactorClassification] = classifier.classify(
+            title=title, summary=summary, content=content,
+        )
+        if not classifications:
+            return 0, 0
+
+        # Step 2: persist MacroFactorEvent rows (idempotent via
+        # unique(event_id, factor)).
+        self._check_permission("macro_factor_events", "write")
+        now_iso = datetime.now(timezone.utc).isoformat()
+
+        existing_mfe_stmt = select(MacroFactorEvent.factor).where(
+            MacroFactorEvent.event_id == event_id,
+        )
+        existing_factors = {
+            row for row in (await session.execute(existing_mfe_stmt)).scalars().all()
+        }
+
+        mfe_added = 0
+        for cls in classifications:
+            if cls.factor in existing_factors:
+                continue
+            session.add(MacroFactorEvent(
+                id=str(uuid.uuid4()),
+                event_id=event_id,
+                factor=cls.factor,
+                direction=cls.direction,
+                magnitude=cls.magnitude,
+                confidence=cls.confidence,
+                rationale=json.dumps(cls.rationale),
+                created_at=now_iso,
+            ))
+            mfe_added += 1
+
+        # Step 3: load sector metadata + sensitivity overrides for the
+        # universe of holdings we already have in memory.  This avoids
+        # a second pass over Security for holdings we already matched.
+        holding_ids = [h.id for h in all_holdings]
+        tickers = [h.ticker for h in all_holdings]
+
+        # Sector lookup via Security
+        sec_stmt = select(Security.ticker, Security.sector).where(
+            Security.ticker.in_(tickers),
+        )
+        sec_rows = (await session.execute(sec_stmt)).all()
+        ticker_sector: dict[str, str | None] = {t: s for t, s in sec_rows}
+
+        # Manual / ai_inferred overrides
+        self._check_permission("holding_factor_sensitivities", "read")
+        ovr_stmt = select(
+            HoldingFactorSensitivity.holding_id,
+            HoldingFactorSensitivity.factor,
+            HoldingFactorSensitivity.sensitivity,
+            HoldingFactorSensitivity.source,
+        ).where(HoldingFactorSensitivity.holding_id.in_(holding_ids))
+        overrides = list((await session.execute(ovr_stmt)).all())
+
+        resolver = SensitivityResolver(
+            manual_overrides=[(r[0], r[1], r[2], r[3]) for r in overrides],
+        )
+
+        # Step 4: propagate.
+        holdings_dicts: list[dict[str, Any]] = []
+        for h in all_holdings:
+            holdings_dicts.append({
+                "id": h.id,
+                "ticker": h.ticker,
+                "portfolio_id": h.portfolio_id,
+                "sector": ticker_sector.get(h.ticker),
+            })
+
+        propagator = FactorPropagator(resolver)
+        impacts: list[FactorImpact] = propagator.propagate(
+            classifications=classifications,
+            holdings=holdings_dicts,
+        )
+
+        # Step 5: persist only the impacts above the link emit
+        # threshold.  Every impact has a MacroFactorEvent row already.
+        self._check_permission("event_links", "write")
+
+        # Deduplicate against any existing (event, holding, factor)
+        # factor links so repeated collection runs stay idempotent.
+        existing_link_stmt = select(
+            EventLink.link_target, EventLink.channel,
+        ).where(
+            EventLink.event_id == event_id,
+            EventLink.link_type == "macro_factor",
+        )
+        existing_pairs = {
+            (row[0], row[1]) for row in (await session.execute(existing_link_stmt)).all()
+        }
+
+        # Phase 9C: read the persistence floor from the active
+        # confidence policy so sweep-style evaluation runs stay
+        # consistent with runtime.  The class constant still exists
+        # as a hard floor to prevent a loose policy dropping below
+        # the Phase 9A baseline.
+        from src.intelligence.policy import get_active_policy
+        _active_policy = get_active_policy()
+        link_min = max(
+            _active_policy.macro_factor_link_min,
+            FactorPropagator.MACRO_FACTOR_LINK_MIN,
+        )
+
+        created = 0
+        for impact in impacts:
+            if impact.holding_confidence < link_min:
+                continue
+            key = (impact.holding_id, impact.factor)
+            if key in existing_pairs:
+                continue
+
+            details = impact.to_details_json(event_id=event_id, event_title=title)
+            session.add(EventLink(
+                id=str(uuid.uuid4()),
+                event_id=event_id,
+                link_type="macro_factor",
+                link_target=impact.holding_id,
+                relevance_score=impact.holding_confidence,
+                impact_channel=impact.factor,
+                link_source="deterministic_factor",
+                channel=impact.factor,
+                details_json=json.dumps(details),
+                created_at=now_iso,
+            ))
+            existing_pairs.add(key)
+            created += 1
+
+        if classifications:
+            logger.info(
+                "Factor pipeline: event=%s classified=%d impacts=%d emitted_links=%d mfe_rows=%d",
+                event_id,
+                len(classifications),
+                len(impacts),
+                created,
+                mfe_added,
+            )
+
+        return created, mfe_added
+
+    # -- Phase 9D: deterministic relationship graph -----------------------
+
+    async def _link_event_to_relationships(
+        self,
+        *,
+        session,
+        event_id: str,
+        raw: dict[str, Any],
+        all_holdings: list[Holding],
+        portfolio_tickers: set[str],
+    ) -> int:
+        """Run the deterministic relationship graph propagation.
+
+        Pipeline steps (inline, no LLM, no network):
+
+        1. Bulk-load every ``HoldingRelationship`` row for the current
+           set of active holdings.  If there are none, short-circuit.
+        2. Build the set of distinct ``(entity_key, ticker, name)``
+           tuples the matcher needs to scan for.  Entities that are
+           themselves held tickers are EXCLUDED here — direct matching
+           already handles them.
+        3. Run the deterministic entity matcher on title + summary.
+        4. Run the propagator to turn (match, relationship) pairs
+           into ``RelationshipImpact`` hypotheses.
+        5. Persist impacts with ``holding_confidence >=
+           RELATIONSHIP_MIN_EMIT`` as
+           ``EventLink(link_type="relationship")`` rows with a
+           structured ``details_json`` causal chain.
+
+        Returns the number of ``EventLink`` rows emitted.
+        """
+        title = raw.get("title", "") or ""
+        summary = raw.get("summary", "") or ""
+        if not (title or summary) or not all_holdings:
+            return 0
+
+        # Step 1: bulk-load relationship rows for this event's
+        # candidate holdings.  The matcher and propagator operate on
+        # the full active portfolio — portfolio isolation is enforced
+        # purely by the FK join (each row is anchored to a holding_id).
+        self._check_permission("holding_relationships", "read")
+        holding_ids = [h.id for h in all_holdings]
+        rel_stmt = select(HoldingRelationship).where(
+            HoldingRelationship.holding_id.in_(holding_ids)
+        )
+        db_rows = list((await session.execute(rel_stmt)).scalars().all())
+        if not db_rows:
+            return 0
+
+        holding_by_id: dict[str, Holding] = {h.id: h for h in all_holdings}
+
+        # Flatten DB rows into RelationshipRow dataclasses so the
+        # propagator stays DB-independent.
+        relationship_rows: list[RelationshipRow] = []
+        for r in db_rows:
+            h = holding_by_id.get(r.holding_id)
+            if h is None:
+                continue
+            relationship_rows.append(RelationshipRow(
+                id=r.id,
+                holding_id=r.holding_id,
+                ticker=h.ticker,
+                portfolio_id=h.portfolio_id,
+                relationship_type=r.relationship_type,
+                related_ticker=r.related_ticker,
+                related_entity_key=r.related_entity_key,
+                related_name=r.related_name,
+                strength=float(r.strength or 0.0),
+                source=r.source or "seed",
+            ))
+        if not relationship_rows:
+            return 0
+
+        # Step 2: build the entity set for the matcher.
+        seen_entity_keys: set[str] = set()
+        entities: list[tuple[str, str | None, str | None]] = []
+        for row in relationship_rows:
+            key = (
+                (row.related_ticker or "").upper()
+                if row.related_ticker
+                else (row.related_entity_key or "")
+            )
+            if not key or key in seen_entity_keys:
+                continue
+            seen_entity_keys.add(key)
+            entities.append((key, row.related_ticker, row.related_name))
+
+        # Step 3: run the matcher, excluding tickers already in the
+        # portfolio so direct matching isn't double-counted.
+        matcher = RelationshipEntityMatcher()
+        matches = matcher.find_matches(
+            title=title,
+            summary=summary,
+            entities=entities,
+            excluded_tickers=portfolio_tickers,
+        )
+        if not matches:
+            return 0
+
+        # Step 4: propagate.
+        propagator = RelationshipPropagator()
+        impacts: list[RelationshipImpact] = propagator.propagate(
+            entity_matches=matches,
+            relationships=relationship_rows,
+        )
+        if not impacts:
+            return 0
+
+        # Step 5: persist.  Deduplicate against any existing
+        # relationship links for this event so repeated collection
+        # runs stay idempotent.
+        self._check_permission("event_links", "write")
+        existing_link_stmt = select(
+            EventLink.link_target, EventLink.channel,
+        ).where(
+            EventLink.event_id == event_id,
+            EventLink.link_type == "relationship",
+        )
+        existing_pairs: set[tuple[str, str | None]] = {
+            (row[0], row[1])
+            for row in (await session.execute(existing_link_stmt)).all()
+        }
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        created = 0
+        for impact in impacts:
+            if impact.holding_confidence < RELATIONSHIP_MIN_EMIT:
+                continue
+            key = (impact.holding_id, impact.relationship_type)
+            if key in existing_pairs:
+                continue
+
+            details = impact.to_details_json(event_id=event_id, event_title=title)
+            session.add(EventLink(
+                id=str(uuid.uuid4()),
+                event_id=event_id,
+                link_type="relationship",
+                link_target=impact.holding_id,
+                relevance_score=impact.holding_confidence,
+                impact_channel=impact.relationship_type,
+                link_source="deterministic_relationship",
+                channel=impact.relationship_type,
+                details_json=json.dumps(details),
+                created_at=now_iso,
+            ))
+            existing_pairs.add(key)
+            created += 1
+
+        if matches:
+            logger.info(
+                "Relationship pipeline: event=%s entities=%d matches=%d "
+                "rel_rows=%d emitted_links=%d",
+                event_id,
+                len(entities),
+                len(matches),
+                len(relationship_rows),
+                created,
+            )
+
+        return created
 
     async def _update_source_status(
         self, source_id: str, status: str = "ok"
@@ -773,6 +1210,7 @@ class CollectionAgent(BaseAgent):
         from src.sources.registry import SourceConfig, SourceRegistry
         from src.sources.parsers.rss_generic import RSSGenericParser
         from src.sources.parsers.newsapi import NewsAPIParser
+        from src.sources.parsers.finnhub import FinnhubParser
         from src.config import PROJECT_ROOT
 
         # Build a SourceConfig from the DB-sourced dict
@@ -792,9 +1230,10 @@ class CollectionAgent(BaseAgent):
 
         fetcher = SourceFetcher(registry=registry, timeout=30.0, max_retries=3)
 
-        # Collect API keys from environment
+        # Collect API keys from environment. Phase 7: also pick up
+        # FINNHUB_KEY now that the finnhub parser ships.
         api_keys: dict[str, str] = {}
-        for var in ("NEWSAPI_KEY", "ALPHAVANTAGE_KEY"):
+        for var in ("NEWSAPI_KEY", "FINNHUB_KEY", "ALPHAVANTAGE_KEY"):
             val = os.environ.get(var, "")
             if val:
                 api_keys[var] = val
@@ -809,10 +1248,12 @@ class CollectionAgent(BaseAgent):
                 logger.warning("Fetch failed for source %s: %s", source["id"], result.error)
             return []
 
-        # Dispatch to parser
+        # Dispatch to parser. Phase 7: ``finnhub`` parser added.
         parser_id = source.get("parser_id", "rss_generic")
         if parser_id == "newsapi":
             parser = NewsAPIParser()
+        elif parser_id == "finnhub":
+            parser = FinnhubParser()
         else:
             parser = RSSGenericParser()
 

@@ -5,7 +5,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 
 from src.database.connection import get_db
 from src.database.models import Event, EventLink, Holding

@@ -147,11 +147,48 @@ async def init_database() -> None:
 
 
 async def close_database() -> None:
-    """Dispose of the engine and release all connections."""
+    """Dispose of the engine and release all connections.
+
+    Safe to call repeatedly — if the engine was never created or has
+    already been disposed, this is a no-op.  Phase 9K hardened: always
+    clears the singletons even if ``dispose`` raises, so a partially-
+    failed shutdown doesn't leak a dangling engine reference.
+    """
     global _engine, _session_factory
 
-    if _engine is not None:
-        await _engine.dispose()
-        logger.info("Database engine disposed")
-        _engine = None
+    if _engine is None:
         _session_factory = None
+        return
+
+    engine_to_close = _engine
+    # Clear BEFORE awaiting dispose so any concurrent call sees the
+    # cleared state and doesn't try to reuse the engine being torn down.
+    _engine = None
+    _session_factory = None
+    try:
+        await engine_to_close.dispose()
+        logger.info("Database engine disposed")
+    except Exception as exc:
+        logger.warning("Database engine dispose raised: %s", exc)
+
+
+def reset_connection_state() -> None:
+    """Synchronously drop the engine + session-factory singletons.
+
+    Phase 9K hardening helper for tests.  Unlike :func:`close_database`,
+    this does NOT await ``engine.dispose()`` — it simply nulls the
+    module-level references so the next ``get_engine()`` call rebuilds
+    them from the current settings.  Call this after swapping
+    ``KLEITOS_DB_PATH`` in a test fixture so the next query hits the
+    new DB without needing an event loop.
+
+    The underlying aiosqlite connections (if any) are left to their
+    own teardown: SQLite files are append-only WAL mode, and the
+    thread-per-connection aiosqlite pool exits gracefully when the
+    interpreter shuts down.  Tests that need a truly clean dispose
+    should call :func:`close_database` from within an async context
+    before calling this helper.
+    """
+    global _engine, _session_factory
+    _engine = None
+    _session_factory = None

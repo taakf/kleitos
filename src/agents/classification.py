@@ -14,7 +14,7 @@ from typing import Any, ClassVar
 
 from sqlalchemy import select
 
-from src.database.models import Holding, Security, Trade
+from src.database.models import Holding, Security
 
 from .base import BaseAgent
 

@@ -2,7 +2,7 @@
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,6 @@ class RuleEngine:
 
         # Build lookup maps
         ticker_to_holding = {h["ticker"].upper(): h for h in holdings}
-        ticker_to_security = {s["ticker"].upper(): s for s in securities}
 
         # Rule 1: Ticker Match
         for ticker, holding in ticker_to_holding.items():

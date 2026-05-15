@@ -43,11 +43,13 @@ sources:
     parser: sec_edgar
     priority: 1
     trust_level: premium
-    enabled: false  # Parser not yet implemented (V2). Enable after sec_edgar parser is added.
+    enabled: false
+    unsupported: true
     rate_limit_rpm: 10
     requires_auth: false
     tags: [filings, regulatory, us, corporate]
     description: "US SEC filings and corporate disclosures"
+    notes: "Parser not implemented in this build. Toggling enabled has no effect; needs the sec_edgar parser before it can fetch."
 
   - id: fed-rss
     name: Federal Reserve Press Releases
@@ -213,32 +215,72 @@ sources:
     parser: newsapi
     priority: 3
     trust_level: standard
-    enabled: false   # Enable after adding NEWSAPI_KEY to .env
-    rate_limit_rpm: 2   # Free tier is limited
+    enabled: false
+    rate_limit_rpm: 2
     requires_auth: true
     auth_type: api_key
     auth_env_var: NEWSAPI_KEY
+    auth_param_name: apiKey
     tags: [general, corporate]
     description: "Aggregated news from multiple outlets"
+    notes: "Set NEWSAPI_KEY in ~/.axion.env and enable to fetch. NewsAPI's free tier is limited (~100 requests/day, development use); review newsapi.org for current terms."
     params:
       category: business
       language: en
 
   - id: finnhub-news
-    name: Finnhub Company News
+    name: Finnhub Market News
     domain: finnhub.io
     type: api
-    url: https://finnhub.io/api/v1/company-news
+    url: https://finnhub.io/api/v1/news
     parser: finnhub
     priority: 2
     trust_level: standard
-    enabled: false   # Enable after adding FINNHUB_KEY to .env
+    enabled: false
     rate_limit_rpm: 30
     requires_auth: true
     auth_type: api_key
     auth_env_var: FINNHUB_KEY
+    auth_param_name: token
     tags: [corporate, earnings, analyst]
-    description: "Company-specific news and events"
+    description: "Finnhub general market news"
+    notes: "Set FINNHUB_KEY in ~/.axion.env and enable. Uses the general /news endpoint (works with a free Finnhub key)."
+    params:
+      category: general
+
+  # ============================================
+  # PHASE 9 — CORPORATE EVENTS (separate from News pipeline)
+  # ============================================
+  #
+  # The ATHEX corporate-events source feeds the top-level "Events" tab,
+  # NOT the Insights → News surface.  It is `unsupported: true` in the
+  # default build because Athens Exchange does not publish a stable
+  # machine-readable corporate-events feed at a public URL — every
+  # attempt to scrape the HTML pages risks shape drift and breakage.
+  # Until a reliable endpoint is wired, the Events tab is fed by the
+  # manual CSV import path under /api/v1/corporate-events/import.
+  #
+  # Operators who do have a reliable internal endpoint can:
+  #   1. Flip `unsupported: false`
+  #   2. Set `url:` to that endpoint
+  #   3. Implement the parser hook in src/corporate_events/athex.py
+  # The Sources UI will surface this row with status="unsupported"
+  # until then, which is the honest customer-facing label.
+  - id: athex-corporate-events
+    name: ATHEX Corporate Events
+    domain: athexgroup.gr
+    type: corporate_events
+    url: https://www.athexgroup.gr/corporate-actions
+    parser: athex_corporate_events
+    priority: 3
+    trust_level: premium
+    enabled: false
+    unsupported: true
+    rate_limit_rpm: 4
+    requires_auth: false
+    tags: [corporate, calendar, greek, athex]
+    description: "Athens Exchange corporate / issuer events feed for Greek-listed holdings"
+    notes: "Phase 9 ships the table + UI + manual-import path. Automated ATHEX scraping is not enabled — Athens Exchange has no stable public machine-readable corporate-events endpoint. Use POST /api/v1/corporate-events/import to load a CSV."
 
   # ============================================
   # TEMPLATE: Add your own sources below

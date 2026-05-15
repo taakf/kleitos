@@ -24,7 +24,7 @@ Run on a clean Windows 10/11 machine with Python 3.12 installed.
 ### Intelligence
 14. [ ] Go to Settings → News Sources → Quick Add → add Federal Reserve
 15. [ ] Trigger collection (Assistant → "Run collection")
-16. [ ] Wait 2 min → check Insights → Events tab for new events
+16. [ ] Wait 2 min → check Insights → News sub-tab for new news items
 17. [ ] Trigger risk assessment (via Assistant or Settings health)
 18. [ ] Check Alerts tab — verify alerts match active portfolio
 

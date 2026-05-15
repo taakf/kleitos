@@ -89,45 +89,138 @@ class APIKeyAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+#: Loopback client IPs recognised as "the local dashboard".  A
+#: request from any of these on a GET verb is classified into the
+#: ``dashboard_read`` bucket regardless of path.
+_LOOPBACK_HOSTS: frozenset[str] = frozenset({
+    "127.0.0.1",
+    "::1",
+    "localhost",
+    "testclient",          # FastAPI / httpx.AsyncClient / TestClient default
+})
+
+#: HTTP verbs that count as "mutation" traffic (even from loopback).
+_MUTATION_VERBS: frozenset[str] = frozenset({
+    "POST", "PUT", "PATCH", "DELETE",
+})
+
+
+def _classify_request(method: str, client_host: str, path: str) -> str:
+    """Classify a request into a rate-limit bucket.
+
+    Returns one of:
+      * ``"exempt"``           — not rate-limited at all (health, non-API)
+      * ``"dashboard_read"``   — loopback GET to /api/v1/*
+      * ``"mutation"``         — any write verb against /api/v1/*
+      * ``"public"``           — everything else (non-loopback reads)
+
+    Buckets are intentionally per-request-type so a normal dashboard
+    session can't trip the public ceiling and a write-flood from any
+    origin is bounded tightly.
+    """
+    # Never rate-limit health or anything outside /api/v1/*
+    if not path.startswith("/api/v1/") or path == "/api/v1/health":
+        return "exempt"
+
+    upper = method.upper()
+    if upper in _MUTATION_VERBS:
+        return "mutation"
+
+    # GET / HEAD / OPTIONS etc. — decide by origin.
+    if client_host in _LOOPBACK_HOSTS:
+        return "dashboard_read"
+    return "public"
+
+
+def _limit_for_bucket(bucket: str, settings) -> int:
+    """Resolve the requests-per-minute ceiling for a bucket."""
+    if bucket == "dashboard_read":
+        return int(settings.api.rate_limit_dashboard_read_rpm)
+    if bucket == "mutation":
+        return int(settings.api.rate_limit_mutation_rpm)
+    if bucket == "public":
+        return int(settings.api.rate_limit_rpm)
+    return 0  # exempt
+
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
-    """Sliding-window per-IP rate limiting for API endpoints."""
+    """Per-IP, per-bucket sliding-window rate limiter.
+
+    Phase 9K rewrite: the pre-9K middleware enforced a single
+    ``rate_limit_rpm`` ceiling across every /api/v1/* request.  Phase
+    9J proved that's too tight for real dashboard use — a normal tab
+    cycle on a ~100 rpm limit 429'd the UI within a minute.
+
+    The 9K design splits traffic into three buckets (dashboard_read,
+    mutation, public) with independent ceilings, so:
+
+      * local dashboard GETs can burst freely during normal browsing
+      * mutations are still limited to prevent write-flood abuse
+      * non-loopback reads keep the legacy ``rate_limit_rpm`` ceiling
+        as a belt-and-braces guard against public abuse
+
+    State is process-local; if Axion grows a multi-worker deployment
+    later, a shared limiter (redis, in-memory broadcast) can replace
+    the singleton dict without changing the bucket policy.
+    """
 
     def __init__(self, app):
         super().__init__(app)
-        self._requests: dict[str, list[float]] = defaultdict(list)
+        # {(bucket, client_ip) -> [timestamp, timestamp, ...]}
+        self._windows: dict[tuple[str, str], list[float]] = defaultdict(list)
         self._last_prune: float = 0.0
+        self._window_seconds: float = 60.0
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
+        client_ip = request.client.host if request.client else "unknown"
+        bucket = _classify_request(request.method, client_ip, path)
 
-        # Only rate-limit /api/v1/* paths, excluding health and dashboard
-        if not path.startswith("/api/v1/") or path == "/api/v1/health":
+        if bucket == "exempt":
             return await call_next(request)
 
         settings = get_settings()
-        rpm = settings.api.rate_limit_rpm
-        now = time.time()
-        window = 60.0  # 1 minute
+        limit = _limit_for_bucket(bucket, settings)
+        if limit <= 0:
+            return await call_next(request)
 
-        # Prune stale IPs every 5 minutes to prevent memory leak
+        now = time.time()
+        window = self._window_seconds
+
+        # Prune stale keys every 5 minutes to keep the dict bounded.
         if now - self._last_prune > 300:
-            stale = [ip for ip, ts in self._requests.items() if not ts or now - ts[-1] > window]
-            for ip in stale:
-                del self._requests[ip]
+            stale = [
+                k for k, ts in self._windows.items()
+                if not ts or now - ts[-1] > window
+            ]
+            for k in stale:
+                del self._windows[k]
             self._last_prune = now
 
-        # Use client IP as the key
-        client_ip = request.client.host if request.client else "unknown"
+        key = (bucket, client_ip)
+        timestamps = [t for t in self._windows[key] if now - t < window]
 
-        # Clean up old timestamps outside the window
-        timestamps = self._requests[client_ip]
-        self._requests[client_ip] = [t for t in timestamps if now - t < window]
-
-        if len(self._requests[client_ip]) >= rpm:
-            return JSONResponse(
+        if len(timestamps) >= limit:
+            # Preserve the old error shape AND surface the bucket +
+            # Retry-After header so clients can back off intelligently.
+            oldest = timestamps[0] if timestamps else now
+            retry_after = max(1, int(window - (now - oldest)) + 1)
+            response = JSONResponse(
                 status_code=429,
-                content={"detail": f"Rate limit exceeded. Maximum {rpm} requests per minute."},
+                content={
+                    "detail": (
+                        f"Rate limit exceeded for bucket {bucket!r}. "
+                        f"Maximum {limit} requests per minute."
+                    ),
+                    "bucket": bucket,
+                    "limit_per_minute": limit,
+                    "retry_after_seconds": retry_after,
+                },
             )
+            response.headers["Retry-After"] = str(retry_after)
+            self._windows[key] = timestamps  # trim
+            return response
 
-        self._requests[client_ip].append(now)
+        timestamps.append(now)
+        self._windows[key] = timestamps
         return await call_next(request)

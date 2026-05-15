@@ -9,7 +9,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="/dashboard/css/styles.css?v=35">
+    <link rel="stylesheet" href="/dashboard/css/styles.css?v=48">
 </head>
 <body>
     <!-- Navigation -->
@@ -34,6 +34,7 @@
             <div class="nav-tabs" role="tablist" aria-label="Dashboard navigation">
                 <button class="tab-link active" data-tab="portfolio" role="tab" aria-selected="true">Portfolio</button>
                 <button class="tab-link" data-tab="intelligence" role="tab" aria-selected="false">Insights <span id="badge-events" class="tab-badge" hidden></span></button>
+                <button class="tab-link" data-tab="corporate-events" role="tab" aria-selected="false">Events <span id="badge-corporate-events" class="tab-badge" hidden></span></button>
                 <button class="tab-link" data-tab="alerts" role="tab" aria-selected="false">Alerts <span id="badge-alerts" class="tab-badge" hidden></span></button>
                 <button class="tab-link" data-tab="command" role="tab" aria-selected="false">Assistant</button>
                 <button class="tab-link" data-tab="settings" role="tab" aria-selected="false">Settings</button>
@@ -57,6 +58,7 @@
 
                     <!-- Holdings sub-tab -->
                     <div id="subtab-holdings" class="sub-panel active">
+                        <div id="intelligence-overview"></div>
                         <div id="holdings-summary"></div>
                         <div class="tab-header">
                             <div class="tab-actions">
@@ -74,7 +76,7 @@
                             </div>
                         </div>
                         <div class="card">
-                            <div id="holdings-table"><div class="spinner">Loading holdings...</div></div>
+                            <div id="holdings-table" aria-live="polite"><div class="spinner">Loading holdings...</div></div>
                         </div>
                     </div>
 
@@ -89,6 +91,102 @@
                             <div class="card"><div class="spinner">Loading...</div></div>
                             <div class="card"><div class="spinner">Loading...</div></div>
                         </div>
+
+                        <!--
+                          Phase 10 — Revenue geography card.  Deliberately
+                          separated from the legacy Listing-country card so
+                          operators see the difference at a glance.  Backed
+                          by /api/v1/exposures/revenue-geography (manual
+                          upload only — no listing-country fallback).
+                        -->
+                        <div class="card revenue-geo-card" id="revenue-geo-card">
+                            <div class="card-header revenue-geo-header">
+                                <span>Revenue geography</span>
+                                <span class="text-sm text-muted">Where companies actually earn money — separate from listing country.</span>
+                            </div>
+                            <div class="revenue-geo-toolbar">
+                                <span id="rg-status-badge" class="rg-status-badge" hidden></span>
+                                <select id="rg-fiscal-year" class="select-input" aria-label="Fiscal year">
+                                    <option value="">Latest fiscal year</option>
+                                </select>
+                                <button id="rg-import-btn" class="btn btn-outline btn-sm" type="button" title="Import a revenue-geography CSV">Import CSV</button>
+                                <button id="rg-refresh-btn" class="btn btn-ghost btn-sm" type="button" title="Reload">Refresh</button>
+                            </div>
+                            <div id="rg-empty" class="rg-empty" hidden></div>
+                            <div id="rg-chart" class="rg-chart" role="region" aria-label="Revenue geography breakdown"></div>
+                            <details id="rg-missing-details" class="rg-missing-details" hidden>
+                                <summary id="rg-missing-summary">Holdings without revenue breakdowns</summary>
+                                <div id="rg-missing-list"></div>
+                            </details>
+                            <div id="rg-notes" class="rg-notes text-sm text-muted"></div>
+                        </div>
+
+                        <!--
+                          Import revenue-geography dialog.  Two tabs:
+                            * Manual CSV (Phase 10 — primary, always supported)
+                            * AI extract from report (Phase 11 — review-first;
+                              the operator edits + confirms before persistence)
+                        -->
+                        <dialog id="rg-import-dialog" class="ce-dialog rg-import-dialog" aria-labelledby="rg-import-title">
+                            <form method="dialog" onsubmit="return false;">
+                                <h3 id="rg-import-title">Add revenue geography</h3>
+                                <div class="rg-tabs" role="tablist" aria-label="Add revenue geography mode">
+                                    <button type="button" id="rg-tab-csv" class="rg-tab active" role="tab" aria-selected="true" data-rg-tab="csv">Manual CSV</button>
+                                    <button type="button" id="rg-tab-ai" class="rg-tab" role="tab" aria-selected="false" data-rg-tab="ai">AI extract from report</button>
+                                </div>
+
+                                <!-- Tab 1: Manual CSV -->
+                                <div id="rg-pane-csv" class="rg-pane active" role="tabpanel">
+                                    <p class="text-sm text-muted">
+                                        Required columns: <code>region</code>, <code>revenue_share</code>, and at least one of <code>ticker</code> / <code>isin</code>.
+                                        Optional: <code>country</code>, <code>company_name</code>, <code>fiscal_year</code>, <code>period</code>, <code>currency</code>, <code>source_name</code>, <code>source_url</code>.
+                                        <code>revenue_share</code> accepts <code>0.45</code>, <code>45</code>, or <code>45%</code>. Rows match holdings by ISIN first, then ticker, scoped to the active portfolio.
+                                        Listing country is <strong>not</strong> used to fill gaps.
+                                    </p>
+                                    <textarea id="rg-import-textarea" class="ce-import-textarea" rows="14" placeholder="ticker,isin,company_name,fiscal_year,period,region,country,revenue_share,source_name,source_url"></textarea>
+                                    <div id="rg-import-result" class="ce-import-result"></div>
+                                    <div class="ce-dialog-actions">
+                                        <button id="rg-import-cancel" class="btn btn-ghost" type="button">Cancel</button>
+                                        <button id="rg-import-submit" class="btn btn-primary" type="button">Import</button>
+                                    </div>
+                                </div>
+
+                                <!-- Tab 2: AI extraction (review-first) -->
+                                <div id="rg-pane-ai" class="rg-pane" role="tabpanel" hidden>
+                                    <p class="text-sm text-muted">
+                                        Upload a PDF annual report (or paste the regional-revenue passage as text). Axion runs a strict, anti-hallucination extraction prompt and shows you the candidate rows. <strong>Nothing is saved until you click <em>Confirm</em>.</strong> AI extraction requires an API key (Settings → AI Configuration); the feature is optional, and manual CSV always works.
+                                    </p>
+                                    <div id="rg-ai-status" class="rg-ai-status" hidden></div>
+                                    <div class="rg-ai-inputs">
+                                        <label class="text-sm">
+                                            <span class="rg-ai-label">PDF file</span>
+                                            <input id="rg-ai-file" type="file" accept="application/pdf">
+                                        </label>
+                                        <label class="text-sm">
+                                            <span class="rg-ai-label">Or paste text (used if no file is selected)</span>
+                                            <textarea id="rg-ai-text" rows="6" class="ce-import-textarea" placeholder="e.g. 'FY2025 revenue by region: North America 60%, Europe 30%, Rest of world 10%'"></textarea>
+                                        </label>
+                                        <div class="rg-ai-hints">
+                                            <label class="text-sm"><span class="rg-ai-label">Ticker hint (optional)</span><input id="rg-ai-ticker" type="text" placeholder="AAPL" class="input"></label>
+                                            <label class="text-sm"><span class="rg-ai-label">ISIN hint (optional)</span><input id="rg-ai-isin" type="text" placeholder="US0378331005" class="input"></label>
+                                        </div>
+                                        <div class="ce-dialog-actions">
+                                            <button id="rg-ai-extract" class="btn btn-primary" type="button">Extract candidates</button>
+                                        </div>
+                                    </div>
+                                    <div id="rg-ai-review" class="rg-ai-review" hidden>
+                                        <h4 class="rg-ai-review-title">Review extracted rows</h4>
+                                        <p class="text-sm text-muted" id="rg-ai-review-meta"></p>
+                                        <div id="rg-ai-candidates" class="rg-ai-candidates"></div>
+                                        <div id="rg-ai-confirm-result" class="ce-import-result"></div>
+                                        <div class="ce-dialog-actions">
+                                            <button id="rg-ai-discard" class="btn btn-ghost" type="button">Discard</button>
+                                            <button id="rg-ai-confirm" class="btn btn-primary" type="button">Confirm &amp; save</button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </form>
+                        </dialog>
                     </div>
 
                     <!-- Trades sub-tab -->
@@ -109,21 +207,167 @@
                 <!-- Intelligence Tab (parent) -->
                 <div id="tab-intelligence" class="tab-panel" role="tabpanel">
                     <div class="sub-tabs" role="tablist" aria-label="Intelligence sections">
-                        <button class="sub-tab active" data-subtab="events" data-parent="intelligence">Events</button>
+                        <button class="sub-tab" data-subtab="overview" data-parent="intelligence">Overview</button>
+                        <button class="sub-tab active" data-subtab="events" data-parent="intelligence">News</button>
                         <button class="sub-tab" data-subtab="analysis" data-parent="intelligence">Analysis</button>
                         <button class="sub-tab" data-subtab="digest" data-parent="intelligence">Digest</button>
+                        <button class="sub-tab" data-subtab="inbox" data-parent="intelligence">
+                            Inbox
+                            <span id="inbox-unread-badge" class="inbox-badge" hidden>0</span>
+                        </button>
                     </div>
 
-                    <!-- Events sub-tab -->
+                    <!--
+                      Phase 12 — Insights → Overview sub-tab.  Renders the
+                      deterministic InsightCard list with an optional
+                      grounded-AI narrator toggle.  Existing sub-tabs
+                      (News / Analysis / Digest / Inbox) are unchanged.
+                    -->
+                    <div id="subtab-overview" class="sub-panel">
+                        <div class="tab-header">
+                            <h2>Overview</h2>
+                            <div class="tab-actions">
+                                <label class="text-sm text-muted insights-ai-toggle">
+                                    <input type="checkbox" id="insights-include-ai">
+                                    AI narrate (optional)
+                                </label>
+                                <select id="insights-category-filter" class="select-input" aria-label="Category">
+                                    <option value="">All categories</option>
+                                    <option value="news_impact">News impact</option>
+                                    <option value="corporate_event">Corporate event</option>
+                                    <option value="revenue_geography">Revenue geography</option>
+                                    <option value="listing_country">Listing country</option>
+                                    <option value="factor_sensitivity">Factor sensitivity</option>
+                                    <option value="alert">Alert</option>
+                                    <option value="data_gap">Data gap</option>
+                                </select>
+                                <select id="insights-severity-filter" class="select-input" aria-label="Severity">
+                                    <option value="">All severities</option>
+                                    <option value="critical">Critical</option>
+                                    <option value="high">High</option>
+                                    <option value="medium">Medium</option>
+                                    <option value="low">Low</option>
+                                    <option value="info">Info</option>
+                                </select>
+                                <span id="insights-last-generated" class="text-xs text-muted insights-last-generated" hidden></span>
+                                <button id="insights-run-now-btn" class="btn btn-outline btn-sm" type="button" title="Run insight generation now (writes a snapshot, notifies new + escalated cards)">Run now</button>
+                                <button id="insights-refresh-btn" class="btn btn-ghost btn-sm" type="button">Refresh</button>
+                                <!--
+                                  Phase 15 — Export + Share toolbar.  Buttons
+                                  read the live filter state and call the new
+                                  /insights/export endpoints; the copy-share
+                                  button writes a deep link with the current
+                                  filter set to the clipboard.
+                                -->
+                                <span class="insights-export-toolbar" role="group" aria-label="Export and share">
+                                    <button id="insights-export-csv-btn" class="btn btn-ghost btn-sm" type="button" title="Download the current Insights Overview as a CSV (current cards + recent history transitions)">Export CSV</button>
+                                    <button id="insights-export-json-btn" class="btn btn-ghost btn-sm" type="button" title="Download the current Insights Overview as JSON">Export JSON</button>
+                                    <button id="insights-copy-link-btn" class="btn btn-ghost btn-sm" type="button" title="Copy a shareable link that restores the current Overview filters">Copy share link</button>
+                                </span>
+                            </div>
+                        </div>
+                        <p class="text-sm text-muted" style="margin:0 0 0.6rem 0;line-height:1.5;max-width:780px;">
+                            Deterministic, evidence-backed cards built from News, Corporate Events, Holdings, Listing country, Revenue geography, Alerts, Relationships, and Factor sensitivities. AI narrator is optional and never adds facts.
+                        </p>
+                        <div id="insights-coverage" class="insights-coverage" hidden></div>
+                        <div id="insights-grounding-banner" class="insights-grounding-banner" hidden></div>
+
+                        <!--
+                          Phase 14 — Insights history deck.  Built from the
+                          local insight_snapshots table; never re-runs AI
+                          narration.  Empty by design on fresh DB.
+                        -->
+                        <div id="insights-history" class="insights-history">
+                            <div class="insights-history-header">
+                                <h3 class="insights-history-title">What changed</h3>
+                                <div class="insights-history-controls">
+                                    <div class="insights-history-pills" role="group" aria-label="Time window">
+                                        <button type="button" class="insights-history-pill" data-history-window="7">7d</button>
+                                        <button type="button" class="insights-history-pill active" data-history-window="30">30d</button>
+                                        <button type="button" class="insights-history-pill" data-history-window="90">90d</button>
+                                    </div>
+                                    <select id="insights-history-state" class="select-input" aria-label="State">
+                                        <option value="">All states</option>
+                                        <option value="new">New only</option>
+                                        <option value="escalated">Escalated only</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div id="insights-history-summary" class="insights-history-summary"></div>
+                            <div id="insights-history-sparkline" class="insights-history-sparkline" aria-hidden="true"></div>
+                            <div id="insights-history-list" class="insights-history-list"></div>
+                        </div>
+
+                        <div id="insights-cards" class="insights-cards" aria-live="polite">
+                            <div class="spinner">Loading insights...</div>
+                        </div>
+                    </div>
+
+                    <!-- Inbox sub-tab (Phase 9P) -->
+                    <div id="subtab-inbox" class="sub-panel">
+                        <div class="tab-header">
+                            <h2>Notification Inbox</h2>
+                            <div class="tab-actions">
+                                <button class="btn btn-ghost btn-sm" id="inbox-refresh-btn">Refresh</button>
+                                <button class="btn btn-primary btn-sm" id="inbox-mark-all-read-btn">Mark all read</button>
+                            </div>
+                        </div>
+                        <p class="text-xs text-muted" style="margin:0 0 0.75rem 0;line-height:1.5;max-width:720px;">
+                            Unified view of signals that matter right now — open alerts, the latest digest,
+                            recent operator actions, and high-priority recommended actions. Backed by
+                            existing trusted rows, scoped to the active portfolio, and persisted per item.
+                        </p>
+                        <div id="inbox-content"><div class="spinner">Loading inbox...</div></div>
+                    </div>
+
+                    <!-- News sub-tab (internal key "events" — backend events table) -->
                     <div id="subtab-events" class="sub-panel active">
                         <div class="tab-header">
-                            <h2>Events</h2>
+                            <h2>News</h2>
                             <div class="tab-actions">
-                                <input type="search" id="events-search" class="input search-input" placeholder="Search events...">
+                                <input type="search" id="events-search" class="input search-input" placeholder="Search news...">
+                                <button id="events-filter-reset" class="btn btn-ghost btn-sm" type="button" title="Clear all filters">Reset</button>
+                            </div>
+                        </div>
+                        <div class="card events-filter-card">
+                            <div class="events-filter-bar" role="group" aria-label="News filters">
+                                <select id="events-filter-source" class="select-input" aria-label="Source"><option value="">All sources</option></select>
+                                <select id="events-filter-type" class="select-input" aria-label="Type">
+                                    <option value="">All types</option>
+                                    <option value="earnings">Earnings</option>
+                                    <option value="dividend">Dividend</option>
+                                    <option value="analyst_action">Analyst action</option>
+                                    <option value="regulatory">Regulatory</option>
+                                    <option value="macro">Macro</option>
+                                    <option value="geopolitical">Geopolitical</option>
+                                    <option value="ma">M&amp;A</option>
+                                    <option value="management">Management</option>
+                                    <option value="supply_chain">Supply chain</option>
+                                    <option value="litigation">Litigation</option>
+                                    <option value="news">News (general)</option>
+                                </select>
+                                <select id="events-filter-factor" class="select-input" aria-label="Factor"><option value="">All factors</option></select>
+                                <select id="events-filter-materiality" class="select-input" aria-label="Materiality minimum">
+                                    <option value="">Any materiality</option>
+                                    <option value="watch">Watch &amp; above</option>
+                                    <option value="important">Important &amp; above</option>
+                                    <option value="high">High &amp; above</option>
+                                    <option value="critical">Critical only</option>
+                                </select>
+                                <div class="events-range-pills" role="group" aria-label="Time range">
+                                    <button type="button" class="events-range-pill" data-range="24h">24h</button>
+                                    <button type="button" class="events-range-pill" data-range="7d">7d</button>
+                                    <button type="button" class="events-range-pill" data-range="30d">30d</button>
+                                    <button type="button" class="events-range-pill active" data-range="">All</button>
+                                </div>
+                                <label class="events-filter-toggle">
+                                    <input type="checkbox" id="events-filter-linked"> Linked holdings only
+                                </label>
+                                <span id="events-filter-status" class="text-sm text-muted" aria-live="polite"></span>
                             </div>
                         </div>
                         <div class="card">
-                            <div id="events-table"><div class="spinner">Loading events...</div></div>
+                            <div id="events-table" aria-live="polite"><div class="spinner">Loading news...</div></div>
                         </div>
                     </div>
 
@@ -155,10 +399,100 @@
                     </div>
                 </div>
 
+                <!-- Corporate Events Tab (top-level) -->
+                <!--
+                  Internal key: "corporate-events" / data-tab="corporate-events".
+                  Customer label: "Events". This is intentionally distinct from
+                  Insights → News (data-subtab="events") which surfaces the
+                  events table (news items).
+                -->
+                <div id="tab-corporate-events" class="tab-panel" role="tabpanel" aria-label="Corporate events calendar">
+                    <div class="tab-header">
+                        <h2>Events</h2>
+                        <div class="tab-actions">
+                            <select id="ce-event-type" class="select-input" aria-label="Event type">
+                                <option value="">All types</option>
+                                <option value="earnings">Earnings</option>
+                                <option value="dividend">Dividend</option>
+                                <option value="agm">AGM</option>
+                                <option value="egm">EGM</option>
+                                <option value="corporate_action">Corporate action</option>
+                                <option value="announcement">Announcement</option>
+                                <option value="other">Other</option>
+                            </select>
+                            <select id="ce-ticker-filter" class="select-input" aria-label="Holding / ticker"><option value="">All holdings</option></select>
+                            <select id="ce-exchange-filter" class="select-input" aria-label="Exchange">
+                                <option value="">All exchanges</option>
+                                <option value="ATHEX">ATHEX</option>
+                            </select>
+                            <button id="ce-refresh-btn" class="btn btn-ghost btn-sm" type="button" title="Try to refresh from ATHEX">Refresh ATHEX</button>
+                            <button id="ce-import-btn" class="btn btn-outline btn-sm" type="button" title="Import a corporate-events CSV">Import CSV</button>
+                        </div>
+                    </div>
+                    <div id="ce-status-banner" class="ce-status-banner" hidden></div>
+                    <div class="ce-calendar-wrap">
+                        <div class="ce-calendar-toolbar">
+                            <button id="ce-month-prev" class="btn btn-ghost btn-sm" type="button" aria-label="Previous month">&larr;</button>
+                            <h3 id="ce-month-label" class="ce-month-label">&nbsp;</h3>
+                            <button id="ce-month-next" class="btn btn-ghost btn-sm" type="button" aria-label="Next month">&rarr;</button>
+                            <button id="ce-month-today" class="btn btn-ghost btn-sm" type="button" aria-label="Jump to current month">Today</button>
+                        </div>
+                        <div id="ce-calendar" class="ce-calendar" role="grid" aria-label="Monthly corporate-events calendar"></div>
+                    </div>
+                    <div class="card">
+                        <h3 class="ce-list-heading">All events this month</h3>
+                        <div id="ce-list-table" role="region" aria-label="Corporate events list"><div class="spinner">Loading events...</div></div>
+                    </div>
+
+                    <!-- Import CSV drawer -->
+                    <dialog id="ce-import-dialog" class="ce-dialog" aria-labelledby="ce-import-title">
+                        <form method="dialog" onsubmit="return false;">
+                            <h3 id="ce-import-title">Import corporate events (CSV)</h3>
+                            <p class="text-sm text-muted">
+                                Required columns: <code>event_type</code>, <code>title</code>, <code>event_date</code>, and at least one of
+                                <code>ticker</code> / <code>isin</code>. Optional: <code>exchange</code>, <code>event_time</code>, <code>timezone</code>,
+                                <code>description</code>, <code>url</code>, <code>status</code>, <code>external_id</code>. Rows match to holdings by
+                                ISIN first, then ticker (per active portfolio).
+                            </p>
+                            <textarea id="ce-import-textarea" class="ce-import-textarea" rows="14" placeholder="event_type,title,ticker,isin,event_date,event_time,description,url"></textarea>
+                            <div id="ce-import-result" class="ce-import-result"></div>
+                            <div class="ce-dialog-actions">
+                                <button id="ce-import-cancel" class="btn btn-ghost" type="button">Cancel</button>
+                                <button id="ce-import-submit" class="btn btn-primary" type="button">Import</button>
+                            </div>
+                        </form>
+                    </dialog>
+
+                    <!-- Event detail drawer -->
+                    <dialog id="ce-detail-dialog" class="ce-dialog" aria-labelledby="ce-detail-title">
+                        <form method="dialog" onsubmit="return false;">
+                            <h3 id="ce-detail-title">Corporate event</h3>
+                            <div id="ce-detail-body"></div>
+                            <div class="ce-dialog-actions">
+                                <button id="ce-detail-close" class="btn btn-primary" type="button">Close</button>
+                            </div>
+                        </form>
+                    </dialog>
+                </div>
+
                 <!-- Alerts Tab -->
                 <div id="tab-alerts" class="tab-panel" role="tabpanel">
                     <div class="tab-header">
                         <h2>Alerts</h2>
+                        <div class="tab-actions">
+                            <select id="alerts-severity-filter" class="select-input" style="width:170px;">
+                                <option value="">All severities</option>
+                                <option value="critical">Critical only</option>
+                                <option value="critical_high">Critical & High</option>
+                                <option value="warning">Warning & above</option>
+                                <option value="info">Info only</option>
+                            </select>
+                            <select id="alerts-ack-filter" class="select-input" style="width:160px;">
+                                <option value="open">Open only</option>
+                                <option value="">All</option>
+                                <option value="ack">Acknowledged</option>
+                            </select>
+                        </div>
                     </div>
                     <div id="alerts-content"><div class="spinner">Loading alerts...</div></div>
                 </div>
@@ -173,7 +507,7 @@
                                 <option value="">All entities</option>
                                 <option value="holding">Holdings</option>
                                 <option value="trade">Trades</option>
-                                <option value="event">Events</option>
+                                <option value="event">News items</option>
                                 <option value="classification">Classifications</option>
                                 <option value="alert">Alerts</option>
                             </select>
@@ -253,11 +587,14 @@
                             <select id="setting-primary-provider" class="select-input" style="width:240px;">
                                 <option value="">None — AI disabled</option>
                                 <option value="anthropic">Anthropic (Claude)</option>
-                                <option value="openai">OpenAI (GPT)</option>
+                                <option value="openai">OpenAI / ChatGPT</option>
                                 <option value="google">Google (Gemini)</option>
                             </select>
                             <p class="text-xs text-muted" style="margin-top:0.25rem;">
-                                Powers smart event analysis, portfolio insights, and natural language queries.
+                                Optional. Powers narrative analysis, daily digest text, AI vision PDF/image import, and the Assistant tab. All deterministic features (alerts, exposures, CSV import, news collection) work without an AI key.
+                            </p>
+                            <p class="text-xs text-muted" style="margin-top:0.1rem;line-height:1.5;">
+                                Environment variables: <code>ANTHROPIC_API_KEY</code> · <code>OPENAI_API_KEY</code> · <code>GOOGLE_API_KEY</code>.
                             </p>
                         </div>
 
@@ -266,10 +603,12 @@
                             <div style="display:flex;gap:0.5rem;align-items:center;">
                                 <input type="password" id="setting-primary-key" class="select-input" style="flex:1;font-family:monospace;font-size:0.82rem;min-width:0;" placeholder="API key..." autocomplete="off" spellcheck="false">
                                 <button class="btn btn-primary" onclick="saveProviderKey('primary')" style="white-space:nowrap;">Save Key</button>
+                                <button class="btn btn-outline" onclick="testProvider('primary')" style="white-space:nowrap;" title="Send one minimal request to verify the saved key works">Test</button>
                             </div>
                             <div class="ai-provider-status" id="primary-key-status">
                                 <span class="text-xs text-muted">No key configured</span>
                             </div>
+                            <div class="ai-provider-test-result" id="primary-test-result" hidden style="margin-top:0.35rem;"></div>
                         </div>
 
                         <!-- Fallback AI -->
@@ -278,7 +617,7 @@
                             <select id="setting-backup-provider" class="select-input" style="width:240px;">
                                 <option value="">None</option>
                                 <option value="anthropic">Anthropic (Claude)</option>
-                                <option value="openai">OpenAI (GPT)</option>
+                                <option value="openai">OpenAI / ChatGPT</option>
                                 <option value="google">Google (Gemini)</option>
                             </select>
                             <p class="text-xs text-muted" style="margin-top:0.25rem;line-height:1.4;">
@@ -291,10 +630,12 @@
                             <div style="display:flex;gap:0.5rem;align-items:center;">
                                 <input type="password" id="setting-backup-key" class="select-input" style="flex:1;font-family:monospace;font-size:0.82rem;min-width:0;" placeholder="API key..." autocomplete="off" spellcheck="false">
                                 <button class="btn btn-primary" onclick="saveProviderKey('backup')" style="white-space:nowrap;">Save Key</button>
+                                <button class="btn btn-outline" onclick="testProvider('backup')" style="white-space:nowrap;" title="Send one minimal request to verify the saved key works">Test</button>
                             </div>
                             <div class="ai-provider-status" id="backup-key-status">
                                 <span class="text-xs text-muted">No key configured</span>
                             </div>
+                            <div class="ai-provider-test-result" id="backup-test-result" hidden style="margin-top:0.35rem;"></div>
                         </div>
 
                         <!-- Save provider selection -->
@@ -334,6 +675,167 @@
                             </div>
                         </div>
                         <div id="sources-table"><div class="spinner">Loading sources...</div></div>
+                    </div>
+
+                    <!-- ── Operator (Phase 9I) ── -->
+                    <div class="section-title" style="margin-top:1.25rem;">Operator</div>
+                    <div class="card-stack">
+
+                    <!-- Operator panel header -->
+                    <div class="card op-panel-card">
+                        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+                            <span>Deterministic Intelligence Controls</span>
+                            <span class="op-panel-portfolio">
+                                Active portfolio: <code id="op-active-portfolio">default</code>
+                            </span>
+                        </div>
+                        <p class="text-xs text-muted" style="margin:0 0 0.5rem 0;line-height:1.55;max-width:720px;">
+                            Inspect and adjust the deterministic intelligence state of the active portfolio.
+                            Every change is audited. Seed rows, sector defaults, and AI-inferred rows are
+                            protected — you can only edit what you authored.
+                        </p>
+                        <div id="op-last-result" class="op-last-result" hidden></div>
+                    </div>
+
+                    <!-- Factor Sensitivities -->
+                    <div class="card op-panel-card" id="op-factor-card">
+                        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+                            <span>Factor Sensitivities</span>
+                            <div class="op-card-actions">
+                                <select id="op-factor-filter" class="select-input" style="width:180px;font-size:0.78rem;">
+                                    <option value="">All factors</option>
+                                </select>
+                                <button class="btn btn-ghost btn-sm" id="op-factor-refresh">Refresh</button>
+                            </div>
+                        </div>
+                        <p class="text-xs text-muted" style="margin:0 0 0.5rem 0;line-height:1.5;">
+                            Effective sensitivities applied by the Phase 9A propagator. Sector defaults are
+                            read-only — override a holding+factor pair to tune it for this portfolio.
+                        </p>
+                        <div id="op-factor-table"><div class="spinner">Loading factor sensitivities...</div></div>
+                    </div>
+
+                    <!-- Relationships -->
+                    <div class="card op-panel-card" id="op-rel-card">
+                        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+                            <span>Holding Relationships</span>
+                            <div class="op-card-actions">
+                                <select id="op-rel-source-filter" class="select-input" style="width:150px;font-size:0.78rem;">
+                                    <option value="">All sources</option>
+                                    <option value="seed">Seed only</option>
+                                    <option value="manual">Manual only</option>
+                                    <option value="ai_inferred">AI-inferred only</option>
+                                </select>
+                                <button class="btn btn-primary btn-sm" id="op-rel-add">+ Add Manual</button>
+                                <button class="btn btn-ghost btn-sm" id="op-rel-refresh">Refresh</button>
+                            </div>
+                        </div>
+                        <p class="text-xs text-muted" style="margin:0 0 0.5rem 0;line-height:1.5;">
+                            Holdings-anchored relationship graph. Seed rows come from
+                            <code>config/relationships.yaml</code> and are protected — use Reconcile to
+                            apply YAML changes. Manual rows are editable here.
+                        </p>
+                        <div id="op-rel-table"><div class="spinner">Loading relationships...</div></div>
+                    </div>
+
+                    <!-- Reconcile + Backfill -->
+                    <div class="card op-panel-card" id="op-actions-card">
+                        <div class="card-header">Maintenance Actions</div>
+                        <div class="op-action-row">
+                            <div class="op-action-block" data-maintenance-action="reconcile">
+                                <div class="op-action-head">
+                                    <div class="op-action-title">Seed reconciliation</div>
+                                    <span id="op-reconcile-chip" class="op-action-chip op-action-chip-idle" title="Reconcile status">
+                                        <span class="op-action-dot"></span>
+                                        <span class="op-action-chip-label">Idle</span>
+                                    </span>
+                                </div>
+                                <p class="text-xs text-muted" style="line-height:1.5;margin:0 0 0.4rem 0;">
+                                    Apply <code>config/relationships.yaml</code> to the relationship graph.
+                                    Only seed-owned rows are touched — manual and AI-inferred rows are left alone.
+                                </p>
+                                <label class="toggle-label" style="gap:0.4rem;font-size:0.78rem;">
+                                    <input type="checkbox" id="op-reconcile-prune" class="toggle-input" checked>
+                                    <span>Prune seed rows removed from YAML</span>
+                                </label>
+                                <div style="margin-top:0.5rem;display:flex;gap:0.5rem;align-items:center;">
+                                    <button class="btn btn-primary btn-sm" id="op-reconcile-btn">Run Reconcile</button>
+                                    <span id="op-reconcile-status" class="text-xs text-muted"></span>
+                                </div>
+                            </div>
+                            <div class="op-action-block" data-maintenance-action="backfill">
+                                <div class="op-action-head">
+                                    <div class="op-action-title">Deterministic backfill</div>
+                                    <span id="op-backfill-chip" class="op-action-chip op-action-chip-idle" title="Backfill status">
+                                        <span class="op-action-dot"></span>
+                                        <span class="op-action-chip-label">Idle</span>
+                                    </span>
+                                </div>
+                                <p class="text-xs text-muted" style="line-height:1.5;margin:0 0 0.4rem 0;">
+                                    Re-run the factor + relationship link pipeline over recent events so new
+                                    overrides and manual relationships pick up historical data. The pass is
+                                    bounded, deterministic, and idempotent — safe to click twice.
+                                </p>
+                                <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap;">
+                                    <label class="text-xs" style="display:flex;align-items:center;gap:0.35rem;">
+                                        Window
+                                        <select id="op-backfill-window" class="select-input" style="width:100px;font-size:0.78rem;">
+                                            <option value="1">1 day</option>
+                                            <option value="7" selected>7 days</option>
+                                            <option value="14">14 days</option>
+                                            <option value="30">30 days</option>
+                                        </select>
+                                    </label>
+                                    <label class="text-xs" style="display:flex;align-items:center;gap:0.35rem;">
+                                        Max events
+                                        <select id="op-backfill-max" class="select-input" style="width:100px;font-size:0.78rem;">
+                                            <option value="50">50</option>
+                                            <option value="200" selected>200</option>
+                                            <option value="500">500</option>
+                                        </select>
+                                    </label>
+                                </div>
+                                <div style="margin-top:0.5rem;display:flex;gap:0.5rem;align-items:center;">
+                                    <button class="btn btn-primary btn-sm" id="op-backfill-btn">Run Backfill</button>
+                                    <span id="op-backfill-status" class="text-xs text-muted"></span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Phase 9O — Recent operator actions readback -->
+                    <div class="card op-panel-card" id="op-recent-actions-card">
+                        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+                            <span>Recent operator actions</span>
+                            <button class="btn btn-ghost btn-sm" id="op-recent-refresh">Refresh</button>
+                        </div>
+                        <p class="text-xs text-muted" style="margin:0 0 0.5rem 0;line-height:1.5;">
+                            Last 10 operator-owned mutations from the audit log. Global maintenance
+                            runs (reconcile, backfill) are always shown. Portfolio-scoped rows are
+                            filtered to the active portfolio. No new data — this is a compact
+                            readback of rows Axion already stores.
+                        </p>
+                        <div id="op-recent-actions"><div class="spinner">Loading recent actions...</div></div>
+                    </div>
+
+                    </div><!-- /card-stack: Operator -->
+
+                    <!-- ── Phase 9U — Saved Views ── -->
+                    <div class="section-title" style="margin-top:1.25rem;">Saved Views</div>
+                    <div class="card">
+                        <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+                            <span>Analytical Views</span>
+                            <div style="display:flex;gap:0.35rem;">
+                                <button class="btn btn-primary btn-sm" id="save-current-view-btn">Save current view</button>
+                                <button class="btn btn-ghost btn-sm" id="saved-views-refresh">Refresh</button>
+                            </div>
+                        </div>
+                        <p class="text-xs text-muted" style="margin:0 0 0.5rem 0;line-height:1.5;">
+                            Named snapshots of your current tab + filter context.
+                            Restore a view to jump back to exactly what you were looking at.
+                            Each view is scoped to the active portfolio.
+                        </p>
+                        <div id="saved-views-list"><div class="spinner">Loading saved views...</div></div>
                     </div>
 
                     <!-- ── Preferences ── -->
@@ -421,7 +923,10 @@
             <div id="holding-detail" class="detail-panel" aria-label="Holding Detail">
                 <div class="detail-header">
                     <h3 id="detail-title">Holding Detail</h3>
-                    <button class="btn btn-ghost" onclick="closeHoldingDetail()">&times;</button>
+                    <div class="modal-header-actions">
+                        <button class="btn btn-ghost btn-sm copy-link-btn" id="holding-detail-copy-link" title="Copy deep link">&#128279; Copy link</button>
+                        <button class="btn btn-ghost" onclick="closeHoldingDetail()" aria-label="Close">&times;</button>
+                    </div>
                 </div>
                 <div id="detail-body"><div class="spinner">Loading...</div></div>
             </div>
@@ -434,11 +939,25 @@
 
     <!-- ==================== MODALS ==================== -->
 
+    <!-- Event Detail Modal (Phase 9B) -->
+    <dialog id="event-detail-modal" class="modal-lg" aria-label="Event Detail">
+        <div class="modal-header">
+            <h3 id="event-detail-title">News item</h3>
+            <div class="modal-header-actions">
+                <button class="btn btn-ghost btn-sm copy-link-btn" id="event-detail-copy-link" title="Copy deep link">&#128279; Copy link</button>
+                <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
+            </div>
+        </div>
+        <div class="modal-body" id="event-detail-body">
+            <div class="spinner">Loading event detail...</div>
+        </div>
+    </dialog>
+
     <!-- Reset Portfolio Modal -->
     <dialog id="reset-modal" aria-label="Reset Portfolio">
         <div class="modal-header">
             <h3 style="color:var(--danger);">Reset All Data</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
             <p>This will permanently delete <strong>all</strong> portfolio data:</p>
@@ -461,7 +980,7 @@
     <dialog id="upload-modal" aria-label="Upload Portfolio">
         <div class="modal-header">
             <h3>Upload Portfolio</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <form id="upload-form" enctype="multipart/form-data">
             <div class="drop-zone" id="drop-zone" onclick="document.getElementById('portfolio-file').click()">
@@ -484,7 +1003,7 @@
     <dialog id="add-holding-modal" aria-label="Add Holding">
         <div class="modal-header">
             <h3 id="add-holding-title">Add Holding</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <form id="add-holding-form" class="modal-form" onsubmit="return false;">
             <div class="form-row">
@@ -529,7 +1048,7 @@
     <dialog id="edit-holding-modal" aria-label="Edit Holding">
         <div class="modal-header">
             <h3 id="edit-holding-title">Edit Holding</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <form id="edit-holding-form" class="modal-form" onsubmit="return false;">
             <input type="hidden" id="eh-id">
@@ -571,7 +1090,7 @@
     <dialog id="trade-modal" aria-label="Record Trade">
         <div class="modal-header">
             <h3>Record Trade</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <form id="trade-form" class="modal-form" onsubmit="return false;">
             <div class="form-row">
@@ -624,7 +1143,7 @@
     <dialog id="delete-modal" aria-label="Confirm Delete">
         <div class="modal-header">
             <h3>Remove Holding</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
             <p>Are you sure you want to remove <strong id="delete-ticker"></strong> from the portfolio?</p>
@@ -641,7 +1160,7 @@
     <dialog id="review-modal" aria-label="Review Import" class="review-modal">
         <div class="modal-header">
             <h3 id="review-modal-title">Review Extracted Data</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
             <p id="review-message" class="text-sm text-muted" style="margin-bottom:0.75rem;"></p>
@@ -650,13 +1169,13 @@
                     <thead>
                         <tr>
                             <th></th>
-                            <th>Ticker</th>
-                            <th>Name</th>
-                            <th>Shares</th>
-                            <th>Price</th>
-                            <th>Cost</th>
-                            <th>Value</th>
-                            <th>Currency</th>
+                            <th scope="col">Ticker</th>
+                            <th scope="col">Name</th>
+                            <th scope="col">Shares</th>
+                            <th scope="col">Price</th>
+                            <th scope="col">Cost</th>
+                            <th scope="col">Value</th>
+                            <th scope="col">Currency</th>
                         </tr>
                     </thead>
                     <tbody id="review-tbody"></tbody>
@@ -675,7 +1194,7 @@
     <dialog id="source-modal" aria-label="Add Source">
         <div class="modal-header">
             <h3 id="source-modal-title">Add News Source</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <form id="source-form" class="modal-form" onsubmit="return false;">
             <input type="hidden" id="src-id">
@@ -706,11 +1225,11 @@
     <dialog id="delete-source-modal" aria-label="Delete Source">
         <div class="modal-header">
             <h3>Remove Source</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
             <p>Are you sure you want to remove <strong id="delete-source-name"></strong>?</p>
-            <p class="text-sm text-muted mt-2">Events already collected from this source will be preserved.</p>
+            <p class="text-sm text-muted mt-2">News items already collected from this source will be preserved.</p>
         </div>
         <input type="hidden" id="delete-source-id">
         <div class="modal-footer">
@@ -723,7 +1242,7 @@
     <dialog id="quickadd-modal" aria-label="Quick Add Sources" class="review-modal">
         <div class="modal-header">
             <h3>Quick Add — Financial News Feeds</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <div class="modal-body">
             <p class="text-sm text-muted" style="margin-bottom:0.75rem;">Select sources to add instantly. Already-added sources are marked.</p>
@@ -738,7 +1257,7 @@
     <dialog id="create-portfolio-modal" aria-label="Create Portfolio">
         <div class="modal-header">
             <h3>Create Portfolio</h3>
-            <button class="btn btn-ghost" data-close-modal>&times;</button>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
         </div>
         <form class="modal-form" onsubmit="return false;">
             <div class="form-group" style="width:100%">
@@ -760,6 +1279,96 @@
         </div>
     </dialog>
 
-    <script src="/dashboard/js/app.js?v=35"></script>
+    <!-- Phase 9I — Factor override modal -->
+    <dialog id="op-factor-modal" aria-label="Factor Override">
+        <div class="modal-header">
+            <h3 id="op-factor-modal-title">Factor Override</h3>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
+        </div>
+        <form class="modal-form" onsubmit="return false;">
+            <div class="form-group" style="width:100%;">
+                <label>Holding</label>
+                <div id="op-factor-modal-holding" class="text-sm text-mono" style="padding:0.5rem 0;"></div>
+            </div>
+            <div class="form-group" style="width:100%;">
+                <label>Factor</label>
+                <div id="op-factor-modal-factor" class="text-sm" style="padding:0.5rem 0;"></div>
+            </div>
+            <div class="form-group" style="width:160px;">
+                <label for="op-factor-sensitivity">Sensitivity (-1.0 to 1.0)</label>
+                <input type="number" id="op-factor-sensitivity" class="input" step="0.05" min="-1" max="1" value="0.0">
+            </div>
+            <div class="form-group" style="width:100%;">
+                <label for="op-factor-reason">Reason <span class="text-muted">(optional, logged)</span></label>
+                <input type="text" id="op-factor-reason" class="input" maxlength="500" placeholder="e.g. custom beta measured 2026-04-01">
+            </div>
+            <div class="form-group" style="width:100%;">
+                <p class="text-xs text-muted" id="op-factor-modal-current"></p>
+            </div>
+        </form>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button class="btn btn-ghost text-danger" id="op-factor-delete-btn" style="display:none;">Delete Override</button>
+            <button class="btn btn-primary" id="op-factor-save-btn">Save Override</button>
+        </div>
+    </dialog>
+
+    <!-- Phase 9I — Manual relationship modal -->
+    <dialog id="op-rel-modal" aria-label="Manual Relationship">
+        <div class="modal-header">
+            <h3 id="op-rel-modal-title">Manual Relationship</h3>
+            <button class="btn btn-ghost" data-close-modal aria-label="Close">&times;</button>
+        </div>
+        <form class="modal-form" onsubmit="return false;">
+            <div class="form-group" style="width:100%;">
+                <label for="op-rel-holding">Holding *</label>
+                <select id="op-rel-holding" class="select-input"></select>
+            </div>
+            <div class="form-group" style="width:200px;">
+                <label for="op-rel-type">Relationship Type *</label>
+                <select id="op-rel-type" class="select-input">
+                    <option value="supplier">supplier</option>
+                    <option value="customer">customer</option>
+                    <option value="competitor">competitor</option>
+                    <option value="regulator">regulator</option>
+                    <option value="parent">parent</option>
+                    <option value="subsidiary">subsidiary</option>
+                </select>
+            </div>
+            <div class="form-group" style="width:160px;">
+                <label for="op-rel-related-ticker">Related Ticker</label>
+                <input type="text" id="op-rel-related-ticker" class="input" placeholder="e.g. TSM" maxlength="16">
+            </div>
+            <div class="form-group" style="width:220px;">
+                <label for="op-rel-related-entity-key">Related Entity Key</label>
+                <input type="text" id="op-rel-related-entity-key" class="input" placeholder="e.g. doj_us" maxlength="64">
+            </div>
+            <div class="form-group" style="width:100%;">
+                <label for="op-rel-related-name">Related Name</label>
+                <input type="text" id="op-rel-related-name" class="input" placeholder="e.g. Taiwan Semiconductor" maxlength="120">
+            </div>
+            <div class="form-group" style="width:140px;">
+                <label for="op-rel-strength">Strength (0.0 - 1.0)</label>
+                <input type="number" id="op-rel-strength" class="input" step="0.05" min="0" max="1" value="0.5">
+            </div>
+            <div class="form-group" style="width:100%;">
+                <label for="op-rel-description">Description <span class="text-muted">(optional)</span></label>
+                <input type="text" id="op-rel-description" class="input" maxlength="500">
+            </div>
+            <div class="form-group" style="width:100%;">
+                <label for="op-rel-reason">Reason <span class="text-muted">(optional, logged)</span></label>
+                <input type="text" id="op-rel-reason" class="input" maxlength="500">
+            </div>
+            <p class="text-xs text-muted" style="width:100%;margin:0;line-height:1.5;">
+                Provide either <code>related_ticker</code> or <code>related_entity_key</code> — at least one is required.
+            </p>
+        </form>
+        <div class="modal-footer">
+            <button class="btn btn-ghost" data-close-modal>Cancel</button>
+            <button class="btn btn-primary" id="op-rel-save-btn">Save Relationship</button>
+        </div>
+    </dialog>
+
+    <script src="/dashboard/js/app.js?v=48"></script>
 </body>
 </html>

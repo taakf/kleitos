@@ -277,8 +277,12 @@ def check_test_provider_endpoint():
     r = client.post("/api/v1/settings/test-provider")
     assert r.status_code == 200, f"test-provider status {r.status_code}: {r.text[:200]}"
     body = r.json()
-    assert body["status"] in ("active", "configured", "disabled", "unreachable", "error"), \
-        f"unexpected status {body['status']}"
+    # Phase 6: normalised status vocabulary on /api/v1/settings/test-provider.
+    # The endpoint may return any one of these — never raise, never leak keys.
+    assert body["status"] in (
+        "active", "configured", "disabled", "missing_key", "invalid_key",
+        "quota_issue", "unreachable", "misconfigured", "error",
+    ), f"unexpected status {body['status']}"
 
 
 def check_events_endpoint_no_500():

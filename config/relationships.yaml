@@ -1,0 +1,155 @@
+# Axion deterministic relationship seed registry (Phase 9D)
+#
+# This file is the repo-managed source of truth for known holding
+# relationships.  Every row here is authored by a human, auditable
+# via git, and deterministic at runtime.  The seed loader in
+# src/intelligence/relationships/seeds.py reads this file at runtime
+# and (on demand) reconciles it into the holding_relationships DB
+# table, keyed by (holding_id, relationship_type, related_ticker,
+# related_entity_key).
+#
+# ---------------------------------------------------------------------
+# Schema
+# ---------------------------------------------------------------------
+# version:      integer — bump whenever semantics / schema change
+# relationships: list of entries, each with:
+#   ticker         the held company's ticker  (required)
+#   related_ticker related company's ticker   (optional if entity_key set)
+#   related_entity_key  stable non-ticker id  (optional if ticker set)
+#   related_name   human-readable name        (recommended)
+#   type           supplier | customer | competitor | regulator |
+#                  parent | subsidiary
+#   strength       0.0 .. 1.0                 (required, conservative)
+#   description    one-line rationale         (recommended)
+#
+# ---------------------------------------------------------------------
+# Authorship discipline (Phase 9D)
+# ---------------------------------------------------------------------
+# * ONLY author relationships that have a clear, auditable public basis
+#   (SEC filings, company IR pages, widely-reported supply-chain
+#   disclosures).  This file is NOT a guess book.
+# * Prefer conservative strengths.  A rule of thumb:
+#     0.9  sole supplier / single point of failure
+#     0.8  dominant foundry / primary customer
+#     0.6  major but not exclusive
+#     0.4  meaningful but diluted
+#     0.2  incidental / one of many
+# * Two rows can share a target — e.g. AAPL has TSMC as supplier AND
+#   Samsung as supplier.  That's normal.  Uniqueness is on the full
+#   (holding_id, type, related_ticker, related_entity_key) tuple.
+# * If the row is non-listed (regulator, private company), leave
+#   related_ticker null and set related_entity_key to a short stable
+#   key like "ftc_us" or "ec_dg_comp".
+
+version: 1
+relationships:
+
+  # ------------------------------------------------------------------
+  # Semiconductor ecosystem — representative, conservative subset.
+  # ------------------------------------------------------------------
+
+  # AAPL depends heavily on TSMC as its advanced-node foundry.
+  # Public basis: Apple's supply-chain transparency reports + industry
+  # reporting on A-series / M-series chip manufacturing.
+  - ticker: AAPL
+    related_ticker: TSM
+    related_name: Taiwan Semiconductor
+    type: supplier
+    strength: 0.85
+    description: TSMC is Apple's primary foundry for A- and M-series SoCs.
+
+  # NVDA also depends on TSMC for its leading-edge GPUs.
+  - ticker: NVDA
+    related_ticker: TSM
+    related_name: Taiwan Semiconductor
+    type: supplier
+    strength: 0.85
+    description: TSMC manufactures Nvidia's leading-edge GPU dies.
+
+  # AMD similarly depends on TSMC.
+  - ticker: AMD
+    related_ticker: TSM
+    related_name: Advanced Micro Devices (TSMC foundry)
+    type: supplier
+    strength: 0.80
+    description: TSMC is AMD's primary foundry for CPUs and GPUs.
+
+  # ASML is the sole supplier of leading-edge EUV litho tools, so the
+  # relationship flows from NVDA / TSMC exposure perspective: if you
+  # hold TSM, ASML capex / restrictions matter.
+  - ticker: TSM
+    related_ticker: ASML
+    related_name: ASML Holding
+    type: supplier
+    strength: 0.80
+    description: ASML is the sole supplier of EUV lithography systems.
+
+  # Competitor edges — symmetric competitive dynamics.
+  - ticker: NVDA
+    related_ticker: AMD
+    related_name: Advanced Micro Devices
+    type: competitor
+    strength: 0.60
+    description: AMD competes directly with Nvidia in discrete GPUs and AI accelerators.
+
+  - ticker: AMD
+    related_ticker: NVDA
+    related_name: NVIDIA Corporation
+    type: competitor
+    strength: 0.60
+    description: Nvidia competes directly with AMD in discrete GPUs and AI accelerators.
+
+  - ticker: AMD
+    related_ticker: INTC
+    related_name: Intel Corporation
+    type: competitor
+    strength: 0.65
+    description: Intel and AMD compete in x86 CPUs (client and data center).
+
+  - ticker: INTC
+    related_ticker: AMD
+    related_name: Advanced Micro Devices
+    type: competitor
+    strength: 0.65
+    description: AMD competes with Intel in x86 CPUs.
+
+  # Customer edges — for suppliers, who buys from you matters.
+  - ticker: TSM
+    related_ticker: AAPL
+    related_name: Apple Inc
+    type: customer
+    strength: 0.75
+    description: Apple is TSMC's largest customer by wafer volume at leading edge.
+
+  - ticker: TSM
+    related_ticker: NVDA
+    related_name: NVIDIA Corporation
+    type: customer
+    strength: 0.55
+    description: Nvidia is a major leading-edge customer of TSMC.
+
+  # ------------------------------------------------------------------
+  # Regulators — non-ticker edges.  Conservative strength because
+  # regulator actions cover entire sectors, not a single company.
+  # ------------------------------------------------------------------
+
+  - ticker: AAPL
+    related_entity_key: doj_us
+    related_name: US Department of Justice
+    type: regulator
+    strength: 0.40
+    description: DOJ antitrust jurisdiction over Apple's US operations.
+
+  - ticker: GOOGL
+    related_entity_key: doj_us
+    related_name: US Department of Justice
+    type: regulator
+    strength: 0.45
+    description: DOJ antitrust jurisdiction over Alphabet / search dominance.
+
+  - ticker: MSFT
+    related_entity_key: ftc_us
+    related_name: US Federal Trade Commission
+    type: regulator
+    strength: 0.35
+    description: FTC oversight of Microsoft acquisitions and competition.
