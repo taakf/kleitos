@@ -49,6 +49,15 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/events", tags=["events"])
 
+# Phase 24 — generous cap for the per-event "related" sub-queries in
+# the event-detail handler (analysis notes + related alerts). A single
+# event almost never has anywhere near this many related rows; the cap
+# only protects against a pathological dataset loading an unbounded
+# result set into memory. When the cap is hit, EventDetailResponse
+# carries an additive ``*_truncated`` flag so callers know the list is
+# a most-recent-first slice.
+EVENT_DETAIL_RELATED_LIMIT = 200
+
 
 # ---------------------------------------------------------------------------
 # Phase 8 — defence-in-depth URL scrubbing
@@ -256,6 +265,16 @@ class EventDetailResponse(EventResponse):
     affected_holdings: list[AffectedHolding] = Field(default_factory=list)
     related_analyses: list[RelatedAnalysisNote] = Field(default_factory=list)
     related_alerts: list[RelatedAlert] = Field(default_factory=list)
+
+    # Phase 24 — additive truncation flags. The related-analyses and
+    # related-alerts queries are capped at EVENT_DETAIL_RELATED_LIMIT so
+    # a pathological event with thousands of rows can't load an
+    # unbounded result set. When a cap is hit the matching flag is True
+    # and the list above is a most-recent-first slice, not the full
+    # set. Existing callers that ignore these fields are unaffected —
+    # both default to False.
+    related_analyses_truncated: bool = False
+    related_alerts_truncated: bool = False
 
     # Phase 9N — grounded explanation + suggested action
     why_it_matters: str | None = None
@@ -706,13 +725,18 @@ async def get_event(
     factor_tags.sort(key=lambda t: (-(t.confidence or 0.0), t.key))
 
     # ----- Related analysis notes --------------------------------------
+    # Phase 24 — bounded: fetch one more than the cap so we can tell
+    # whether the result was truncated, then slice to the cap.
     notes_stmt = (
         select(AnalysisNoteModel, HoldingModel.ticker)
         .outerjoin(HoldingModel, AnalysisNoteModel.holding_id == HoldingModel.id)
         .where(AnalysisNoteModel.event_id == event_id)
         .order_by(AnalysisNoteModel.created_at.desc())
+        .limit(EVENT_DETAIL_RELATED_LIMIT + 1)
     )
     note_rows = (await session.execute(notes_stmt)).all()
+    related_analyses_truncated = len(note_rows) > EVENT_DETAIL_RELATED_LIMIT
+    note_rows = note_rows[:EVENT_DETAIL_RELATED_LIMIT]
     related_analyses = [
         RelatedAnalysisNote(
             id=n.id,
@@ -732,13 +756,18 @@ async def get_event(
     # presence of the event_id substring first to shrink the result
     # set, then verify in Python.  This is safe: related_events is
     # authored by the alert writers and always stores UUIDs.
+    # Phase 24 — bounded: the JSON-substring LIKE scan is unindexed,
+    # so cap the candidate set (fetch one extra to detect truncation).
     alert_stmt = (
         select(AlertModel)
         .where(AlertModel.related_events.is_not(None))
         .where(AlertModel.related_events.like(f'%{event_id}%'))
         .order_by(AlertModel.created_at.desc())
+        .limit(EVENT_DETAIL_RELATED_LIMIT + 1)
     )
-    candidate_alerts = (await session.execute(alert_stmt)).scalars().all()
+    candidate_alerts = list((await session.execute(alert_stmt)).scalars().all())
+    related_alerts_truncated = len(candidate_alerts) > EVENT_DETAIL_RELATED_LIMIT
+    candidate_alerts = candidate_alerts[:EVENT_DETAIL_RELATED_LIMIT]
     related_alerts: list[RelatedAlert] = []
     for a in candidate_alerts:
         try:
@@ -834,6 +863,8 @@ async def get_event(
         affected_holdings=affected_holdings,
         related_analyses=related_analyses,
         related_alerts=related_alerts,
+        related_analyses_truncated=related_analyses_truncated,
+        related_alerts_truncated=related_alerts_truncated,
         why_it_matters=why_it_matters,
         suggested_action=suggested_action,
         explanation_grounded_in=explanation_grounded_in,
