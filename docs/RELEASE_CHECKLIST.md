@@ -270,6 +270,33 @@ Run from the project root with the venv active.
   - Docs: no forbidden positive claims (live prices, broker sync, OAuth supported, paid-vendor bundled, ATHEX fully automatic); required concepts present (News vs Events, Listing country vs Revenue geography, AI optional, support bundle, backups).
   - Support bundle metadata carries `app_version` + `release_channel`; diagnostics response includes version metadata.
 
+- [ ] **Phases 19–26 release-hardening regressions pass**
+  ```bash
+  python -m pytest -q tests/unit/test_phase19_release_blocker_docs.py \
+                       tests/unit/test_phase22_security_privacy.py \
+                       tests/unit/test_phase23_accessibility.py \
+                       tests/unit/test_phase24_event_detail_bounds.py \
+                       tests/unit/test_phase25_source_transparency.py
+  ```
+  Must report all green. Covers, in order:
+  - **Phase 19** — `KNOWN_LIMITATIONS.md` has no stale "6 enabled" / CNBC claim and no nonexistent price-table claim; the enabled-source count is cross-checked against `config/sources.yaml`.
+  - **Phase 22** — support bundle / diagnostics / `test-provider` never leak secrets; the secret scrubbers and the insight-export `_safe_str` redactor work; `~/.axion.env` is written `0600`.
+  - **Phase 23** — every icon-only close button + dialog is labelled; `:focus-visible` rings exist; content containers are `aria-live`; customer tables carry `scope="col"`; the dialog focus-return helper is present.
+  - **Phase 24** — `GET /events/{id}` caps related analysis-notes + alerts at 200 with additive `*_truncated` flags; other list endpoints keep their limits.
+  - **Phase 25** — exactly 7 enabled sources (pinned, doc-cross-checked); unsupported sources resolve to `unsupported` and cannot be toggled into a working state; optional-key sources surface `missing_key`; source-error scrubbing works.
+
+- [ ] **Customer beta acceptance package present (Phase 27)**
+  - `docs/CUSTOMER_ACCEPTANCE_CHECKLIST.md` and `docs/BETA_TEST_SCRIPT.md`
+    exist and cover install → first launch → CSV import → optional keys →
+    collection → News/Events/Exposures → revenue-geography upload →
+    Insights run+export → support bundle → demo reset → uninstall.
+  - The acceptance package is labelled **LOCAL-VERIFIED** until the CI
+    workflow has run green on the pull request — never "CI-verified"
+    before then.
+  - `docs/INSTALLER_ROADMAP.md` + `docs/SIGNING_AND_NOTARIZATION.md`
+    (Phase 26) honestly describe the unsigned-build state and the
+    signing roadmap.
+
 ## D. Fresh-machine simulation
 
 Wipe everything and run as if a customer just downloaded the project.
