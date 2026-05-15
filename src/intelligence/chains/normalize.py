@@ -518,7 +518,6 @@ def _build_relationship_chain(
     rel_type_label = _relationship_type_label(rel_type)
     strength = _safe_float(rel_block.get("strength"))
 
-    match_score = _safe_float(entity_block.get("match_score"))
     match_type = entity_block.get("match_type")
     related_name = entity_block.get("name")
     related_ticker = entity_block.get("ticker")

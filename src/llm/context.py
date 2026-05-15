@@ -18,14 +18,13 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import (
     Alert,
     AnalysisNote,
     Event,
-    EventLink,
     Holding,
     Security,
 )

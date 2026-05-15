@@ -351,7 +351,7 @@ async def _create_sample_alerts():
             },
             {
                 "severity": "high",
-                "title": f"Sector concentration in technology",
+                "title": "Sector concentration in technology",
                 "body": f"Multiple technology holdings ({holdings[0].ticker}, "
                         f"{holdings[1].ticker if len(holdings) > 1 else 'other'}) "
                         f"show correlated factor exposure. Consider diversification.",

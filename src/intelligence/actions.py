@@ -63,9 +63,8 @@ last-action hint calls, not by the general
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field, asdict
-from datetime import datetime, timedelta, timezone
-from typing import Any, Iterable
+from dataclasses import dataclass, field
+from typing import Any, Iterable, Mapping
 
 logger = logging.getLogger(__name__)
 

@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import uuid
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from pydantic import BaseModel

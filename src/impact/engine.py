@@ -1,12 +1,11 @@
 """Impact Mapping Engine — orchestrates rule-based matching and LLM scoring."""
 
-import json
 import logging
 import uuid
 from datetime import datetime, timezone
 
 from src.impact.rules import RuleEngine, RuleMatch
-from src.impact.scoring import ImpactScorer, ImpactScore
+from src.impact.scoring import ImpactScorer
 
 logger = logging.getLogger(__name__)
 

@@ -37,7 +37,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import (
     Alert,
-    Event,
     EventLink,
     Holding,
     TelegramDelivery,
@@ -543,7 +542,7 @@ def format_grounded_digest_message(
     market_ctx = body.get("market_context") or ""
 
     lines = [
-        f"\U0001F4CA **INTELLIGENCE DIGEST**",
+        "\U0001F4CA **INTELLIGENCE DIGEST**",
         f"Portfolio: `{pid}`",
         "",
         f"*{headline}*",

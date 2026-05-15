@@ -13,7 +13,7 @@ from collections import Counter, defaultdict
 from datetime import datetime, timedelta, timezone
 from typing import Any, ClassVar
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 
 from src.database.models import (
     Alert,

@@ -7,11 +7,6 @@ parser identifier (as defined in ``config/sources.yaml``).
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
-
-if TYPE_CHECKING:
-    from src.sources.parsers.rss_generic import RSSGenericParser
-    from src.sources.parsers.newsapi import NewsAPIParser
 
 logger = logging.getLogger(__name__)
 

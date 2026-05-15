@@ -45,9 +45,6 @@ from src.intelligence.evaluation.metrics import (
 from src.intelligence.evaluation.scenarios import (
     BENCHMARK_VERSION,
     EvaluationScenario,
-    ExpectedFactor,
-    ExpectedImpact,
-    SyntheticRelationship,
     load_scenarios,
 )
 from src.intelligence.relationships.matcher import RelationshipEntityMatcher
@@ -385,12 +382,10 @@ def _evaluate_scenario(
         # mismatch would mean the propagator collapsed portfolios —
         # the exact Phase 9A safety invariant).
         if scenario.family == "portfolio_isolation":
-            holding_pid: dict[str, str] = {h.ticker: h.portfolio_id for h in scenario.holdings}
             # Only the impacts that survived the emit gate are written
             # into ``emitted_links``; that's what the runtime would
             # persist as an EventLink.
             for (factor, ticker, pid) in emitted_links:
-                real_pid = holding_pid.get(ticker)
                 # If the ticker appears in multiple portfolios (it
                 # does in our isolation fixture), both rows should be
                 # present with their own pid.  Violation = pid on

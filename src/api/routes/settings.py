@@ -280,7 +280,7 @@ async def save_provider_selection(req: ProviderSelectRequest):
         )
         return ApiKeySaveResponse(
             status="saved",
-            message=f"Provider selection saved. Restart Axion to activate.",
+            message="Provider selection saved. Restart Axion to activate.",
             restart_required=True,
         )
     except Exception as e:

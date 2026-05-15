@@ -15,7 +15,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_session
@@ -28,7 +28,6 @@ from src.database.models import (
 from src.intelligence.traceability import (
     _OPERATOR_ENTITY_TYPES,
     CATEGORY_LABELS,
-    entity_type_label,
     group_evidence_refs,
     is_operator_entity_type,
     select_recent_operator_entries,

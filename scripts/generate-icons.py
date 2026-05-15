@@ -10,7 +10,6 @@ Usage:  python scripts/generate-icons.py
 Output: assets/kleitos.ico, assets/kleitos-1024.png, assets/kleitos-256.png, etc.
 """
 
-import os
 import platform
 import shutil
 import subprocess
@@ -323,15 +322,15 @@ def main():
     print("  [7/7] Done!")
     print()
     print(f"  Icons saved to: {ASSETS_DIR}")
-    print(f"    kleitos-1024.png  — macOS / high-res")
-    print(f"    kleitos-512.png   — large icon")
-    print(f"    kleitos-256.png   — general use")
-    print(f"    kleitos-128.png   — medium icon")
-    print(f"    kleitos-64.png    — small icon")
-    print(f"    kleitos.ico       — Windows app icon (16-256px)")
-    print(f"    tray-*.png        — system tray status icons")
+    print("    kleitos-1024.png  — macOS / high-res")
+    print("    kleitos-512.png   — large icon")
+    print("    kleitos-256.png   — general use")
+    print("    kleitos-128.png   — medium icon")
+    print("    kleitos-64.png    — small icon")
+    print("    kleitos.ico       — Windows app icon (16-256px)")
+    print("    tray-*.png        — system tray status icons")
     if platform.system() == "Darwin":
-        print(f"    kleitos.icns      — macOS app icon")
+        print("    kleitos.icns      — macOS app icon")
 
 
 if __name__ == "__main__":

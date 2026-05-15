@@ -12,7 +12,6 @@ sources, no new schema on any existing table.
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -31,10 +30,8 @@ from src.database.models import (
     NotificationRead,
 )
 from src.intelligence.notifications import (
-    MAX_INBOX_ITEMS,
     OPERATOR_WINDOW_HOURS,
     InboxInputs,
-    NotificationItem,
     build_inbox,
     summarise_inbox,
     within_window,

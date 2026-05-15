@@ -16,7 +16,6 @@ from sqlalchemy import func, select
 
 from src.database.models import (
     AnalysisNote,
-    CoverageReport,
     Digest,
     Event,
     EventLink,
@@ -398,7 +397,6 @@ class AnalysisAgent(BaseAgent):
         from src.llm.grounded import (
             GroundedEventContext,
             assemble_event_context,
-            build_event_analysis_prompt,
             render_deterministic_explanation,
         )
 

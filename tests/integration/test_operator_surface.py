@@ -585,7 +585,7 @@ async def test_update_manual_relationship_succeeds_and_audits(seeded):
     )
     from src.database.connection import get_db, get_session_factory
     from src.database.models import AuditLog
-    from sqlalchemy import func as sql_func, select
+    from sqlalchemy import func as sql_func
 
     factory = get_session_factory()
     async with factory() as session:

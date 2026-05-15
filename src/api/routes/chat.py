@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.deps import get_session
-from src.llm.client import call_llm_text, is_llm_available
+from src.llm.client import call_llm_text
 from src.llm.grounded import (
     assemble_chat_context,
     build_chat_system_prompt,

@@ -21,7 +21,6 @@ from src.database.models import (
     Event,
     EventLink,
     Holding,
-    Security,
 )
 
 from .base import BaseAgent

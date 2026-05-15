@@ -22,7 +22,6 @@ import csv
 import io
 import json
 import logging
-import tempfile
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -403,7 +402,7 @@ async def cmd_exposure(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     lines = ["**PORTFOLIO EXPOSURE**\n"]
     for d in dims:
-        data = await _api_get(f"/portfolio/exposure", {"dimension": d})
+        data = await _api_get("/portfolio/exposure", {"dimension": d})
         buckets = data.get("buckets", []) if data else []
         lines.append(f"**{labels.get(d, d.upper())}**")
         if buckets:
@@ -499,7 +498,7 @@ async def cmd_risk(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("\U0001F50D Running risk assessment...")
     await update.message.chat.send_action(ChatAction.TYPING)
 
-    result = await _api_post("/agents/risk/run")
+    await _api_post("/agents/risk/run")
 
     # Always show current alerts after risk run
     alerts = await _api_get("/alerts/active")
@@ -852,7 +851,7 @@ async def cmd_report(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         # Build a text report
         lines = [
-            f"AXION INTELLIGENCE DIGEST",
+            "AXION INTELLIGENCE DIGEST",
             f"Type: {digest.get('digest_type', digest.get('period', 'daily'))}",
             f"Period: {digest.get('period_start', digest.get('start_date', '?'))} to {digest.get('period_end', digest.get('end_date', '?'))}",
             f"Generated: {digest.get('generated_at', '?')}",
@@ -995,7 +994,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
             updated = result.get("holdings_updated", result.get("updated_count", result.get("updated", 0)))
             errors = result.get("errors", [])
 
-            lines = [f"\u2705 **Portfolio uploaded successfully!**\n"]
+            lines = ["\u2705 **Portfolio uploaded successfully!**\n"]
             if imported:
                 lines.append(f"  \u2022 {imported} holdings imported")
             if updated:

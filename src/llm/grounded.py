@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.database.models import (
@@ -55,7 +55,6 @@ from src.database.models import (
     Event,
     EventLink,
     Holding,
-    HoldingRelationship,
     MacroFactorEvent,
     Security,
 )
@@ -1076,7 +1075,6 @@ def render_deterministic_explanation(ctx: GroundedEventContext) -> dict[str, Any
     would have returned so downstream persistence code is unchanged.
     """
     directions: list[str] = []
-    materialities: list[str] = []
     magnitudes: list[str] = []
     key_factors: list[str] = []
     rationale_bits: list[str] = []

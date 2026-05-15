@@ -78,7 +78,6 @@ from src.intelligence.backfill import (
 from src.intelligence.factors.sensitivity import (
     SECTOR_PRIORS,
     SensitivityResolver,
-    normalize_sector,
 )
 from src.intelligence.factors.taxonomy import FACTOR_KEYS, get_factor
 from src.intelligence.relationships.reconciler import (

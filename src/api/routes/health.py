@@ -1,10 +1,10 @@
 """Health-check routes for Axion API."""
 
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 
 from fastapi import APIRouter, Depends, Request
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 

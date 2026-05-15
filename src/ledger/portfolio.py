@@ -7,7 +7,7 @@ import logging
 import uuid
 from datetime import datetime, timezone
 
-from sqlalchemy import select, func
+from sqlalchemy import select
 
 from src.database.connection import get_db
 from src.database.models import AuditLog, Holding, Security

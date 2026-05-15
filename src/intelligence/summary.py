@@ -179,7 +179,6 @@ async def _build(
     )).scalars().all()
     holding_count = len(holding_rows)
     holding_id_set: set[str] = {h.id for h in holding_rows}
-    ticker_by_id: dict[str, str] = {h.id: h.ticker for h in holding_rows}
 
     summary = IntelligenceSummary(
         portfolio_id=portfolio_id,
