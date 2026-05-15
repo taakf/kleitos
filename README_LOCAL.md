@@ -214,7 +214,7 @@ Customer-facing terms that are easy to confuse — Axion uses them with these sp
 | Term | What it means in the UI | Where you see it |
 |------|-------------------------|------------------|
 | **News** | Items collected from public news / regulatory / RSS / API sources (Fed press releases, market news, etc.). Each one is a record in the backend `events` table. | Dashboard → **Insights → News** sub-tab. |
-| **Insights** | The analysis layer that consumes your portfolio + news + alerts + relationships. Includes News, Analysis, Digest, and Inbox sub-tabs. | Dashboard → top-level **Insights** tab. |
+| **Insights** | The analysis layer that consumes your portfolio + news + alerts + relationships. Includes Overview, News, Analysis, Digest, and Inbox sub-tabs. | Dashboard → top-level **Insights** tab. |
 | **Events** | Scheduled corporate / issuer events — earnings dates, dividends, AGMs, corporate actions. Phase 9 targets ATHEX-listed holdings first; new sources will follow. Backed by the `corporate_events` table. | Dashboard → top-level **Events** tab (separate from Insights → News). |
 | **Listing country** | The country whose CSD issued the instrument's ISIN (or the exchange you trade it on). **Not** the company's revenue geography. The "Listing country" exposure card on the Portfolio tab uses this. | Portfolio → Exposures → **Listing country** card. |
 | **Revenue geography** | Where the issuer actually earns money. Populated by **operator-uploaded CSV** (or, in a future phase, AI-extracted from annual reports). Axion **never infers** revenue geography from listing country, ISIN, sector, or any other proxy. | Portfolio → Exposures → **Revenue geography** card (separate from Listing country). |

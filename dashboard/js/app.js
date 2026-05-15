@@ -1481,7 +1481,7 @@
                             <div class="exposure-label" title="${esc(b.label)}">${esc(titleCase(b.label))}</div>
                             <div class="exposure-track"><div class="exposure-fill" style="width:${Math.min(b.weight_pct || 0, 100)}%"></div></div>
                             <div class="exposure-value">${(b.weight_pct || 0).toFixed(1)}%</div>
-                        </div>`).join('') : '<div class="empty-state" style="padding:1.5rem"><p class="text-sm">Upload a portfolio to see exposure breakdown.</p></div>'}
+                        </div>`).join('') : renderEmpty(null, 'No holdings yet.', { hint: 'Upload a portfolio or add a holding to see this exposure breakdown.' })}
                 </div>`;
             }).join('');
             // Always render the Revenue geography card right after.
@@ -1523,14 +1523,17 @@
         empty.hidden = false;
         chart.innerHTML = '';
         if (missing) missing.hidden = true;
-        empty.innerHTML = `
-            <div class="empty-state" style="padding:1.25rem">
-                <p><strong>No revenue geography uploaded yet.</strong></p>
-                <p class="text-sm text-muted">${esc(reason || 'Revenue geography is the breakdown of where each company earns its money — different from listing country. Axion never infers this from ISIN, listing, or sector. Upload a CSV to populate it.')}</p>
-                <p class="text-sm" style="margin-top:0.5rem;">
-                    <button class="btn btn-primary btn-sm" type="button" onclick="document.getElementById('rg-import-btn').click()">Import CSV</button>
-                </p>
-            </div>`;
+        // Phase 16 — route through the shared renderEmpty helper so the
+        // revenue-geography empty state matches every other surface
+        // (icon + hint + a single primary CTA).
+        empty.innerHTML = renderEmpty('upload', 'No revenue geography uploaded yet.', {
+            hint: reason || 'Revenue geography is the breakdown of where each company earns its money — different from listing country. Axion never infers this from ISIN, listing, or sector. Upload a CSV to populate it.',
+            actions: [{
+                label: 'Import CSV',
+                primary: true,
+                onclick: "document.getElementById('rg-import-btn').click()",
+            }],
+        });
     }
 
     function _rgRenderChart(report) {
@@ -1540,7 +1543,9 @@
         if (empty) empty.hidden = true;
         const buckets = report.buckets || [];
         if (!buckets.length) {
-            chart.innerHTML = '<div class="empty-state" style="padding:1rem"><p class="text-sm">No regions matched the current filter.</p></div>';
+            chart.innerHTML = renderEmpty(null, 'No regions match the current filter.', {
+                hint: 'Clear the fiscal-year filter to see all uploaded revenue geography.',
+            });
             return;
         }
         chart.innerHTML = buckets.map(b => {
@@ -3422,7 +3427,11 @@
             _renderInsightsLastGenerated(data.last_generated_at);
             const cards = Array.isArray(data.insights) ? data.insights : [];
             if (!cards.length) {
-                el.innerHTML = `<div class="empty-state" style="padding:1.5rem"><p><strong>Nothing to surface yet.</strong></p><p class="text-sm">Add holdings or run a collection cycle to generate insights. Insights work without AI; AI narration is optional.</p></div>`;
+                // Phase 16 — route through the shared renderEmpty helper so
+                // this matches every other empty surface (icon + hint).
+                el.innerHTML = renderEmpty('analysis', 'Nothing to surface yet.', {
+                    hint: 'Add holdings or run a collection cycle to generate insights. Insights work without AI — AI narration is optional.',
+                });
                 return;
             }
             el.innerHTML = cards.map(_renderInsightCard).join('');

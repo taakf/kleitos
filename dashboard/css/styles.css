@@ -492,6 +492,20 @@ th.num, td.num {
     display: flex;
     gap: 0.4rem;
     align-items: center;
+    /* Phase 16 — wrap on narrow windows so a long toolbar (filters +
+       Run now + Refresh + the Phase 15 export buttons) never overflows
+       the tab header. */
+    flex-wrap: wrap;
+}
+
+/* Phase 16 — Insights → Overview export + share toolbar.  Groups the
+   three Phase 15 buttons so they wrap together as a unit rather than
+   scattering when the header gets tight. */
+.insights-export-toolbar {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    flex-wrap: wrap;
 }
 
 /* ========== Alerts ========== */
@@ -1523,6 +1537,41 @@ th.sortable.sort-desc::after { content: '\25BC'; opacity: 0.8; color: var(--prim
 @media (max-width: 640px) {
     .nav-container { gap: 0.75rem; }
     .tab-link { padding: 0.35rem 0.55rem; font-size: 0.75rem; }
+}
+
+/* ========== Phase 16 — small-screen polish ==========
+   Additive rules only — no existing layout is rewritten.  Targets
+   surfaces that grew controls across Phases 8–15 (news filter bar,
+   corporate-events calendar, Insights card grid + history deck,
+   modals) so a narrow desktop window / tablet width stays usable. */
+
+/* Tablet / narrow-browser width. */
+@media (max-width: 768px) {
+    /* Insight cards stack into a single readable column instead of
+       overflowing at the fixed 360px min track width. */
+    .insights-cards { grid-template-columns: 1fr; }
+    /* The corporate-events calendar keeps a 7-column grid; below this
+       width the wrap scrolls horizontally so cells never collapse
+       into unreadable slivers. */
+    .ce-calendar-wrap { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .ce-calendar { min-width: 520px; }
+    /* News filter selects shrink to fit rather than forcing overflow. */
+    .events-filter-bar .select-input { min-width: 7.5rem; max-width: 100%; }
+    /* Insights history controls drop below the title cleanly. */
+    .insights-history-controls { flex-wrap: wrap; }
+}
+
+/* Mobile-ish width. */
+@media (max-width: 560px) {
+    /* Dialogs use almost the full viewport so action buttons at the
+       bottom are never clipped off-screen. */
+    dialog { width: 94%; max-width: 94vw; padding: 1.1rem; }
+    dialog.modal-lg { max-width: 94vw; }
+    /* Modal action rows wrap so primary/secondary buttons stay visible. */
+    .modal-footer, .ce-dialog-actions { flex-wrap: wrap; }
+    /* Exposure grid is already single-column at 768px; keep card
+       padding tighter so content isn't cramped. */
+    .insight-card { padding: 0.65rem 0.7rem; }
 }
 
 /* ========== Welcome Setup Card ========== */

@@ -241,6 +241,24 @@ Run from the project root with the venv active.
   - Diagnostics endpoint handles missing DB and corrupt DB without crashing.
   - First-run welcome card markup carries the `data-first-run="empty"` marker, mentions the offline CSV path, labels AI as optional, points at `sample_portfolio.csv`, and does not promise live prices.
 
+- [ ] **Professional QA / release-readiness polish pass (Phase 16)**
+  ```bash
+  python -m pytest -q tests/unit/test_phase16_release_polish.py
+  ```
+  Must report all green. Covers:
+  - Dashboard structure contract: six top-level tabs (Portfolio / Insights / Events / Alerts / Assistant / Settings); five Insights sub-tabs (Overview / News / Analysis / Digest / Inbox); Events stays a separate corporate-events surface from News.
+  - Portfolio → Exposures keeps **Listing country** and **Revenue geography** as distinct, explicitly-labelled cards.
+  - Empty-state consistency: every JS-rendered empty state routes through the shared `renderEmpty()` / `renderError()` helpers — no hand-rolled inline-styled `empty-state` divs survive.
+  - Responsive CSS: `.tab-actions` and `.insights-export-toolbar` wrap; the corporate-events calendar scrolls horizontally instead of collapsing; insight cards stack to one column; dialogs widen on mobile widths.
+  - No banned claims: the dashboard never asserts live prices, real-time market data, broker sync, OAuth login, or "coming soon".
+  - Docs describe the shipped product: README / Quickstart list the Overview sub-tab; revenue geography is shipped (not "planned"); Known Limitations states no live prices and no OAuth.
+
+  Manual professional-QA spot-checks (browser preview, fresh DB):
+  - [ ] Every top tab and Insights sub-tab loads without a console error.
+  - [ ] Every empty state names what is missing and what to do next, calmly.
+  - [ ] AI-disabled / missing-key states read as a normal mode, not an error.
+  - [ ] Narrow-window / tablet width: nav, filter bars, calendar, insight cards, modals stay usable.
+
 ## D. Fresh-machine simulation
 
 Wipe everything and run as if a customer just downloaded the project.

@@ -24,7 +24,6 @@ from __future__ import annotations
 import pytest
 
 from src.intelligence.navigation import (
-    NavigationTarget,
     _KNOWN_SURFACES,
     _OPERATOR_SUBTABS,
     _safe_target,

@@ -52,11 +52,12 @@ http://localhost:7777/dashboard
 - Click a holding (e.g., AAPL) → **Holding detail slide-out** shows risk alerts, related events
 - Point out the **copy-link button** → "Every view is shareable"
 
-### 2. Intelligence Overview (4 min)
-- Return to Portfolio tab → show the **posture assessment** at the top
+### 2. Portfolio posture band (4 min)
+- Return to Portfolio tab → show the **posture assessment** band at the top of Holdings
 - Point out: factor pressures, relationship touchpoints (AAPL→TSM supplier)
 - Show **recommended actions** with dismiss buttons
 - Dismiss one → "Stays hidden until the signal materially changes"
+- (This Portfolio-tab band is distinct from the **Insights → Overview** sub-tab covered in step 2c.)
 
 ### 2b. Corporate Events calendar (2 min, Phase 9)
 - Click the new top-level **Events** tab — separate from Insights → News.
