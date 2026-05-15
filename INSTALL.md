@@ -120,6 +120,7 @@ It runs 16 end-to-end checks against a throwaway temp DB. `16/16 passed` means t
 
 ## See also
 
+- [docs/FINAL_CUSTOMER_HANDOFF.md](docs/FINAL_CUSTOMER_HANDOFF.md) — one-page handoff checklist
 - [README_LOCAL.md](README_LOCAL.md) — fastest reference
 - [docs/CUSTOMER_QUICKSTART.md](docs/CUSTOMER_QUICKSTART.md) — guided walkthrough
 - [docs/DEMO_RESET.md](docs/DEMO_RESET.md) — reset to a clean state

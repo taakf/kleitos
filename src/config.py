@@ -21,6 +21,8 @@ import yaml
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, SecretStr, field_validator, model_validator
 
+from src.version import APP_VERSION
+
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -60,7 +62,10 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 class SystemSettings(BaseModel):
     name: str = "axion"
-    version: str = "1.0.0"
+    # Phase 17 — default sourced from the single version module so the
+    # version is never hard-coded in more than one place.  A config file
+    # may still override it explicitly.
+    version: str = APP_VERSION
     environment: str = "production"
 
 

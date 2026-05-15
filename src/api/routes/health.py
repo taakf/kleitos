@@ -12,6 +12,7 @@ from src.api.deps import get_session
 from src.database.models import Source, Event
 from src.intelligence.evaluation import BENCHMARK_VERSION, HARNESS_VERSION
 from src.intelligence.policy import get_active_policy
+from src.version import APP_VERSION
 
 router = APIRouter(prefix="/api/v1", tags=["health"])
 
@@ -174,7 +175,7 @@ async def get_health(
         sources_healthy=sources_healthy,
         last_collection=last_collection,
         uptime_seconds=round(uptime, 2),
-        version="1.0.0",
+        version=APP_VERSION,
         llm_available=llm_ok,
         llm_status=llm_status,
         telegram_enabled=tg_enabled,

@@ -312,9 +312,22 @@ def build_bundle(data_dir: Path, output_path: Path) -> dict:
     support_dir.mkdir(parents=True, exist_ok=True)
 
     # Collect everything first so a partial collection still ships.
+    # Phase 17 — release identity is read from the single version module
+    # so the bundle reports the same app_version as diagnostics + the
+    # release-zip manifest.
+    app_version = "unknown"
+    release_channel = "unknown"
+    try:
+        from src.version import APP_VERSION as _AV, RELEASE_CHANNEL as _RC
+        app_version, release_channel = _AV, _RC
+    except Exception:  # pragma: no cover — defensive
+        pass
+
     metadata = {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "app": "Axion",
+        "app_version": app_version,
+        "release_channel": release_channel,
         "git_commit": _git_commit(),
         "git_describe": _git_describe(),
         "python_version": (

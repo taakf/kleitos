@@ -24,14 +24,21 @@ Each zip contains the minimum set of files needed to run Axion locally:
     README.md, README_LOCAL.md
     INSTALL.md, KNOWN_LIMITATIONS.md, OPERATOR_CHECKLIST.md
     docs/                      customer-facing docs
+    RELEASE_MANIFEST.json      Phase 17 — generated build receipt
 
 Excluded from every zip:
 
-    .git, .venv, __pycache__, *.pyc, .pytest_cache
+    .git, .venv, __pycache__, *.pyc, .pytest_cache, .mypy_cache, .ruff_cache
     dist/                      itself
     .claude/, .vscode/, .idea/
-    ~/axion-data, *.db, *.log
+    ~/axion-data, *.db, *.log, .env (real secrets file)
+    support/, test-results/
     Any path matching the stale-duplicate patterns.
+
+Each zip carries a generated RELEASE_MANIFEST.json at its top level
+recording app name / version / release channel / git commit / build
+timestamp and an explicit promise that no database files and no API
+keys are bundled.
 
 Usage:
     python scripts/build_release_zip.py
@@ -43,12 +50,20 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
+import subprocess
 import sys
 import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+# Make ``src`` importable so the manifest can read the single version
+# module — without importing the FastAPI app or touching the DB.
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
 # ── What goes into every platform's zip ──────────────────────────────────────
 COMMON_DIRS = ["src", "dashboard", "config", "docs"]
@@ -107,7 +122,16 @@ EXCLUDE_DIR_NAMES = {
 
 EXCLUDE_SUFFIXES = {".pyc", ".pyo", ".db", ".db-wal", ".db-shm", ".log", ".swp"}
 
-EXCLUDE_FILE_NAMES = {".DS_Store", ".coverage", "server_out.txt", "server_err.txt"}
+# ``.env`` (the real local secrets file) is excluded by name so a stray
+# copy inside a walked directory can never leak.  ``.env.template`` has a
+# different name and still ships.
+EXCLUDE_FILE_NAMES = {
+    ".DS_Store", ".coverage", "server_out.txt", "server_err.txt",
+    ".env", ".kleitos.env", ".axion.env",
+}
+
+#: The manifest member written into every zip.
+RELEASE_MANIFEST_ARCNAME = "RELEASE_MANIFEST.json"
 
 
 def should_skip(path: Path) -> bool:
@@ -168,6 +192,74 @@ def add_to_zip(zf: zipfile.ZipFile, src: Path, arcprefix: str, *, label: str | N
     return count
 
 
+def _git_commit() -> str | None:
+    """Return the short git commit, or ``None`` outside a git checkout."""
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            cwd=PROJECT_ROOT, capture_output=True, text=True, timeout=5,
+        )
+        if out.returncode == 0:
+            commit = out.stdout.strip()
+            return commit or None
+    except Exception:
+        pass
+    return None
+
+
+def _release_identity() -> dict:
+    """Read the single version module.  Falls back to ``unknown`` so the
+    build never fails just because the version module moved."""
+    try:
+        from src.version import APP_NAME, APP_VERSION, RELEASE_CHANNEL
+        return {
+            "app_name": APP_NAME,
+            "app_version": APP_VERSION,
+            "release_channel": RELEASE_CHANNEL,
+        }
+    except Exception:
+        return {
+            "app_name": "Axion",
+            "app_version": "unknown",
+            "release_channel": "local",
+        }
+
+
+def _build_manifest(platform: str, arcnames: list[str]) -> str:
+    """Build the RELEASE_MANIFEST.json text written into each zip.
+
+    The manifest is a customer-facing receipt: what this package is,
+    when it was built, and an explicit promise that it carries no
+    database files and no API keys.
+    """
+    identity = _release_identity()
+    # Top-level runtime entries actually inside the zip (after the
+    # ``axion/`` prefix), de-duplicated and sorted.
+    top_level = sorted({
+        n.split("/", 2)[1]
+        for n in arcnames
+        if n.startswith("axion/") and len(n.split("/", 2)) > 1 and n.split("/", 2)[1]
+    })
+    manifest = {
+        "app_name": identity["app_name"],
+        "app_version": identity["app_version"],
+        "release_channel": identity["release_channel"],
+        "platform_package": platform,
+        "git_commit": _git_commit(),
+        "build_timestamp": datetime.now(timezone.utc).isoformat(),
+        "file_count": len(arcnames),
+        "included_top_level": top_level,
+        "guarantees": [
+            "No database files (*.db / *.db-wal / *.db-shm) are included.",
+            "No API keys, tokens or .env secrets are included — only .env.template.",
+            "No customer portfolio data is included — only sample_portfolio.csv.",
+            "This is a local, single-machine build (release_channel=local); "
+            "it is not a hosted service and performs no broker / OAuth sync.",
+        ],
+    }
+    return json.dumps(manifest, indent=2, sort_keys=True) + "\n"
+
+
 def build_zip(platform: str, output_dir: Path) -> Path:
     """Build a single platform zip. Returns its path."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -207,8 +299,23 @@ def build_zip(platform: str, output_dir: Path) -> Path:
         else:
             raise ValueError(f"unknown platform: {platform}")
 
+        # Phase 17 — write a release manifest as the last member so the
+        # customer (and the verify step) can see exactly what shipped.
+        manifest_text = _build_manifest(platform, zf.namelist())
+        zf.writestr(f"{arcprefix}/{RELEASE_MANIFEST_ARCNAME}", manifest_text)
+        total += 1
+        print(f"  manifest       1 file ({RELEASE_MANIFEST_ARCNAME})")
+
     size_mb = zip_path.stat().st_size / 1024 / 1024
-    print(f"  -> {zip_path.relative_to(PROJECT_ROOT)} ({total} files, {size_mb:.1f} MiB)")
+    # Display a project-relative path when the output is inside the
+    # repo (the normal ``dist/`` case); fall back to the absolute path
+    # when the caller built into an external directory (e.g. a test
+    # temp dir).
+    try:
+        display_path: Path | str = zip_path.relative_to(PROJECT_ROOT)
+    except ValueError:
+        display_path = zip_path
+    print(f"  -> {display_path} ({total} files, {size_mb:.1f} MiB)")
     return zip_path
 
 
@@ -217,17 +324,29 @@ def verify_zip(zip_path: Path) -> bool:
     print(f"\n=== Verifying {zip_path.name} ===")
     with zipfile.ZipFile(zip_path) as zf:
         names = zf.namelist()
-    # Must contain at least these
+        manifest_member = f"axion/{RELEASE_MANIFEST_ARCNAME}"
+        manifest_text = (
+            zf.read(manifest_member).decode("utf-8")
+            if manifest_member in names else ""
+        )
+    # Must contain at least these — incl. the runtime modules every
+    # Phase 2–16 surface depends on, plus the Phase 17 release manifest.
     must_have = [
         "axion/src/main.py",
+        "axion/src/version.py",
         "axion/dashboard/index.html",
         "axion/config/sources.yaml",
+        "axion/config/relationships.yaml",
         "axion/requirements.txt",
         "axion/scripts/smoke_local.py",
         "axion/scripts/migrate.py",
         "axion/scripts/support_bundle.py",
         "axion/scripts/rotate_logs.py",
+        "axion/src/intelligence/insights/generator.py",
+        "axion/src/corporate_events/manual_import.py",
+        "axion/src/intelligence/revenue_geography/__init__.py",
         "axion/README_LOCAL.md",
+        f"axion/{RELEASE_MANIFEST_ARCNAME}",
     ]
     ok = True
     for needle in must_have:
@@ -241,8 +360,28 @@ def verify_zip(zip_path: Path) -> bool:
         if leaked:
             print(f"  LEAKED ({bad}): {leaked[:3]}{'...' if len(leaked) > 3 else ''}")
             ok = False
+    # No database files of any kind.
+    db_leaked = [n for n in names if n.endswith((".db", ".db-wal", ".db-shm"))]
+    if db_leaked:
+        print(f"  LEAKED (database files): {db_leaked[:3]}")
+        ok = False
+    # Manifest must be present and parse cleanly.
+    if not manifest_text:
+        print(f"  MISSING: {RELEASE_MANIFEST_ARCNAME}")
+        ok = False
+    else:
+        try:
+            man = json.loads(manifest_text)
+            for key in ("app_name", "app_version", "release_channel",
+                        "platform_package", "build_timestamp", "guarantees"):
+                if key not in man:
+                    print(f"  MANIFEST missing key: {key}")
+                    ok = False
+        except json.JSONDecodeError as exc:
+            print(f"  MANIFEST not valid JSON: {exc}")
+            ok = False
     if ok:
-        print("  OK (all required paths present, no excluded paths leaked)")
+        print("  OK (required paths + manifest present, no excluded paths leaked)")
     return ok
 
 

@@ -179,6 +179,9 @@ class DiagnosticsResponse(BaseModel):
 
     timestamp: str
     app_version: str
+    # Phase 17 — honest release-channel marker ("local" = downloadable,
+    # single-machine build; never a hosted service).  Additive field.
+    release_channel: str = "local"
     python_version: str
     platform: str
 
@@ -363,15 +366,20 @@ async def get_diagnostics() -> DiagnosticsResponse:
 
     # ── App identity ────────────────────────────────────────────────────
     try:
-        from src.config import Settings as _S  # noqa: F401  (just to anchor import)
         app_version = settings.system.version
     except Exception:
         app_version = "unknown"
+    # Phase 17 — release channel from the single version module.
+    try:
+        from src.version import RELEASE_CHANNEL as _release_channel
+    except Exception:  # pragma: no cover — defensive
+        _release_channel = "local"
     py = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
 
     return DiagnosticsResponse(
         timestamp=datetime.now(timezone.utc).isoformat(),
         app_version=app_version,
+        release_channel=_release_channel,
         python_version=py,
         platform=f"{platform.system()} {platform.release()} ({platform.machine()})",
         schema_status=schema_status,

@@ -259,6 +259,17 @@ Run from the project root with the venv active.
   - [ ] AI-disabled / missing-key states read as a normal mode, not an error.
   - [ ] Narrow-window / tablet width: nav, filter bars, calendar, insight cards, modals stay usable.
 
+- [ ] **Release-artefact + handoff regressions pass (Phase 17)**
+  ```bash
+  python -m pytest -q tests/unit/test_phase17_release_artifacts.py
+  ```
+  Must report all green. Covers:
+  - Version identity: `src/version.py` is the single source — `APP_NAME` / `APP_VERSION` / `RELEASE_CHANNEL` exist; `src.__version__` re-exports `APP_VERSION`; `release_identity()` reports the schema version.
+  - Release manifest: a built zip carries `axion/RELEASE_MANIFEST.json` with `app_name` / `app_version` / `release_channel` / `platform_package` / `git_commit` / `build_timestamp` / `guarantees`.
+  - Zip contents: required runtime files present (`src/version.py`, `config/relationships.yaml`, insights/corporate-events/revenue-geography modules); forbidden artefacts absent (`.env`, `*.db`, `__pycache__`, `.git/`, `Axion/`).
+  - Docs: no forbidden positive claims (live prices, broker sync, OAuth supported, paid-vendor bundled, ATHEX fully automatic); required concepts present (News vs Events, Listing country vs Revenue geography, AI optional, support bundle, backups).
+  - Support bundle metadata carries `app_version` + `release_channel`; diagnostics response includes version metadata.
+
 ## D. Fresh-machine simulation
 
 Wipe everything and run as if a customer just downloaded the project.
